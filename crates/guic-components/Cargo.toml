@@ -1,6 +1,6 @@
 [package]
 name = "guic-components"
-version = "0.0.1"
+version = "0.1.0"
 description = "Component crate entry point for GUIC."
 edition.workspace = true
 license.workspace = true
@@ -23,9 +23,9 @@ markdown = ["dep:pulldown-cmark"]
 
 [dependencies]
 gpui.workspace = true
-guic-core = { version = "0.0.1", path = "../guic-core" }
-guic-icons = { version = "0.0.1", path = "../guic-icons" }
-guic-tokens = { version = "0.0.1", path = "../guic-tokens" }
+guic-core = { version = "0.1.0", path = "../guic-core" }
+guic-icons = { version = "0.1.0", path = "../guic-icons" }
+guic-tokens = { version = "0.1.0", path = "../guic-tokens" }
 pulldown-cmark = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }

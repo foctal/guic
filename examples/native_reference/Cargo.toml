@@ -1,6 +1,6 @@
 [package]
 name = "guic-example-native-reference"
-version = "0.0.1"
+version = "0.1.0"
 publish = false
 edition.workspace = true
 license.workspace = true

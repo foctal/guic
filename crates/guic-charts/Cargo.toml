@@ -1,6 +1,6 @@
 [package]
 name = "guic-charts"
-version = "0.0.1"
+version = "0.1.0"
 description = "Native chart primitives for GUIC."
 edition.workspace = true
 license.workspace = true
@@ -13,8 +13,8 @@ rust-version.workspace = true
 
 [dependencies]
 gpui.workspace = true
-guic-core = { version = "0.0.1", path = "../guic-core" }
-guic-tokens = { version = "0.0.1", path = "../guic-tokens" }
+guic-core = { version = "0.1.0", path = "../guic-core" }
+guic-tokens = { version = "0.1.0", path = "../guic-tokens" }
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

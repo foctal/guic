@@ -1,6 +1,6 @@
 [package]
 name = "guic-icons"
-version = "0.0.1"
+version = "0.1.0"
 description = "Optional icon integration for GUIC."
 edition.workspace = true
 license.workspace = true
@@ -13,7 +13,7 @@ rust-version.workspace = true
 
 [dependencies]
 gpui.workspace = true
-guic-tokens = { version = "0.0.1", path = "../guic-tokens" }
+guic-tokens = { version = "0.1.0", path = "../guic-tokens" }
 
 [lints]
 workspace = true

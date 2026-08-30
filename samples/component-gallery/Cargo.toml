@@ -1,6 +1,6 @@
 [package]
 name = "guic-sample-component-gallery"
-version = "0.0.1"
+version = "0.1.0"
 description = "Dedicated sample project for the GUIC component gallery."
 publish = false
 edition.workspace = true
