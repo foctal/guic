@@ -1,0 +1,17 @@
+[package]
+name = "xtask"
+version = "0.0.1"
+publish = false
+description = "Repository automation helpers for GUIC."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+guic-tokens = { version = "0.0.1", path = "../crates/guic-tokens" }
+serde_json.workspace = true
+
+[lints]
+workspace = true

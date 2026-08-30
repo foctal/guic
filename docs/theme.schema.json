@@ -1,0 +1,513 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Theme",
+  "description": "A complete GUIC theme definition.",
+  "type": "object",
+  "properties": {
+    "name": {
+      "description": "Stable theme name.",
+      "$ref": "#/$defs/ThemeName"
+    },
+    "mode": {
+      "description": "Light or dark mode.",
+      "$ref": "#/$defs/ThemeMode"
+    },
+    "color": {
+      "description": "Color tokens.",
+      "$ref": "#/$defs/ColorTokens"
+    },
+    "spacing": {
+      "description": "Spacing tokens.",
+      "$ref": "#/$defs/SpacingTokens"
+    },
+    "radius": {
+      "description": "Radius tokens.",
+      "$ref": "#/$defs/RadiusTokens"
+    },
+    "typography": {
+      "description": "Typography tokens.",
+      "$ref": "#/$defs/TypographyTokens"
+    },
+    "elevation": {
+      "description": "Elevation tokens.",
+      "$ref": "#/$defs/ElevationTokens"
+    },
+    "motion": {
+      "description": "Motion tokens.",
+      "$ref": "#/$defs/MotionTokens"
+    },
+    "layer": {
+      "description": "Layer tokens.",
+      "$ref": "#/$defs/LayerTokens"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "name",
+    "mode",
+    "color",
+    "spacing",
+    "radius",
+    "typography",
+    "elevation",
+    "motion",
+    "layer"
+  ],
+  "$defs": {
+    "ThemeName": {
+      "description": "A stable theme name.\n\n# Example\n\n```\nuse guic_tokens::ThemeName;\n\nlet name = ThemeName::new(\"  DefaultDark  \");\nassert_eq!(name.as_str(), \"DefaultDark\");\n```",
+      "type": "string"
+    },
+    "ThemeMode": {
+      "description": "The logical theme mode.",
+      "oneOf": [
+        {
+          "description": "Light mode.",
+          "type": "string",
+          "const": "light"
+        },
+        {
+          "description": "Dark mode.",
+          "type": "string",
+          "const": "dark"
+        }
+      ]
+    },
+    "ColorTokens": {
+      "description": "Color tokens shared across GUIC components.",
+      "type": "object",
+      "properties": {
+        "background": {
+          "description": "Default surface background.",
+          "$ref": "#/$defs/Rgba"
+        },
+        "foreground": {
+          "description": "Default text color.",
+          "$ref": "#/$defs/Rgba"
+        },
+        "muted": {
+          "description": "Muted surface color.",
+          "$ref": "#/$defs/Rgba"
+        },
+        "border": {
+          "description": "Border color.",
+          "$ref": "#/$defs/Rgba"
+        },
+        "ring": {
+          "description": "Focus ring color.",
+          "$ref": "#/$defs/Rgba"
+        },
+        "primary": {
+          "description": "Primary accent color.",
+          "$ref": "#/$defs/Rgba"
+        },
+        "secondary": {
+          "description": "Secondary accent color.",
+          "$ref": "#/$defs/Rgba"
+        },
+        "accent": {
+          "description": "Accent color for emphasis.",
+          "$ref": "#/$defs/Rgba"
+        },
+        "success": {
+          "description": "Success color.",
+          "$ref": "#/$defs/Rgba"
+        },
+        "warning": {
+          "description": "Warning color.",
+          "$ref": "#/$defs/Rgba"
+        },
+        "danger": {
+          "description": "Danger color.",
+          "$ref": "#/$defs/Rgba"
+        },
+        "info": {
+          "description": "Informational color.",
+          "$ref": "#/$defs/Rgba"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "background",
+        "foreground",
+        "muted",
+        "border",
+        "ring",
+        "primary",
+        "secondary",
+        "accent",
+        "success",
+        "warning",
+        "danger",
+        "info"
+      ]
+    },
+    "Rgba": {
+      "type": "string",
+      "pattern": "^#([0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$"
+    },
+    "SpacingTokens": {
+      "description": "Spacing tokens used by GUIC layouts and components.",
+      "type": "object",
+      "properties": {
+        "x0": {
+          "description": "Spacing scale `0`.",
+          "type": "number",
+          "format": "float"
+        },
+        "x0_5": {
+          "description": "Spacing scale `0.5`.",
+          "type": "number",
+          "format": "float"
+        },
+        "x1": {
+          "description": "Spacing scale `1`.",
+          "type": "number",
+          "format": "float"
+        },
+        "x1_5": {
+          "description": "Spacing scale `1.5`.",
+          "type": "number",
+          "format": "float"
+        },
+        "x2": {
+          "description": "Spacing scale `2`.",
+          "type": "number",
+          "format": "float"
+        },
+        "x3": {
+          "description": "Spacing scale `3`.",
+          "type": "number",
+          "format": "float"
+        },
+        "x4": {
+          "description": "Spacing scale `4`.",
+          "type": "number",
+          "format": "float"
+        },
+        "x5": {
+          "description": "Spacing scale `5`.",
+          "type": "number",
+          "format": "float"
+        },
+        "x6": {
+          "description": "Spacing scale `6`.",
+          "type": "number",
+          "format": "float"
+        },
+        "x8": {
+          "description": "Spacing scale `8`.",
+          "type": "number",
+          "format": "float"
+        },
+        "x10": {
+          "description": "Spacing scale `10`.",
+          "type": "number",
+          "format": "float"
+        },
+        "x12": {
+          "description": "Spacing scale `12`.",
+          "type": "number",
+          "format": "float"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "x0",
+        "x0_5",
+        "x1",
+        "x1_5",
+        "x2",
+        "x3",
+        "x4",
+        "x5",
+        "x6",
+        "x8",
+        "x10",
+        "x12"
+      ]
+    },
+    "RadiusTokens": {
+      "description": "Corner radius tokens.",
+      "type": "object",
+      "properties": {
+        "none": {
+          "description": "No rounding.",
+          "type": "number",
+          "format": "float"
+        },
+        "sm": {
+          "description": "Small radius.",
+          "type": "number",
+          "format": "float"
+        },
+        "md": {
+          "description": "Medium radius.",
+          "type": "number",
+          "format": "float"
+        },
+        "lg": {
+          "description": "Large radius.",
+          "type": "number",
+          "format": "float"
+        },
+        "xl": {
+          "description": "Extra large radius.",
+          "type": "number",
+          "format": "float"
+        },
+        "full": {
+          "description": "Fully rounded radius.",
+          "type": "number",
+          "format": "float"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "none",
+        "sm",
+        "md",
+        "lg",
+        "xl",
+        "full"
+      ]
+    },
+    "TypographyTokens": {
+      "description": "Typography tokens used by GUIC components.",
+      "type": "object",
+      "properties": {
+        "sans_family": {
+          "description": "Default sans-serif family.",
+          "type": "string"
+        },
+        "mono_family": {
+          "description": "Default monospace family.",
+          "type": "string"
+        },
+        "text_sm": {
+          "description": "Small text size.",
+          "type": "number",
+          "format": "float"
+        },
+        "text_md": {
+          "description": "Medium text size.",
+          "type": "number",
+          "format": "float"
+        },
+        "text_lg": {
+          "description": "Large text size.",
+          "type": "number",
+          "format": "float"
+        },
+        "line_height_sm": {
+          "description": "Compact line height.",
+          "type": "number",
+          "format": "float"
+        },
+        "line_height_md": {
+          "description": "Default line height.",
+          "type": "number",
+          "format": "float"
+        },
+        "line_height_lg": {
+          "description": "Relaxed line height.",
+          "type": "number",
+          "format": "float"
+        },
+        "weight_regular": {
+          "description": "Regular weight.",
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "weight_medium": {
+          "description": "Medium weight.",
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "weight_bold": {
+          "description": "Bold weight.",
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0,
+          "maximum": 65535
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "sans_family",
+        "mono_family",
+        "text_sm",
+        "text_md",
+        "text_lg",
+        "line_height_sm",
+        "line_height_md",
+        "line_height_lg",
+        "weight_regular",
+        "weight_medium",
+        "weight_bold"
+      ]
+    },
+    "ElevationTokens": {
+      "description": "Elevation tokens for layered surfaces.",
+      "type": "object",
+      "properties": {
+        "popover": {
+          "description": "Popover elevation value.",
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "dropdown": {
+          "description": "Dropdown elevation value.",
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "dialog": {
+          "description": "Dialog elevation value.",
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "tooltip": {
+          "description": "Tooltip elevation value.",
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "notification": {
+          "description": "Notification elevation value.",
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0,
+          "maximum": 65535
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "popover",
+        "dropdown",
+        "dialog",
+        "tooltip",
+        "notification"
+      ]
+    },
+    "MotionTokens": {
+      "description": "Motion tokens for transitions and animations.",
+      "type": "object",
+      "properties": {
+        "fast_ms": {
+          "description": "Fast duration in milliseconds.",
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "normal_ms": {
+          "description": "Normal duration in milliseconds.",
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "slow_ms": {
+          "description": "Slow duration in milliseconds.",
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "easing_standard": {
+          "description": "Default easing name.",
+          "$ref": "#/$defs/EasingKind"
+        },
+        "easing_emphasized": {
+          "description": "Emphasized easing name.",
+          "$ref": "#/$defs/EasingKind"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "fast_ms",
+        "normal_ms",
+        "slow_ms",
+        "easing_standard",
+        "easing_emphasized"
+      ]
+    },
+    "EasingKind": {
+      "description": "Supported easing names for token-driven motion.",
+      "oneOf": [
+        {
+          "description": "A balanced default easing.",
+          "type": "string",
+          "const": "standard"
+        },
+        {
+          "description": "A more pronounced easing for emphasized transitions.",
+          "type": "string",
+          "const": "emphasized"
+        }
+      ]
+    },
+    "LayerTokens": {
+      "description": "Layer order tokens for overlays.",
+      "type": "object",
+      "properties": {
+        "base": {
+          "description": "Base content layer.",
+          "type": "integer",
+          "format": "int32"
+        },
+        "dropdown": {
+          "description": "Dropdown layer.",
+          "type": "integer",
+          "format": "int32"
+        },
+        "popover": {
+          "description": "Popover layer.",
+          "type": "integer",
+          "format": "int32"
+        },
+        "tooltip": {
+          "description": "Tooltip layer.",
+          "type": "integer",
+          "format": "int32"
+        },
+        "sheet": {
+          "description": "Sheet layer.",
+          "type": "integer",
+          "format": "int32"
+        },
+        "modal": {
+          "description": "Modal layer.",
+          "type": "integer",
+          "format": "int32"
+        },
+        "notification": {
+          "description": "Notification layer.",
+          "type": "integer",
+          "format": "int32"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "base",
+        "dropdown",
+        "popover",
+        "tooltip",
+        "sheet",
+        "modal",
+        "notification"
+      ]
+    }
+  }
+}

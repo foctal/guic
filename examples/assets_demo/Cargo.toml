@@ -1,0 +1,25 @@
+[package]
+name = "guic-example-assets-demo"
+version = "0.0.1"
+publish = false
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+gpui.workspace = true
+guic = { path = "../../crates/guic" }
+guic-assets = { path = "../../crates/guic-assets" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gpui_platform = { package = "guic-gpui-platform", version = "=0.2.0", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+gpui_platform = { package = "guic-gpui-platform", version = "=0.2.0", features = ["font-kit"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+gpui_platform = { package = "guic-gpui-platform", version = "=0.2.0" }
+
+[lints]
+workspace = true

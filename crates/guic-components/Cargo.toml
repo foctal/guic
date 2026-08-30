@@ -1,0 +1,38 @@
+[package]
+name = "guic-components"
+version = "0.0.1"
+description = "Component crate entry point for GUIC."
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[features]
+default = []
+# Optional component subsystems. Each flag gates a self-contained widget family
+# and only pulls in the extra dependencies that family needs. New subsystem
+# flags (charts, editor, terminal, ...) are added only once they gate real code.
+data-table = []
+tree = []
+dock = ["dep:serde", "dep:serde_json"]
+markdown = ["dep:pulldown-cmark"]
+
+[dependencies]
+gpui.workspace = true
+guic-core = { version = "0.0.1", path = "../guic-core" }
+guic-icons = { version = "0.0.1", path = "../guic-icons" }
+guic-tokens = { version = "0.0.1", path = "../guic-tokens" }
+pulldown-cmark = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+unicode-segmentation.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true

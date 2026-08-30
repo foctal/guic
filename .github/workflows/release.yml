@@ -1,0 +1,22 @@
+name: Release Checks
+
+on:
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          components: clippy,rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --version 0.19.8 --locked
+      - name: Install Linux dependencies
+        run: ./scripts/install-linux-deps.sh
+      - name: Check changelog
+        run: test -f CHANGELOG.md
+      - name: Workspace validation
+        run: ./scripts/release-check.sh

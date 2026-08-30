@@ -1,0 +1,26 @@
+[package]
+name = "guic-webview"
+version = "0.0.1"
+description = "Experimental WebView support for GUIC."
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme = "README.md"
+repository.workspace = true
+rust-version.workspace = true
+
+[features]
+default = []
+inspector = ["wry/devtools"]
+
+[dependencies]
+anyhow.workspace = true
+gpui.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+wry.workspace = true
+
+[lints]
+workspace = true

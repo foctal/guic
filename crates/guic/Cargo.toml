@@ -1,0 +1,46 @@
+[package]
+name = "guic"
+version = "0.0.1"
+description = "A modern cross-platform native GUI toolkit for Rust."
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[features]
+default = ["components", "icons", "assets", "native"]
+native = []
+components = ["dep:guic-components"]
+charts = ["dep:guic-charts"]
+editor = ["dep:guic-editor"]
+terminal = ["dep:guic-terminal"]
+webview = ["dep:guic-webview"]
+icons = ["dep:guic-icons"]
+assets = ["dep:guic-assets"]
+# Optional component subsystems. These are convenience re-exports of the
+# matching `guic-components` feature flags; the umbrella crate does not invent a
+# separate taxonomy on top of them.
+data-table = ["components", "guic-components/data-table"]
+tree = ["components", "guic-components/tree"]
+dock = ["components", "guic-components/dock"]
+markdown = ["components", "guic-components/markdown"]
+
+[dependencies]
+gpui.workspace = true
+guic-assets = { version = "0.0.1", path = "../guic-assets", optional = true }
+guic-components = { version = "0.0.1", path = "../guic-components", optional = true }
+guic-charts = { version = "0.0.1", path = "../guic-charts", optional = true }
+guic-core = { version = "0.0.1", path = "../guic-core" }
+guic-editor = { version = "0.0.1", path = "../guic-editor", optional = true }
+guic-icons = { version = "0.0.1", path = "../guic-icons", optional = true }
+guic-terminal = { version = "0.0.1", path = "../guic-terminal", optional = true }
+guic-macros = { version = "0.0.1", path = "../guic-macros" }
+guic-tokens = { version = "0.0.1", path = "../guic-tokens" }
+guic-webview = { version = "0.0.1", path = "../guic-webview", optional = true }
+
+[lints]
+workspace = true

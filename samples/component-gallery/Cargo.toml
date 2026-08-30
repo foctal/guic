@@ -1,0 +1,15 @@
+[package]
+name = "guic-sample-component-gallery"
+version = "0.0.1"
+description = "Dedicated sample project for the GUIC component gallery."
+publish = false
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+guic-story = { path = "../../crates/guic-story" }
+
+[lints]
+workspace = true

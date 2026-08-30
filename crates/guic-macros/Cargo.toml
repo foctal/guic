@@ -1,0 +1,22 @@
+[package]
+name = "guic-macros"
+version = "0.0.1"
+description = "Helper macros for GUIC."
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+quote = "1"
+syn = { version = "2", features = ["parsing"] }
+
+[lints]
+workspace = true

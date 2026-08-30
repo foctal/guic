@@ -1,0 +1,76 @@
+{
+  "name": "DefaultLight",
+  "mode": "light",
+  "color": {
+    "background": "#ffffff",
+    "foreground": "#0f172a",
+    "muted": "#f1f5f9",
+    "border": "#cbd5e1",
+    "ring": "#2563eb",
+    "primary": "#2563eb",
+    "secondary": "#e2e8f0",
+    "accent": "#0284c7",
+    "success": "#059669",
+    "warning": "#d97706",
+    "danger": "#dc2626",
+    "info": "#0284c7"
+  },
+  "spacing": {
+    "x0": 0.0,
+    "x0_5": 2.0,
+    "x1": 4.0,
+    "x1_5": 6.0,
+    "x2": 8.0,
+    "x3": 12.0,
+    "x4": 16.0,
+    "x5": 20.0,
+    "x6": 24.0,
+    "x8": 32.0,
+    "x10": 40.0,
+    "x12": 48.0
+  },
+  "radius": {
+    "none": 0.0,
+    "sm": 2.0,
+    "md": 6.0,
+    "lg": 10.0,
+    "xl": 14.0,
+    "full": 999.0
+  },
+  "typography": {
+    "sans_family": "Inter",
+    "mono_family": "JetBrains Mono",
+    "text_sm": 12.0,
+    "text_md": 14.0,
+    "text_lg": 16.0,
+    "line_height_sm": 16.0,
+    "line_height_md": 20.0,
+    "line_height_lg": 24.0,
+    "weight_regular": 400,
+    "weight_medium": 500,
+    "weight_bold": 700
+  },
+  "elevation": {
+    "popover": 1,
+    "dropdown": 2,
+    "dialog": 3,
+    "tooltip": 4,
+    "notification": 5
+  },
+  "motion": {
+    "fast_ms": 120,
+    "normal_ms": 180,
+    "slow_ms": 240,
+    "easing_standard": "standard",
+    "easing_emphasized": "emphasized"
+  },
+  "layer": {
+    "base": 0,
+    "dropdown": 10,
+    "popover": 20,
+    "tooltip": 30,
+    "sheet": 40,
+    "modal": 50,
+    "notification": 60
+  }
+}

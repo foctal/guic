@@ -1,0 +1,24 @@
+[package]
+name = "quick-xml"
+version = "0.39.4"
+description = "Compatibility package exposing the security-fixed quick-xml implementation."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[features]
+default = []
+async-tokio = ["quick_xml_upstream/async-tokio"]
+encoding = ["quick_xml_upstream/encoding"]
+escape-html = ["quick_xml_upstream/escape-html"]
+overlapped-lists = ["quick_xml_upstream/overlapped-lists"]
+serde-types = ["quick_xml_upstream/serde-types"]
+serialize = ["quick_xml_upstream/serialize"]
+
+[dependencies]
+quick_xml_upstream = { package = "quick-xml", version = "0.41.0" }
+
+[lints]
+workspace = true

@@ -1,0 +1,53 @@
+[graph]
+all-features = true
+
+[advisories]
+db-path = "~/.cargo/advisory-db"
+db-urls = ["https://github.com/RustSec/advisory-db"]
+# Reviewed maintenance advisories are pinned here so every new advisory still
+# fails CI and the local release gate. See docs/dependency-policy.md.
+ignore = [
+    "RUSTSEC-2024-0370",
+    "RUSTSEC-2024-0412",
+    "RUSTSEC-2024-0413",
+    "RUSTSEC-2024-0414",
+    "RUSTSEC-2024-0415",
+    "RUSTSEC-2024-0416",
+    "RUSTSEC-2024-0417",
+    "RUSTSEC-2024-0418",
+    "RUSTSEC-2024-0419",
+    "RUSTSEC-2024-0420",
+    "RUSTSEC-2024-0436",
+    "RUSTSEC-2025-0057",
+    "RUSTSEC-2026-0173",
+    "RUSTSEC-2026-0192",
+    "RUSTSEC-2026-0206",
+]
+yanked = "warn"
+
+[bans]
+multiple-versions = "warn"
+# Workspace dependencies use intentionally broad semver requirements while the
+# application workspace is reproducibly pinned by Cargo.lock.
+wildcards = "warn"
+
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CC0-1.0",
+    "ISC",
+    "MPL-2.0",
+    "NCSA",
+    "OFL-1.1",
+    "Unicode-3.0",
+    "Zlib",
+    "bzip2-1.0.6",
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

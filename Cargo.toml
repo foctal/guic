@@ -1,0 +1,69 @@
+[workspace]
+members = [
+    "crates/guic",
+    "crates/guic-core",
+    "crates/guic-tokens",
+    "crates/guic-components",
+    "crates/guic-charts",
+    "crates/guic-editor",
+    "crates/guic-terminal",
+    "crates/guic-webview",
+    "crates/guic-icons",
+    "crates/guic-assets",
+    "crates/guic-macros",
+    "crates/guic-story",
+    "crates/quick-xml-compat",
+    "examples/hello_world",
+    "examples/assets_demo",
+    "examples/charts_dashboard",
+    "examples/terminal_demo",
+    "examples/terminal_workspace",
+    "examples/native_reference",
+    "examples/webview",
+    "samples/component-gallery",
+    "xtask",
+]
+default-members = ["crates/guic"]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+homepage = "https://github.com/foctal/guic"
+keywords = ["gui", "desktop", "gpui", "native", "components"]
+categories = ["gui"]
+license = "Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/foctal/guic"
+rust-version = "1.95"
+
+[workspace.dependencies]
+anyhow = "1"
+gpui = { package = "guic-gpui", version = "=0.2.0" }
+gtk = "0.18.2"
+once_cell = "1"
+raw-window-handle = { version = "0.6", features = ["std"] }
+pulldown-cmark = "0.13"
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+smallvec = "1"
+thiserror = "2"
+tracing = "0.1"
+unicode-segmentation = "1"
+unicode-width = "0.2"
+vte = "0.15"
+wry = "0.53.3"
+
+[patch.crates-io]
+# zbus_xml 5.1.1 constrains quick-xml below the security fixes in 0.41.
+quick-xml = { path = "crates/quick-xml-compat" }
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+unwrap_used = "deny"
+
+[profile.dev]
+codegen-units = 16
+debug = "limited"
+split-debuginfo = "unpacked"

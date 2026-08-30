@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_DEV_CODEGEN_UNITS: 256
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_CODEGEN_UNITS: 256
+  CARGO_PROFILE_TEST_DEBUG: 0
+
+jobs:
+  check:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          components: rustfmt
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: ./scripts/install-linux-deps.sh
+      - name: Format
+        if: runner.os == 'Linux'
+        run: cargo fmt --all -- --check
+      - name: Windows tests
+        if: runner.os == 'Windows'
+        run: cargo test --workspace --all-features --lib --test windows_conpty
+      - name: macOS library tests
+        if: runner.os == 'macOS'
+        run: cargo test --workspace --all-features --lib
+      - name: Test
+        if: runner.os == 'Linux'
+        run: cargo test --workspace --all-features
+      - name: Docs
+        if: runner.os == 'Linux'
+        run: cargo doc --workspace --all-features --no-deps
+      - name: Theme schema
+        if: runner.os == 'Linux'
+        run: cargo run -p xtask -- schema --check
+
+  dependencies:
+    name: dependency policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependency policy
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check bans sources licenses advisories
