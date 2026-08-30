@@ -1,11 +1,11 @@
 # API Stability
 
-GUIC `0.0.x` releases are source previews. Stability labels apply to public
+GUIC `0.1.x` releases are source previews. Stability labels apply to public
 Rust APIs, feature flags, persistence formats, and host contracts.
 
 | Level | Contract |
 | --- | --- |
-| Preview | Usable for migration prototypes. Breaking changes require changelog entries but may ship in a `0.0.x` release. |
+| Preview | Usable for migration prototypes. Breaking changes require changelog entries but may ship in a `0.1.x` release. |
 | Experimental | Design is expected to change and applications should isolate usage behind their own adapter. |
 | Internal | Not published and not part of the support contract. |
 

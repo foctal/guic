@@ -1,6 +1,6 @@
 [package]
 name = "guic-story"
-version = "0.0.1"
+version = "0.1.0"
 description = "Native story application for GUIC."
 publish = false
 edition.workspace = true

@@ -5,7 +5,7 @@ runtime to the application manifest:
 
 ```toml
 [dependencies]
-guic = "0.0.1"
+guic = "0.1.0"
 gpui = { package = "guic-gpui", version = "=0.2.0" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -25,7 +25,7 @@ pinned Git revision:
 guic = { git = "https://github.com/foctal/guic", rev = "<audited-revision>" }
 ```
 
-Do not use a moving branch for reproducible builds. GUIC `0.0.x` is a preview;
+Do not use a moving branch for reproducible builds. GUIC `0.1.x` is a preview;
 enable only the subsystem features the application needs and review
 [API Stability](api-stability.md) before upgrading.
 

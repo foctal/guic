@@ -1,6 +1,6 @@
 [package]
 name = "guic"
-version = "0.0.1"
+version = "0.1.0"
 description = "A modern cross-platform native GUI toolkit for Rust."
 edition.workspace = true
 license.workspace = true
@@ -31,16 +31,16 @@ markdown = ["components", "guic-components/markdown"]
 
 [dependencies]
 gpui.workspace = true
-guic-assets = { version = "0.0.1", path = "../guic-assets", optional = true }
-guic-components = { version = "0.0.1", path = "../guic-components", optional = true }
-guic-charts = { version = "0.0.1", path = "../guic-charts", optional = true }
-guic-core = { version = "0.0.1", path = "../guic-core" }
-guic-editor = { version = "0.0.1", path = "../guic-editor", optional = true }
-guic-icons = { version = "0.0.1", path = "../guic-icons", optional = true }
-guic-terminal = { version = "0.0.1", path = "../guic-terminal", optional = true }
-guic-macros = { version = "0.0.1", path = "../guic-macros" }
-guic-tokens = { version = "0.0.1", path = "../guic-tokens" }
-guic-webview = { version = "0.0.1", path = "../guic-webview", optional = true }
+guic-assets = { version = "0.1.0", path = "../guic-assets", optional = true }
+guic-components = { version = "0.1.0", path = "../guic-components", optional = true }
+guic-charts = { version = "0.1.0", path = "../guic-charts", optional = true }
+guic-core = { version = "0.1.0", path = "../guic-core" }
+guic-editor = { version = "0.1.0", path = "../guic-editor", optional = true }
+guic-icons = { version = "0.1.0", path = "../guic-icons", optional = true }
+guic-terminal = { version = "0.1.0", path = "../guic-terminal", optional = true }
+guic-macros = { version = "0.1.0", path = "../guic-macros" }
+guic-tokens = { version = "0.1.0", path = "../guic-tokens" }
+guic-webview = { version = "0.1.0", path = "../guic-webview", optional = true }
 
 [lints]
 workspace = true

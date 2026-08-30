@@ -1,6 +1,6 @@
 [package]
 name = "guic-macros"
-version = "0.0.1"
+version = "0.1.0"
 description = "Helper macros for GUIC."
 edition.workspace = true
 license.workspace = true
