@@ -4,7 +4,7 @@ GUIC
 Copyright 2026 foctal
 
 Licensed under the Apache License, Version 2.0. The full license text is
-available in `LICENSE-APACHE`.
+available in `LICENSE`.
 
 GUIC is an original project that uses `gpui-component` as a technical reference
 for architecture, GPUI usage patterns, and component scope research.
