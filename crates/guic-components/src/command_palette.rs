@@ -81,6 +81,9 @@ impl CommandPaletteItem {
 
 /// A searchable, keyboard-operated command launcher.
 pub struct CommandPalette {
+    open: bool,
+    autofocus: bool,
+    restore_focus: bool,
     id: SharedString,
     input: Entity<TextInput>,
     focus_handle: FocusHandle,
@@ -111,6 +114,9 @@ impl CommandPalette {
             cx.notify();
         });
         Self {
+            open: true,
+            autofocus: false,
+            restore_focus: true,
             id,
             input,
             focus_handle,
@@ -123,6 +129,26 @@ impl CommandPalette {
             on_dismiss: None,
             _subscription: subscription,
         }
+    }
+
+    /// Enables autofocus after the search input mounts.
+    #[must_use]
+    pub fn autofocus(mut self, enabled: bool) -> Self {
+        self.autofocus = enabled;
+        self
+    }
+
+    /// Enables focus restoration when closing with `set_open`.
+    #[must_use]
+    pub fn restore_focus(mut self, enabled: bool) -> Self {
+        self.restore_focus = enabled;
+        self
+    }
+
+    /// Changes visibility while preserving the focus lifecycle. Keep the entity mounted.
+    pub fn set_open(&mut self, open: bool, cx: &mut Context<Self>) {
+        self.open = open;
+        cx.notify();
     }
 
     /// Replaces available commands.
@@ -234,6 +260,14 @@ impl CommandPalette {
 
 impl Render for CommandPalette {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let focus_id = format!("{}-focus-lifecycle", self.id);
+        if !self.open {
+            return guic_core::OverlayFocus::new(focus_id, gpui::Empty)
+                .open(false)
+                .restore_focus(self.restore_focus)
+                .into_any_element();
+        }
+
         let theme = Theme::global(cx);
         let matches = self.matching_indices();
         if self.active_index >= matches.len() {
@@ -316,7 +350,7 @@ impl Render for CommandPalette {
             results = results.child(row);
         }
 
-        div()
+        let content = div()
             .id(self.id.clone())
             .key_context("GuicCommandPalette")
             .track_focus(&self.focus_handle)
@@ -335,7 +369,11 @@ impl Render for CommandPalette {
             .flex_col()
             .gap_2()
             .child(self.input.clone())
-            .child(results)
+            .child(results);
+        guic_core::OverlayFocus::new(focus_id, content)
+            .autofocus(self.autofocus.then(|| self.focus_handle.clone()))
+            .restore_focus(self.restore_focus)
+            .into_any_element()
     }
 }
 

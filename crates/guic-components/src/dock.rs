@@ -10,15 +10,106 @@ use serde::{Deserialize, Serialize};
 use std::{cell::Cell, collections::HashMap, rc::Rc};
 
 type DockCommandHandler = Rc<dyn Fn(&DockCommand, &mut Window, &mut App)>;
+type DockStackHeaderRenderer = Rc<dyn Fn(&DockTabs) -> AnyElement>;
 type DockTabBodyRenderer = Rc<dyn Fn(&DockTabSelection, &DockTab) -> AnyElement>;
 
 #[derive(Clone, Default)]
 struct DockRenderHandlers {
+    dock_id: SharedString,
+    window_id: Option<gpui::WindowId>,
     on_command: Option<DockCommandHandler>,
     tab_body_renderer: Option<DockTabBodyRenderer>,
     tab_scroll_handles: Rc<HashMap<SharedString, ScrollHandle>>,
     focus_handle: Option<FocusHandle>,
     focused_stack_id: Option<SharedString>,
+    split_limits: DockSplitLimits,
+    density: DockDensity,
+    show_pin_actions: bool,
+    show_stack_actions: bool,
+    close_button_visibility: CloseButtonVisibility,
+    close_policy: DockClosePolicy,
+    tab_renderer: Option<DockTabBodyRenderer>,
+    tab_actions_renderer: Option<DockTabBodyRenderer>,
+    stack_header_renderer: Option<DockStackHeaderRenderer>,
+}
+
+/// Pixel and ratio limits for pointer resizing. Ratios use thousandths.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DockSplitLimits {
+    /// Minimum size of each pane, excluding the handle.
+    pub minimum_pixels: Pixels,
+    /// Minimum share assigned to the first pane.
+    pub minimum_ratio: u16,
+    /// Maximum share assigned to the first pane.
+    pub maximum_ratio: u16,
+}
+
+impl Default for DockSplitLimits {
+    fn default() -> Self {
+        Self {
+            minimum_pixels: px(80.),
+            minimum_ratio: 1,
+            maximum_ratio: 999,
+        }
+    }
+}
+
+impl DockSplitLimits {
+    /// Clamps a ratio using the available split extent and handle size.
+    /// If both minimums cannot fit, divides the remaining space equally.
+    #[must_use]
+    pub fn clamp(self, ratio: u16, extent: Pixels, handle: Pixels) -> u16 {
+        let available = f32::from(extent - handle);
+        if !available.is_finite() || available <= 0. {
+            return 500;
+        }
+        let minimum = f32::from(self.minimum_pixels);
+        let minimum = if minimum.is_finite() {
+            minimum.max(0.)
+        } else {
+            80.
+        };
+        let pixel_ratio = (minimum / available * 1000.).ceil().min(500.) as u16;
+        let lower = self.minimum_ratio.clamp(1, 500).max(pixel_ratio);
+        let upper = self.maximum_ratio.clamp(500, 999).min(1000 - pixel_ratio);
+        ratio.clamp(lower, upper)
+    }
+}
+
+/// Dock spacing density.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum DockDensity {
+    /// Existing spacious presentation.
+    #[default]
+    Comfortable,
+    /// Compact tab chrome for dense desktop workspaces.
+    Compact,
+}
+
+/// Visibility of built-in tab close controls. Hidden controls retain their space.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum CloseButtonVisibility {
+    /// Always show close controls when closure is permitted.
+    #[default]
+    Always,
+    /// Show close controls only while hovering over the tab.
+    Hover,
+    /// Show close controls only on the selected tab.
+    Selected,
+    /// Show close controls on the selected or hovered tab.
+    HoverOrSelected,
+    /// Omit close controls entirely.
+    Never,
+}
+
+/// Policy applied to close commands, including keyboard and stack closure.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub enum DockClosePolicy {
+    /// Pinning controls order only; pinned tabs may close.
+    #[default]
+    AllowPinned,
+    /// Pinned tabs must be unpinned before any close operation.
+    ProtectPinned,
 }
 
 /// Split axis metadata for [`DockNode::Split`].
@@ -61,6 +152,10 @@ pub enum DockDropZone {
 /// Tab identity carried through a pointer or command-driven docking operation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DockDragPayload {
+    /// Source Dock identity; absent for legacy programmatic commands.
+    pub source_dock_id: Option<SharedString>,
+    /// Source window identity for the duration of the drag.
+    pub source_window_id: Option<gpui::WindowId>,
     /// Source stack identifier.
     pub stack_id: SharedString,
     /// Dragged tab identifier.
@@ -145,6 +240,17 @@ pub enum DockCommand {
         /// Drop destination.
         target: DockDropTarget,
     },
+    /// Requests host-mediated transfer. Applying this command never mutates a layout.
+    TransferTab {
+        /// Source ownership and stable tab identity.
+        payload: DockDragPayload,
+        /// Destination Dock identity.
+        destination_dock_id: SharedString,
+        /// Destination window identity.
+        destination_window_id: gpui::WindowId,
+        /// Destination stack and drop zone.
+        target: DockDropTarget,
+    },
     /// Close a tab.
     CloseTab(DockTabSelection),
     /// Close an entire stack.
@@ -207,6 +313,7 @@ pub struct DockStackSelection {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DockSplitResize {
     stack_id: SharedString,
+    split_id: Option<SharedString>,
     axis: DockAxis,
     ratio: u16,
 }
@@ -217,9 +324,23 @@ impl DockSplitResize {
     pub fn new(stack_id: impl Into<SharedString>, axis: DockAxis, ratio: u16) -> Self {
         Self {
             stack_id: stack_id.into(),
+            split_id: None,
             axis,
             ratio: clamp_ratio(ratio),
         }
+    }
+
+    /// Targets an exact persistent split instead of a stack-based legacy lookup.
+    #[must_use]
+    pub fn split_id(mut self, id: impl Into<SharedString>) -> Self {
+        self.split_id = Some(id.into());
+        self
+    }
+
+    /// Returns the exact split identity when present.
+    #[must_use]
+    pub fn target_split_id(&self) -> Option<&SharedString> {
+        self.split_id.as_ref()
     }
 
     /// Returns the first stack identifier inside the split being resized.
@@ -455,6 +576,9 @@ impl DockTabs {
 pub enum DockNode {
     /// Split layout with two child nodes.
     Split {
+        /// Persistent split identity. Legacy layouts assign missing IDs during normalization.
+        #[serde(default)]
+        id: SharedString,
         /// Split axis.
         axis: DockAxis,
         /// Ratio assigned to the first child.
@@ -473,6 +597,7 @@ impl DockNode {
     #[must_use]
     pub fn horizontal(first: DockNode, second: DockNode, ratio: u16) -> Self {
         Self::Split {
+            id: SharedString::default(),
             axis: DockAxis::Horizontal,
             ratio: clamp_ratio(ratio),
             first: Box::new(first),
@@ -484,6 +609,7 @@ impl DockNode {
     #[must_use]
     pub fn vertical(first: DockNode, second: DockNode, ratio: u16) -> Self {
         Self::Split {
+            id: SharedString::default(),
             axis: DockAxis::Vertical,
             ratio: clamp_ratio(ratio),
             first: Box::new(first),
@@ -548,6 +674,74 @@ impl DockNode {
                 }
             }
             Self::Tabs(_) => false,
+        }
+    }
+
+    /// Resizes exactly one split by persistent ID.
+    pub fn resize_split_by_id(&mut self, target: &str, ratio: u16) -> bool {
+        match self {
+            Self::Split {
+                id, ratio: current, ..
+            } if id.as_ref() == target => {
+                *current = clamp_ratio(ratio);
+                true
+            }
+            Self::Split { first, second, .. } => {
+                first.resize_split_by_id(target, ratio) || second.resize_split_by_id(target, ratio)
+            }
+            Self::Tabs(_) => false,
+        }
+    }
+
+    fn collect_split_ids(&self, ids: &mut std::collections::HashSet<SharedString>) {
+        if let Self::Split {
+            id, first, second, ..
+        } = self
+        {
+            if !id.is_empty() {
+                ids.insert(id.clone());
+            }
+            first.collect_split_ids(ids);
+            second.collect_split_ids(ids);
+        }
+    }
+
+    fn assign_split_ids(
+        &mut self,
+        used: &mut std::collections::HashSet<SharedString>,
+        reserved: &std::collections::HashSet<SharedString>,
+        next: &mut u64,
+    ) {
+        if let Self::Split {
+            id, first, second, ..
+        } = self
+        {
+            if id.is_empty() || !used.insert(id.clone()) {
+                loop {
+                    *id = format!("guic-split-{}", *next).into();
+                    *next = next.wrapping_add(1);
+                    if !reserved.contains(id) && used.insert(id.clone()) {
+                        break;
+                    }
+                }
+            }
+            first.assign_split_ids(used, reserved, next);
+            second.assign_split_ids(used, reserved, next);
+        }
+    }
+
+    fn has_pinned_tab(&self, stack_id: &str, tab_id: Option<&str>) -> bool {
+        match self {
+            Self::Split { first, second, .. } => {
+                first.has_pinned_tab(stack_id, tab_id) || second.has_pinned_tab(stack_id, tab_id)
+            }
+            Self::Tabs(stack) => {
+                stack.id.as_ref() == stack_id
+                    && stack
+                        .tabs
+                        .iter()
+                        .any(|tab| tab.pinned && tab_id.is_none_or(|id| tab.id.as_ref() == id))
+            }
         }
     }
 
@@ -683,24 +877,42 @@ impl DockNode {
         new_stack_id: impl Into<SharedString>,
         tab: DockTab,
     ) -> bool {
+        self.split_with_tab_ratio(target_stack_id, placement, new_stack_id, tab, 500)
+    }
+
+    fn split_with_tab_ratio(
+        &mut self,
+        target_stack_id: &str,
+        placement: DockPlacement,
+        new_stack_id: impl Into<SharedString>,
+        tab: DockTab,
+        initial_ratio: u16,
+    ) -> bool {
         match self {
             Self::Split { first, second, .. } => {
                 let new_stack_id = new_stack_id.into();
-                first.split_with_tab(
+                first.split_with_tab_ratio(
                     target_stack_id,
                     placement,
                     new_stack_id.clone(),
                     tab.clone(),
-                ) || second.split_with_tab(target_stack_id, placement, new_stack_id, tab)
+                    initial_ratio,
+                ) || second.split_with_tab_ratio(
+                    target_stack_id,
+                    placement,
+                    new_stack_id,
+                    tab,
+                    initial_ratio,
+                )
             }
             Self::Tabs(stack) if stack.id.as_ref() == target_stack_id => {
                 let existing = Self::Tabs(stack.clone());
                 let inserted = Self::Tabs(DockTabs::new(new_stack_id, vec![tab]));
                 *self = match placement {
-                    DockPlacement::Left => Self::horizontal(inserted, existing, 320),
-                    DockPlacement::Right => Self::horizontal(existing, inserted, 680),
-                    DockPlacement::Top => Self::vertical(inserted, existing, 320),
-                    DockPlacement::Bottom => Self::vertical(existing, inserted, 680),
+                    DockPlacement::Left => Self::horizontal(inserted, existing, initial_ratio),
+                    DockPlacement::Right => Self::horizontal(existing, inserted, initial_ratio),
+                    DockPlacement::Top => Self::vertical(inserted, existing, initial_ratio),
+                    DockPlacement::Bottom => Self::vertical(existing, inserted, initial_ratio),
                 };
                 true
             }
@@ -795,6 +1007,12 @@ pub struct DockLayout {
     root: DockNode,
     #[serde(default)]
     focused_stack_id: Option<SharedString>,
+    #[serde(default)]
+    next_split_id: u64,
+    #[serde(default = "default_split_ratio")]
+    initial_split_ratio: u16,
+    #[serde(default)]
+    close_policy: DockClosePolicy,
 }
 
 impl DockLayout {
@@ -802,10 +1020,29 @@ impl DockLayout {
     #[must_use]
     pub fn new(root: DockNode) -> Self {
         let focused_stack_id = root.first_stack_id();
-        Self {
+        let mut layout = Self {
             root,
             focused_stack_id,
-        }
+            next_split_id: 0,
+            initial_split_ratio: 500,
+            close_policy: DockClosePolicy::default(),
+        };
+        layout.normalize();
+        layout
+    }
+
+    /// Sets the first pane's share for future splits, in thousandths. Defaults to 500.
+    #[must_use]
+    pub fn initial_split_ratio(mut self, ratio: u16) -> Self {
+        self.initial_split_ratio = clamp_ratio(ratio);
+        self
+    }
+
+    /// Sets close semantics for both programmatic and UI commands.
+    #[must_use]
+    pub fn close_policy(mut self, policy: DockClosePolicy) -> Self {
+        self.close_policy = policy;
+        self
     }
 
     /// Returns the root node.
@@ -989,6 +1226,11 @@ impl DockLayout {
 
     /// Closes a tab in the given stack and collapses empty stacks automatically.
     pub fn close_tab(&mut self, stack_id: &str, tab_id: &str) -> bool {
+        if self.close_policy == DockClosePolicy::ProtectPinned
+            && self.root.has_pinned_tab(stack_id, Some(tab_id))
+        {
+            return false;
+        }
         let changed = self.root.remove_tab(stack_id, tab_id).is_some();
         self.normalize();
         changed
@@ -996,6 +1238,11 @@ impl DockLayout {
 
     /// Closes an entire tab stack and collapses adjacent splits when possible.
     pub fn close_stack(&mut self, stack_id: &str) -> bool {
+        if self.close_policy == DockClosePolicy::ProtectPinned
+            && self.root.has_pinned_tab(stack_id, None)
+        {
+            return false;
+        }
         let changed = self.root.remove_stack(stack_id).is_some();
         if changed {
             let _ = self.root.clear_stack(stack_id);
@@ -1019,15 +1266,19 @@ impl DockLayout {
             return false;
         }
         let new_stack_id = new_stack_id.into();
+        if !self.root.contains_stack(target_stack_id) || self.root.contains_stack(&new_stack_id) {
+            return false;
+        }
         let Some(tab) = self.root.remove_tab(from_stack_id, tab_id) else {
             return false;
         };
 
-        let changed = if self.root.split_with_tab(
+        let changed = if self.root.split_with_tab_ratio(
             target_stack_id,
             placement,
             new_stack_id.clone(),
             tab.clone(),
+            self.initial_split_ratio,
         ) {
             true
         } else {
@@ -1050,14 +1301,68 @@ impl DockLayout {
         tab: DockTab,
     ) -> bool {
         let new_stack_id = new_stack_id.into();
-        let changed =
-            self.root
-                .split_with_tab(target_stack_id, placement, new_stack_id.clone(), tab);
+        if !self.root.contains_stack(target_stack_id) || self.root.contains_stack(&new_stack_id) {
+            return false;
+        }
+        let changed = self.root.split_with_tab_ratio(
+            target_stack_id,
+            placement,
+            new_stack_id.clone(),
+            tab,
+            self.initial_split_ratio,
+        );
         if changed {
             self.focused_stack_id = Some(new_stack_id);
         }
         self.normalize();
         changed
+    }
+
+    /// Atomically moves a tab between two host-resolved layouts.
+    ///
+    /// The host must validate Dock/window ownership and approve resource movement
+    /// before calling this method. Invalid sources, destinations, or duplicate tab
+    /// identities leave both layouts unchanged. Moving a pinned tab is permitted.
+    /// To prepare a resource transaction, call this on layout clones and install
+    /// them only after the associated resource transfer succeeds.
+    pub fn transfer_tab_to(
+        &mut self,
+        destination: &mut Self,
+        selection: &DockTabSelection,
+        target: &DockDropTarget,
+    ) -> bool {
+        if !destination.root.contains_stack(&target.stack_id)
+            || destination
+                .stack_ids()
+                .iter()
+                .any(|id| destination.root.tab_index(id, selection.tab_id()).is_some())
+        {
+            return false;
+        }
+        let mut source = self.clone();
+        let mut next = destination.clone();
+        let Some(tab) = source
+            .root
+            .remove_tab(selection.stack_id(), selection.tab_id())
+        else {
+            return false;
+        };
+        let inserted = match target.zone {
+            DockDropZone::Center => next.insert_tab(&target.stack_id, tab),
+            zone => next.split_stack_with_tab(
+                &target.stack_id,
+                placement_for_drop_zone(zone),
+                target.new_stack_id.clone(),
+                tab,
+            ),
+        };
+        if !inserted {
+            return false;
+        }
+        source.normalize();
+        *self = source;
+        *destination = next;
+        true
     }
 
     /// Applies a pointer- or keyboard-originated dock command.
@@ -1125,8 +1430,13 @@ impl DockLayout {
             DockCommand::PinStack { selection, pinned } => {
                 self.pin_stack(selection.stack_id(), *pinned)
             }
+            DockCommand::TransferTab { .. } => false,
             DockCommand::ResizeSplit(resize) => {
-                self.resize_split(resize.stack_id(), resize.ratio())
+                if let Some(id) = resize.target_split_id() {
+                    self.root.resize_split_by_id(id, resize.ratio())
+                } else {
+                    self.resize_split(resize.stack_id(), resize.ratio())
+                }
             }
         }
     }
@@ -1160,6 +1470,10 @@ impl DockLayout {
 
     fn normalize(&mut self) {
         self.root.normalize();
+        let mut reserved = Default::default();
+        self.root.collect_split_ids(&mut reserved);
+        self.root
+            .assign_split_ids(&mut Default::default(), &reserved, &mut self.next_split_id);
         if self
             .focused_stack_id
             .as_deref()
@@ -1215,6 +1529,14 @@ fn placement_for_drop_zone(zone: DockDropZone) -> DockPlacement {
 /// ```
 #[derive(gpui::IntoElement)]
 pub struct Dock {
+    split_limits: DockSplitLimits,
+    density: DockDensity,
+    show_pin_actions: bool,
+    show_stack_actions: bool,
+    close_button_visibility: CloseButtonVisibility,
+    tab_renderer: Option<DockTabBodyRenderer>,
+    tab_actions_renderer: Option<DockTabBodyRenderer>,
+    stack_header_renderer: Option<DockStackHeaderRenderer>,
     id: SharedString,
     title: Option<SharedString>,
     layout: DockLayout,
@@ -1233,12 +1555,86 @@ impl Dock {
             id: id.into(),
             title: None,
             layout,
+            split_limits: DockSplitLimits::default(),
+            density: DockDensity::default(),
+            show_pin_actions: true,
+            show_stack_actions: true,
+            close_button_visibility: CloseButtonVisibility::Always,
+            tab_renderer: None,
+            tab_actions_renderer: None,
+            stack_header_renderer: None,
             on_command: None,
             focus_handle: None,
             keyboard_stack_id: None,
             tab_body_renderer: None,
             tab_scroll_handles: HashMap::new(),
         }
+    }
+
+    /// Configures pixel-aware pointer split limits.
+    #[must_use]
+    pub fn split_limits(mut self, limits: DockSplitLimits) -> Self {
+        self.split_limits = limits;
+        self
+    }
+
+    /// Configures root, pane, and tab spacing.
+    #[must_use]
+    pub fn density(mut self, density: DockDensity) -> Self {
+        self.density = density;
+        self
+    }
+
+    /// Shows or hides built-in pin controls.
+    #[must_use]
+    pub fn show_pin_actions(mut self, show: bool) -> Self {
+        self.show_pin_actions = show;
+        self
+    }
+
+    /// Shows or hides built-in stack actions independently of tab actions.
+    #[must_use]
+    pub fn show_stack_actions(mut self, show: bool) -> Self {
+        self.show_stack_actions = show;
+        self
+    }
+
+    /// Configures when permitted tab close controls are visible.
+    #[must_use]
+    pub fn close_button_visibility(mut self, visibility: CloseButtonVisibility) -> Self {
+        self.close_button_visibility = visibility;
+        self
+    }
+
+    /// Replaces tab label content while retaining selection and drag behavior.
+    #[must_use]
+    pub fn render_tab(
+        mut self,
+        renderer: impl Fn(&DockTabSelection, &DockTab) -> AnyElement + 'static,
+    ) -> Self {
+        self.tab_renderer = Some(Rc::new(renderer));
+        self
+    }
+
+    /// Replaces built-in tab actions. The host owns activation of custom controls.
+    #[must_use]
+    pub fn render_tab_actions(
+        mut self,
+        renderer: impl Fn(&DockTabSelection, &DockTab) -> AnyElement + 'static,
+    ) -> Self {
+        self.tab_actions_renderer = Some(Rc::new(renderer));
+        self
+    }
+
+    /// Replaces the complete stack header, including its tab strip and actions.
+    /// The host owns selection and drag controls in the replacement header.
+    #[must_use]
+    pub fn render_stack_header(
+        mut self,
+        renderer: impl Fn(&DockTabs) -> AnyElement + 'static,
+    ) -> Self {
+        self.stack_header_renderer = Some(Rc::new(renderer));
+        self
     }
 
     /// Sets an optional title above the dock.
@@ -1314,6 +1710,7 @@ impl Dock {
 impl RenderOnce for Dock {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = Theme::global(cx).clone();
+        let dock_id = self.id.clone();
         let root_selector = format!("guic-dock-root-{}", self.id);
         let active_selection = self
             .keyboard_stack_id
@@ -1340,7 +1737,11 @@ impl RenderOnce for Dock {
             .border_1()
             .border_color(theme.border())
             .bg(theme.background())
-            .p_3()
+            .p(if self.density == DockDensity::Compact {
+                px(4.)
+            } else {
+                px(12.)
+            })
             .flex()
             .flex_col()
             .gap_3();
@@ -1440,11 +1841,22 @@ impl RenderOnce for Dock {
             self.layout.root,
             &theme,
             DockRenderHandlers {
+                dock_id,
+                window_id: Some(_window.window_handle().window_id()),
                 on_command: self.on_command.clone(),
                 tab_body_renderer: self.tab_body_renderer.clone(),
                 tab_scroll_handles: Rc::new(self.tab_scroll_handles),
                 focus_handle: self.focus_handle.clone(),
                 focused_stack_id: self.layout.focused_stack_id.clone(),
+                split_limits: self.split_limits,
+                density: self.density,
+                show_pin_actions: self.show_pin_actions,
+                show_stack_actions: self.show_stack_actions,
+                close_button_visibility: self.close_button_visibility,
+                close_policy: self.layout.close_policy,
+                tab_renderer: self.tab_renderer,
+                tab_actions_renderer: self.tab_actions_renderer,
+                stack_header_renderer: self.stack_header_renderer,
             },
         ))
     }
@@ -1453,61 +1865,83 @@ impl RenderOnce for Dock {
 fn render_dock_node(node: DockNode, theme: &Theme, handlers: DockRenderHandlers) -> AnyElement {
     match node {
         DockNode::Split {
+            id,
             axis,
             ratio,
             first,
             second,
         } => {
-            let first_stack_id = first.first_stack_id();
-            let primary_share = ratio as f32 / 1000.0;
-            let secondary_share = 1.0 - primary_share;
-            let split_bounds = Rc::new(Cell::new(None::<Bounds<Pixels>>));
-            let split_bounds_sink = split_bounds.clone();
-            let bounds_canvas = canvas(
-                move |bounds, _window, _cx| {
-                    split_bounds_sink.set(Some(bounds));
+            let theme = theme.clone();
+            canvas(
+                move |bounds, window, cx| {
+                    let extent = match axis {
+                        DockAxis::Horizontal => bounds.size.width,
+                        DockAxis::Vertical => bounds.size.height,
+                    };
+                    let ratio = handlers.split_limits.clamp(ratio, extent, px(8.));
+                    let first_stack_id = first.first_stack_id();
+                    let primary_share = ratio as f32 / 1000.0;
+                    let secondary_share = 1.0 - primary_share;
+                    let split_bounds = Rc::new(Cell::new(None::<Bounds<Pixels>>));
+                    let split_bounds_sink = split_bounds.clone();
+                    let bounds_canvas = canvas(
+                        move |bounds, _window, _cx| {
+                            split_bounds_sink.set(Some(bounds));
+                        },
+                        |_bounds, _state, _window, _cx| {},
+                    )
+                    .absolute()
+                    .inset_0();
+                    let mut root = div()
+                        .relative()
+                        .w_full()
+                        .h_full()
+                        .min_w_0()
+                        .min_h_0()
+                        .overflow_hidden()
+                        .flex()
+                        .child(bounds_canvas);
+
+                    root = match axis {
+                        DockAxis::Horizontal => root.flex_row(),
+                        DockAxis::Vertical => root.flex_col(),
+                    };
+
+                    let mut element = root
+                        .child(render_weighted_node(
+                            *first,
+                            primary_share,
+                            axis,
+                            &theme,
+                            handlers.clone(),
+                        ))
+                        .child(render_split_handle(
+                            axis,
+                            ratio,
+                            first_stack_id,
+                            id,
+                            split_bounds,
+                            &handlers,
+                        ))
+                        .child(render_weighted_node(
+                            *second,
+                            secondary_share,
+                            axis,
+                            &theme,
+                            handlers,
+                        ))
+                        .into_any_element();
+                    element.layout_as_root(
+                        bounds.size.map(gpui::AvailableSpace::Definite),
+                        window,
+                        cx,
+                    );
+                    element.prepaint_at(bounds.origin, window, cx);
+                    element
                 },
-                |_bounds, _state, _window, _cx| {},
+                |_, mut element, window, cx| element.paint(window, cx),
             )
-            .absolute()
-            .inset_0();
-            let mut root = div()
-                .relative()
-                .w_full()
-                .h_full()
-                .min_w_0()
-                .min_h_0()
-                .overflow_hidden()
-                .flex()
-                .gap_3()
-                .child(bounds_canvas);
-
-            root = match axis {
-                DockAxis::Horizontal => root.flex_row(),
-                DockAxis::Vertical => root.flex_col(),
-            };
-
-            root.child(render_weighted_node(
-                *first,
-                primary_share,
-                axis,
-                theme,
-                handlers.clone(),
-            ))
-            .child(render_split_handle(
-                axis,
-                ratio,
-                first_stack_id,
-                split_bounds,
-                &handlers,
-            ))
-            .child(render_weighted_node(
-                *second,
-                secondary_share,
-                axis,
-                theme,
-                handlers,
-            ))
+            .size_full()
             .into_any_element()
         }
         DockNode::Tabs(tabs) => render_tabs_leaf(tabs, theme, handlers),
@@ -1547,6 +1981,7 @@ fn render_split_handle(
     axis: DockAxis,
     ratio: u16,
     first_stack_id: Option<SharedString>,
+    split_id: SharedString,
     split_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     handlers: &DockRenderHandlers,
 ) -> AnyElement {
@@ -1563,6 +1998,7 @@ fn render_split_handle(
         };
     };
 
+    let limits = handlers.split_limits;
     let selector = format!("guic-dock-split-resize-{stack_id}");
     let mut handle = div()
         .id(selector.clone())
@@ -1573,14 +2009,14 @@ fn render_split_handle(
         .on_mouse_down(gpui::MouseButton::Left, |_, _, _| {})
         .on_click({
             let stack_id = stack_id.clone();
+            let split_id = split_id.clone();
             let handler = handler.clone();
             move |_, window, cx| {
                 handler(
-                    &DockCommand::ResizeSplit(DockSplitResize::new(
-                        stack_id.clone(),
-                        axis,
-                        ratio.saturating_add(50),
-                    )),
+                    &DockCommand::ResizeSplit(
+                        DockSplitResize::new(stack_id.clone(), axis, ratio.saturating_add(50))
+                            .split_id(split_id.clone()),
+                    ),
                     window,
                     cx,
                 );
@@ -1593,18 +2029,23 @@ fn render_split_handle(
             let Some(bounds) = split_bounds.get() else {
                 return;
             };
-            let raw_ratio = match axis {
-                DockAxis::Horizontal => {
-                    let width = f32::from(bounds.size.width).max(1.0);
-                    ((f32::from(event.position.x - bounds.origin.x) / width) * 1000.0) as u16
-                }
-                DockAxis::Vertical => {
-                    let height = f32::from(bounds.size.height).max(1.0);
-                    ((f32::from(event.position.y - bounds.origin.y) / height) * 1000.0) as u16
-                }
+            let (extent, offset) = match axis {
+                DockAxis::Horizontal => (bounds.size.width, event.position.x - bounds.origin.x),
+                DockAxis::Vertical => (bounds.size.height, event.position.y - bounds.origin.y),
             };
+            let available = f32::from(extent - px(8.)).max(1.);
+            let raw_ratio =
+                (f32::from(offset - px(4.)) / available * 1000.).clamp(0., 1000.) as u16;
+            let extent = match axis {
+                DockAxis::Horizontal => bounds.size.width,
+                DockAxis::Vertical => bounds.size.height,
+            };
+            let raw_ratio = limits.clamp(raw_ratio, extent, px(8.));
             handler(
-                &DockCommand::ResizeSplit(DockSplitResize::new(stack_id.clone(), axis, raw_ratio)),
+                &DockCommand::ResizeSplit(
+                    DockSplitResize::new(stack_id.clone(), axis, raw_ratio)
+                        .split_id(split_id.clone()),
+                ),
                 window,
                 cx,
             );
@@ -1662,7 +2103,11 @@ fn render_tabs_leaf(tabs: DockTabs, theme: &Theme, handlers: DockRenderHandlers)
             })
             .pl_3()
             .pr_2()
-            .py_2();
+            .py(if handlers.density == DockDensity::Compact {
+                px(2.)
+            } else {
+                px(8.)
+            });
 
         let mut label = div()
             .id(format!("guic-dock-tab-{}-{}", tabs.id, tab.id))
@@ -1674,7 +2119,13 @@ fn render_tabs_leaf(tabs: DockTabs, theme: &Theme, handlers: DockRenderHandlers)
             .flex()
             .items_center()
             .gap_2()
-            .child(Label::new(tab.title.clone()).muted(!selected));
+            .child(if let Some(renderer) = &handlers.tab_renderer {
+                renderer(&selection, tab)
+            } else {
+                Label::new(tab.title.clone())
+                    .muted(!selected)
+                    .into_any_element()
+            });
 
         if let Some(badge) = &tab.badge {
             label = label.child(Badge::new(badge.clone()).variant(BadgeVariant::Primary));
@@ -1682,6 +2133,8 @@ fn render_tabs_leaf(tabs: DockTabs, theme: &Theme, handlers: DockRenderHandlers)
 
         if let Some(handler) = handlers.on_command.clone() {
             let drag_payload = DockDragPayload {
+                source_dock_id: Some(handlers.dock_id.clone()),
+                source_window_id: handlers.window_id,
                 stack_id: tabs.id.clone(),
                 tab_id: tab.id.clone(),
             };
@@ -1699,9 +2152,15 @@ fn render_tabs_leaf(tabs: DockTabs, theme: &Theme, handlers: DockRenderHandlers)
                 });
         }
 
-        chip = chip.child(label);
+        let hover_group: SharedString =
+            format!("{}-{}-{}-chrome", handlers.dock_id, tabs.id, tab.id).into();
+        chip = chip.group(hover_group.clone()).child(label);
 
-        if let Some(handler) = handlers.on_command.clone() {
+        if let Some(handler) = handlers
+            .on_command
+            .clone()
+            .filter(|_| handlers.show_pin_actions && handlers.tab_actions_renderer.is_none())
+        {
             let pin_selection = DockTabSelection::new(tabs.id.clone(), tab.id.clone());
             let pinned = tab.pinned;
             chip = chip.child(
@@ -1735,28 +2194,47 @@ fn render_tabs_leaf(tabs: DockTabs, theme: &Theme, handlers: DockRenderHandlers)
             );
         }
 
-        if let Some(handler) = handlers.on_command.clone() {
+        if let Some(handler) = handlers.on_command.clone().filter(|_| {
+            (!tab.pinned || handlers.close_policy == DockClosePolicy::AllowPinned)
+                && handlers.close_button_visibility != CloseButtonVisibility::Never
+                && handlers.tab_actions_renderer.is_none()
+        }) {
             let close_selection = DockTabSelection::new(tabs.id.clone(), tab.id.clone());
-            chip = chip.child(
-                div()
-                    .id(format!("guic-dock-tab-close-{}-{}", tabs.id, tab.id))
-                    .debug_selector({
-                        let stack_id = tabs.id.clone();
-                        let tab_id = tab.id.clone();
-                        move || format!("guic-dock-tab-close-{stack_id}-{tab_id}")
-                    })
-                    .px_1()
-                    .rounded(px(theme.radius.sm))
-                    .text_color(theme.muted_foreground())
-                    .hover(|style: gpui::StyleRefinement| style.bg(theme.secondary().opacity(0.3)))
-                    .cursor_pointer()
-                    .child("x")
-                    .on_click(move |_, window, cx| {
-                        handler(&DockCommand::CloseTab(close_selection.clone()), window, cx);
-                    }),
-            );
+            let close = div()
+                .id(format!("guic-dock-tab-close-{}-{}", tabs.id, tab.id))
+                .debug_selector({
+                    let stack_id = tabs.id.clone();
+                    let tab_id = tab.id.clone();
+                    move || format!("guic-dock-tab-close-{stack_id}-{tab_id}")
+                })
+                .px_1()
+                .rounded(px(theme.radius.sm))
+                .text_color(theme.muted_foreground())
+                .hover(|style: gpui::StyleRefinement| style.bg(theme.secondary().opacity(0.3)))
+                .cursor_pointer()
+                .child("x")
+                .on_click(move |_, window, cx| {
+                    handler(&DockCommand::CloseTab(close_selection.clone()), window, cx);
+                });
+            let close = match handlers.close_button_visibility {
+                CloseButtonVisibility::Hover => close
+                    .invisible()
+                    .group_hover(hover_group, |style| style.visible()),
+                CloseButtonVisibility::HoverOrSelected if !selected => close
+                    .invisible()
+                    .group_hover(hover_group, |style| style.visible()),
+                CloseButtonVisibility::Selected if !selected => close.invisible(),
+                _ => close,
+            };
+            chip = chip.child(close);
         }
 
+        if let Some(renderer) = &handlers.tab_actions_renderer {
+            chip = chip.child(renderer(
+                &DockTabSelection::new(tabs.id.clone(), tab.id.clone()),
+                tab,
+            ));
+        }
         tab_strip = tab_strip.child(chip);
     }
 
@@ -1771,45 +2249,54 @@ fn render_tabs_leaf(tabs: DockTabs, theme: &Theme, handlers: DockRenderHandlers)
         .border_color(theme.border())
         .child(tab_strip);
 
-    if let Some(handler) = handlers.on_command.clone() {
+    if let Some(handler) = handlers
+        .on_command
+        .clone()
+        .filter(|_| handlers.show_stack_actions)
+    {
         let stack_selection = DockStackSelection::new(tabs.id.clone());
-        header = header.child(
-            div()
-                .flex_shrink_0()
-                .id(format!("guic-dock-stack-pin-{}", tabs.id))
-                .debug_selector({
-                    let stack_id = tabs.id.clone();
-                    move || format!("guic-dock-stack-pin-{stack_id}")
-                })
-                .px_2()
-                .py_1()
-                .rounded(px(theme.radius.sm))
-                .text_color(if tabs.pinned {
-                    theme.primary()
-                } else {
-                    theme.muted_foreground()
-                })
-                .hover(|style: gpui::StyleRefinement| style.bg(theme.secondary().opacity(0.3)))
-                .cursor_pointer()
-                .child(if tabs.pinned { "Unpin" } else { "Pin" })
-                .on_click({
-                    let handler = handler.clone();
-                    let stack_selection = stack_selection.clone();
-                    let pinned = tabs.pinned;
-                    move |_, window, cx| {
-                        handler(
-                            &DockCommand::PinStack {
-                                selection: stack_selection.clone(),
-                                pinned: !pinned,
-                            },
-                            window,
-                            cx,
-                        );
-                    }
-                }),
-        );
+        if handlers.show_pin_actions {
+            header = header.child(
+                div()
+                    .flex_shrink_0()
+                    .id(format!("guic-dock-stack-pin-{}", tabs.id))
+                    .debug_selector({
+                        let stack_id = tabs.id.clone();
+                        move || format!("guic-dock-stack-pin-{stack_id}")
+                    })
+                    .px_2()
+                    .py_1()
+                    .rounded(px(theme.radius.sm))
+                    .text_color(if tabs.pinned {
+                        theme.primary()
+                    } else {
+                        theme.muted_foreground()
+                    })
+                    .hover(|style: gpui::StyleRefinement| style.bg(theme.secondary().opacity(0.3)))
+                    .cursor_pointer()
+                    .child(if tabs.pinned { "Unpin" } else { "Pin" })
+                    .on_click({
+                        let handler = handler.clone();
+                        let stack_selection = stack_selection.clone();
+                        let pinned = tabs.pinned;
+                        move |_, window, cx| {
+                            handler(
+                                &DockCommand::PinStack {
+                                    selection: stack_selection.clone(),
+                                    pinned: !pinned,
+                                },
+                                window,
+                                cx,
+                            );
+                        }
+                    }),
+            );
+        }
 
-        if !tabs.pinned {
+        if !tabs.pinned
+            && (handlers.close_policy == DockClosePolicy::AllowPinned
+                || tabs.tabs.iter().all(|tab| !tab.pinned))
+        {
             header = header.child(
                 div()
                     .flex_shrink_0()
@@ -1882,11 +2369,21 @@ fn render_tabs_leaf(tabs: DockTabs, theme: &Theme, handlers: DockRenderHandlers)
             theme.border()
         })
         .bg(theme.background())
-        .p_3()
+        .p(if handlers.density == DockDensity::Compact {
+            px(4.)
+        } else {
+            px(12.)
+        })
         .flex()
         .flex_col()
         .gap_3()
-        .child(header)
+        .child(
+            handlers
+                .stack_header_renderer
+                .as_ref()
+                .map(|renderer| renderer(&tabs))
+                .unwrap_or_else(|| header.into_any_element()),
+        )
         .child(
             div()
                 .flex_1()
@@ -1909,6 +2406,7 @@ fn render_tabs_leaf(tabs: DockTabs, theme: &Theme, handlers: DockRenderHandlers)
                 zone,
                 group.clone(),
                 handler.clone(),
+                handlers.dock_id.clone(),
                 theme,
             ));
         }
@@ -1922,6 +2420,7 @@ fn render_drop_zone(
     zone: DockDropZone,
     group: SharedString,
     handler: DockCommandHandler,
+    dock_id: SharedString,
     theme: &Theme,
 ) -> AnyElement {
     let zone_name = match zone {
@@ -1942,18 +2441,33 @@ fn render_drop_zone(
         .group_drag_over::<DockDragPayload>(group, |style| style.visible())
         .on_drop(move |payload: &DockDragPayload, window, cx| {
             let new_stack_id = format!("{}-{}-{}", stack_id, payload.tab_id, zone_name);
-            handler(
-                &DockCommand::DropTab {
+            let target = DockDropTarget {
+                stack_id: stack_id.clone(),
+                zone,
+                new_stack_id: new_stack_id.into(),
+            };
+            let destination_window_id = window.window_handle().window_id();
+            let foreign = payload
+                .source_dock_id
+                .as_ref()
+                .is_some_and(|id| id != &dock_id)
+                || payload
+                    .source_window_id
+                    .is_some_and(|id| id != destination_window_id);
+            let command = if foreign {
+                DockCommand::TransferTab {
                     payload: payload.clone(),
-                    target: DockDropTarget {
-                        stack_id: stack_id.clone(),
-                        zone,
-                        new_stack_id: new_stack_id.into(),
-                    },
-                },
-                window,
-                cx,
-            );
+                    destination_dock_id: dock_id.clone(),
+                    destination_window_id,
+                    target,
+                }
+            } else {
+                DockCommand::DropTab {
+                    payload: payload.clone(),
+                    target,
+                }
+            };
+            handler(&command, window, cx);
         });
 
     target = match zone {
@@ -1978,8 +2492,12 @@ fn render_drop_zone(
     target.into_any_element()
 }
 
+fn default_split_ratio() -> u16 {
+    500
+}
+
 fn clamp_ratio(ratio: u16) -> u16 {
-    ratio.clamp(150, 850)
+    ratio.clamp(1, 999)
 }
 
 #[cfg(test)]
@@ -2098,6 +2616,35 @@ mod tests {
     }
 
     #[test]
+    fn transfer_is_atomic_and_preserves_pinned_identity() {
+        let mut source = DockLayout::new(DockNode::Tabs(DockTabs::new(
+            "source",
+            vec![DockTab::new("terminal", "Terminal", "PTY").pinned(true)],
+        )));
+        let mut destination = DockLayout::new(DockNode::Tabs(DockTabs::new("destination", vec![])));
+        let selection = DockTabSelection::new("source", "terminal");
+        let mut target = DockDropTarget {
+            stack_id: "missing".into(),
+            zone: DockDropZone::Center,
+            new_stack_id: "new".into(),
+        };
+        let before = source.to_json().expect("source");
+        let dest_before = destination.to_json().expect("destination");
+        assert!(!source.transfer_tab_to(&mut destination, &selection, &target));
+        assert_eq!(source.to_json().expect("source"), before);
+        assert_eq!(destination.to_json().expect("destination"), dest_before);
+        target.stack_id = "destination".into();
+        assert!(source.transfer_tab_to(&mut destination, &selection, &target));
+        assert_eq!(source.tab_count(), 0);
+        assert!(
+            destination
+                .root
+                .has_pinned_tab("destination", Some("terminal"))
+        );
+        assert!(!source.transfer_tab_to(&mut destination, &selection, &target));
+    }
+
+    #[test]
     fn dock_layout_counts_leaves_and_tabs() {
         let layout = sample_layout();
         assert_eq!(layout.leaf_count(), 3);
@@ -2117,6 +2664,8 @@ mod tests {
         ))));
         assert!(layout.apply(&DockCommand::DropTab {
             payload: DockDragPayload {
+                source_dock_id: None,
+                source_window_id: None,
                 stack_id: "sidebar".into(),
                 tab_id: "files".into(),
             },
@@ -2130,6 +2679,8 @@ mod tests {
 
         assert!(layout.apply(&DockCommand::DropTab {
             payload: DockDragPayload {
+                source_dock_id: None,
+                source_window_id: None,
                 stack_id: "editor".into(),
                 tab_id: "files".into(),
             },
@@ -2145,6 +2696,8 @@ mod tests {
         assert!(layout.move_tab_to_stack("files-pane", "files", "editor"));
         assert!(layout.apply(&DockCommand::DropTab {
             payload: DockDragPayload {
+                source_dock_id: None,
+                source_window_id: None,
                 stack_id: "editor".into(),
                 tab_id: "files".into(),
             },
@@ -2163,6 +2716,8 @@ mod tests {
         let original = layout.clone();
         assert!(!layout.apply(&DockCommand::DropTab {
             payload: DockDragPayload {
+                source_dock_id: None,
+                source_window_id: None,
                 stack_id: "sidebar".into(),
                 tab_id: "files".into(),
             },
@@ -2176,6 +2731,8 @@ mod tests {
 
         assert!(!layout.apply(&DockCommand::DropTab {
             payload: DockDragPayload {
+                source_dock_id: None,
+                source_window_id: None,
                 stack_id: "editor".into(),
                 tab_id: "main".into(),
             },
@@ -2452,7 +3009,7 @@ mod tests {
         match low {
             DockNode::Split { axis, ratio, .. } => {
                 assert_eq!(axis, DockAxis::Horizontal);
-                assert_eq!(ratio, 150);
+                assert_eq!(ratio, 10);
             }
             DockNode::Tabs(_) => unreachable!("expected split"),
         }
@@ -2460,10 +3017,104 @@ mod tests {
         match high {
             DockNode::Split { axis, ratio, .. } => {
                 assert_eq!(axis, DockAxis::Vertical);
-                assert_eq!(ratio, 850);
+                assert_eq!(ratio, 990);
             }
             DockNode::Tabs(_) => unreachable!("expected split"),
         }
+    }
+
+    #[test]
+    fn split_defaults_and_transfer_commands_preserve_ownership() {
+        let mut layout = DockLayout::new(DockNode::Tabs(DockTabs::new(
+            "a",
+            vec![DockTab::new("a", "A", "")],
+        )))
+        .initial_split_ratio(600);
+        assert!(layout.split_stack_with_tab(
+            "a",
+            DockPlacement::Right,
+            "b",
+            DockTab::new("b", "B", "")
+        ));
+        match layout.root() {
+            DockNode::Split { ratio, .. } => assert_eq!(*ratio, 600),
+            _ => unreachable!(),
+        }
+        let before = layout.clone();
+        assert!(!layout.split_stack_with_moved_tab("a", "a", "missing", DockPlacement::Right, "c"));
+        assert_eq!(layout, before);
+        assert!(!layout.apply(&DockCommand::TransferTab {
+            payload: DockDragPayload {
+                source_dock_id: Some("source".into()),
+                source_window_id: Some(gpui::WindowId::from(1)),
+                stack_id: "a".into(),
+                tab_id: "a".into()
+            },
+            destination_dock_id: "destination".into(),
+            destination_window_id: gpui::WindowId::from(2),
+            target: DockDropTarget {
+                stack_id: "b".into(),
+                zone: DockDropZone::Center,
+                new_stack_id: "unused".into()
+            },
+        }));
+        assert_eq!(layout, before);
+    }
+
+    #[test]
+    fn persistent_split_resize_does_not_touch_ancestor() {
+        let leaf = |id: &str| {
+            DockNode::Tabs(DockTabs::new(
+                id.to_owned(),
+                vec![DockTab::new(id.to_owned(), id.to_owned(), "")],
+            ))
+        };
+        let mut layout = DockLayout::new(DockNode::horizontal(
+            leaf("a"),
+            DockNode::vertical(leaf("b"), leaf("c"), 500),
+            500,
+        ));
+        let id = match layout.root() {
+            DockNode::Split { second, .. } => match second.as_ref() {
+                DockNode::Split { id, .. } => id.clone(),
+                _ => unreachable!(),
+            },
+            _ => unreachable!(),
+        };
+        assert!(layout.apply(&DockCommand::ResizeSplit(
+            super::DockSplitResize::new("b", DockAxis::Vertical, 700).split_id(id.clone())
+        )));
+        match layout.root() {
+            DockNode::Split { ratio, second, .. } => {
+                assert_eq!(*ratio, 500);
+                match second.as_ref() {
+                    DockNode::Split { ratio, .. } => assert_eq!(*ratio, 700),
+                    _ => unreachable!(),
+                }
+            }
+            _ => unreachable!(),
+        }
+        let restored =
+            DockLayout::from_json(&layout.to_json().expect("serialize")).expect("restore");
+        assert_eq!(layout, restored);
+        assert!(layout.root.resize_split_by_id(&id, 300));
+    }
+
+    #[test]
+    fn pixel_limits_and_protected_close_are_enforced() {
+        let limits = super::DockSplitLimits::default();
+        assert_eq!(limits.clamp(1, px(1008.), px(8.)), 80);
+        assert_eq!(limits.clamp(999, px(1008.), px(8.)), 920);
+        assert_eq!(limits.clamp(100, px(100.), px(8.)), 500);
+        let mut layout = DockLayout::new(DockNode::Tabs(DockTabs::new(
+            "a",
+            vec![DockTab::new("p", "Pinned", "").pinned(true)],
+        )))
+        .close_policy(super::DockClosePolicy::ProtectPinned);
+        assert!(!layout.close_tab("a", "p"));
+        assert!(!layout.close_stack("a"));
+        assert!(layout.pin_tab("a", "p", false));
+        assert!(layout.close_tab("a", "p"));
     }
 
     #[test]
@@ -2753,5 +3404,45 @@ mod tests {
         }
         assert!(sidebar.origin.x + sidebar.size.width <= editor.origin.x);
         assert!(editor.origin.y + editor.size.height <= console.origin.y);
+    }
+    struct ResizePolicyHarness {
+        width: f32,
+    }
+    impl Render for ResizePolicyHarness {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl gpui::IntoElement {
+            div().w(px(self.width)).h(px(300.)).child(Dock::new(
+                "resize-policy",
+                DockLayout::new(DockNode::horizontal(
+                    DockNode::Tabs(DockTabs::new("a", vec![DockTab::new("a", "A", "A")])),
+                    DockNode::Tabs(DockTabs::new("b", vec![DockTab::new("b", "B", "B")])),
+                    10,
+                )),
+            ))
+        }
+    }
+    #[gpui::test]
+    fn dock_window_resize_enforces_pixel_minimums(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            guic_core::init(cx);
+            guic_tokens::init(cx);
+            crate::init(cx);
+        });
+        let (view, cx) = cx.add_window_view(|_, _| ResizePolicyHarness { width: 800. });
+        for width in [800., 400., 180., 120., 800.] {
+            view.update(cx, |view, cx| {
+                view.width = width;
+                cx.notify();
+            });
+            let first = cx.debug_bounds("guic-dock-leaf-a").expect("first");
+            let second = cx.debug_bounds("guic-dock-leaf-b").expect("second");
+            if width >= 400. {
+                assert!(first.size.width >= px(80.), "{first:?}");
+                assert!(second.size.width >= px(80.));
+            } else {
+                assert!((f32::from(first.size.width - second.size.width)).abs() <= 1.);
+            }
+            assert!(first.right() <= second.left());
+            assert!(second.right() <= px(width));
+        }
     }
 }

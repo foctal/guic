@@ -123,7 +123,7 @@ impl InputNumber {
     /// Makes the control keyboard-focusable so up/down arrows adjust the value.
     #[must_use]
     pub fn focusable(mut self, focus_handle: FocusHandle) -> Self {
-        self.focus_handle = Some(focus_handle);
+        self.focus_handle = Some(focus_handle.tab_stop(true));
         self
     }
 
@@ -152,11 +152,8 @@ impl RenderOnce for InputNumber {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = Theme::global(cx);
         let accessibility_label = self.id.clone();
-        let (height, text_size) = match self.size {
-            ComponentSize::Small => (px(30.0), px(theme.typography.text_sm)),
-            ComponentSize::Medium => (px(36.0), px(theme.typography.text_md)),
-            ComponentSize::Large => (px(44.0), px(theme.typography.text_lg)),
-        };
+        let metrics = self.size.control_metrics(theme);
+        let (height, text_size) = (metrics.height, metrics.font_size);
 
         let at_min = self.value <= self.min;
         let at_max = self.value >= self.max;
@@ -167,7 +164,7 @@ impl RenderOnce for InputNumber {
             let on_change = self.on_change.clone();
             IconButton::new(IconName::Minus)
                 .variant(ButtonVariant::Secondary)
-                .size(ComponentSize::Small)
+                .size(self.size)
                 .label("Decrement")
                 .disabled(self.disabled || at_min)
                 .on_click(move |_event, window, cx| {
@@ -180,7 +177,7 @@ impl RenderOnce for InputNumber {
             let on_change = self.on_change.clone();
             IconButton::new(IconName::Plus)
                 .variant(ButtonVariant::Secondary)
-                .size(ComponentSize::Small)
+                .size(self.size)
                 .label("Increment")
                 .disabled(self.disabled || at_max)
                 .on_click(move |_event, window, cx| {

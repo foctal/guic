@@ -5,17 +5,17 @@ runtime to the application manifest:
 
 ```toml
 [dependencies]
-guic = "0.1.0"
-gpui = { package = "guic-gpui", version = "=0.2.0" }
+guic = "0.2.0"
+gpui = { package = "guic-gpui", version = "=0.3.1" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-gpui_platform = { package = "guic-gpui-platform", version = "=0.2.0", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
+gpui_platform = { package = "guic-gpui-platform", version = "=0.3.1", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-gpui_platform = { package = "guic-gpui-platform", version = "=0.2.0", features = ["font-kit"] }
+gpui_platform = { package = "guic-gpui-platform", version = "=0.3.1", features = ["font-kit"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-gpui_platform = { package = "guic-gpui-platform", version = "=0.2.0" }
+gpui_platform = { package = "guic-gpui-platform", version = "=0.3.1" }
 ```
 
 Before the public crates are available, replace the `guic` dependency with a
@@ -25,7 +25,7 @@ pinned Git revision:
 guic = { git = "https://github.com/foctal/guic", rev = "<audited-revision>" }
 ```
 
-Do not use a moving branch for reproducible builds. GUIC `0.1.x` is a preview;
+Do not use a moving branch for reproducible builds. GUIC `0.2.x` is a preview;
 enable only the subsystem features the application needs and review
 [API Stability](api-stability.md) before upgrading.
 

@@ -1,10 +1,12 @@
 use crate::{BoolHandler, ComponentSize, IndexHandler};
 use gpui::{
-    App, ClickEvent, Empty, FocusHandle, InteractiveElement as _, IntoElement, KeyDownEvent,
-    ParentElement as _, RenderOnce, SharedString, StatefulInteractiveElement as _, Styled as _,
-    Window, div, px,
+    App, ClickEvent, FocusHandle, InteractiveElement as _, IntoElement, KeyDownEvent,
+    ParentElement as _, Pixels, RenderOnce, SharedString, StatefulInteractiveElement as _,
+    Styled as _, Window, div, px,
 };
-use guic_core::{AccessibilityElementExt as _, AccessibilityProps, Role};
+use guic_core::{
+    AccessibilityElementExt as _, AccessibilityProps, OverlayPriority, Role, overlay_portal,
+};
 use guic_icons::{Icon, IconName};
 use guic_tokens::Theme;
 use std::rc::Rc;
@@ -39,10 +41,28 @@ impl SelectItem {
     }
 }
 
-/// A controlled select component with an inline dropdown menu.
+/// Width policy for the floating options surface.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum SelectMenuWidth {
+    /// Exactly match the trigger width.
+    #[default]
+    MatchTrigger,
+    /// Use the intrinsic option width, limited by the viewport.
+    Content,
+    /// Use an explicit width, limited by the viewport.
+    Fixed(Pixels),
+    /// Grow for content while remaining at least as wide as the trigger.
+    MinTriggerWidth,
+}
+
+/// A controlled select component with a viewport-constrained overlay menu.
 #[derive(gpui::IntoElement)]
 pub struct Select {
     id: SharedString,
+    width: Option<Pixels>,
+    menu_width: SelectMenuWidth,
+    max_menu_height: Pixels,
+    exclusive_group: Option<SharedString>,
     items: Vec<SelectItem>,
     selected: Option<usize>,
     placeholder: SharedString,
@@ -62,6 +82,10 @@ impl Select {
     pub fn new(id: impl Into<SharedString>) -> Self {
         Self {
             id: id.into(),
+            width: None,
+            menu_width: SelectMenuWidth::default(),
+            max_menu_height: px(320.),
+            exclusive_group: Some("guic-selects".into()),
             items: Vec::new(),
             selected: None,
             placeholder: "Select an option".into(),
@@ -74,6 +98,46 @@ impl Select {
             on_toggle: None,
             on_select: None,
         }
+    }
+
+    /// Sets a window-scoped exclusive group. Opening requests closure of its previous member.
+    /// The default group is shared by all Selects. Pass None for independent menus.
+    #[must_use]
+    pub fn exclusive_group(mut self, group: Option<SharedString>) -> Self {
+        self.exclusive_group = group;
+        self
+    }
+
+    /// Sets the trigger width. The default fills available width.
+    #[must_use]
+    pub fn width(mut self, width: Pixels) -> Self {
+        if f32::from(width).is_finite() {
+            self.width = Some(width.max(px(1.)));
+        }
+        self
+    }
+
+    /// Sets the floating menu width policy.
+    #[must_use]
+    pub fn menu_width(mut self, policy: SelectMenuWidth) -> Self {
+        if let SelectMenuWidth::Fixed(width) = policy {
+            if !f32::from(width).is_finite() {
+                return self;
+            }
+            self.menu_width = SelectMenuWidth::Fixed(width.max(px(1.)));
+        } else {
+            self.menu_width = policy;
+        }
+        self
+    }
+
+    /// Limits the menu height; overflowing options scroll internally.
+    #[must_use]
+    pub fn max_menu_height(mut self, height: Pixels) -> Self {
+        if f32::from(height).is_finite() {
+            self.max_menu_height = height.max(px(1.));
+        }
+        self
     }
 
     /// Replaces the option list.
@@ -135,7 +199,7 @@ impl Select {
     /// Sets an application-owned focus handle for programmatic focus control.
     #[must_use]
     pub fn focusable(mut self, focus_handle: FocusHandle) -> Self {
-        self.focus_handle = Some(focus_handle);
+        self.focus_handle = Some(focus_handle.tab_stop(true));
         self
     }
 
@@ -197,14 +261,61 @@ fn typeahead_index(items: &[SelectItem], selected: Option<usize>, query: &str) -
     })
 }
 
+#[derive(Default)]
+struct SelectScrollState {
+    handle: gpui::ScrollHandle,
+    member: guic_core::OverlayGroupMember,
+    group: Option<SharedString>,
+    open: bool,
+    selected: Option<SharedString>,
+}
+
 impl RenderOnce for Select {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let scroll = _window.use_keyed_state(format!("{}-scroll-state", self.id), cx, |_, _| {
+            SelectScrollState::default()
+        });
+        let scroll_handle = scroll.update(cx, |state, cx| {
+            let selected = self
+                .selected
+                .and_then(|index| self.items.get(index))
+                .map(|item| item.id.clone());
+            let open = self.expanded && !self.disabled;
+            if state.open
+                && (!open || state.group != self.exclusive_group)
+                && let Some(group) = &state.group
+            {
+                state.member.deactivate(group, _window, cx);
+            }
+            if open
+                && (!state.open || state.group != self.exclusive_group)
+                && let (Some(group), Some(on_toggle)) =
+                    (&self.exclusive_group, self.on_toggle.clone())
+            {
+                state
+                    .member
+                    .activate(group.clone(), _window, cx, move |window, cx| {
+                        on_toggle(&false, window, cx)
+                    });
+            }
+            state.group = self.exclusive_group.clone();
+            if open
+                && (!state.open || state.selected != selected)
+                && let Some(index) = self.selected.filter(|index| *index < self.items.len())
+            {
+                let handle = state.handle.clone();
+                _window.on_next_frame(move |window, _| {
+                    handle.scroll_to_item(index);
+                    window.refresh();
+                });
+            }
+            state.open = open;
+            state.selected = selected;
+            state.handle.clone()
+        });
         let theme = Theme::global(cx);
-        let (height, text_size) = match self.size {
-            ComponentSize::Small => (px(30.0), px(theme.typography.text_sm)),
-            ComponentSize::Medium => (px(36.0), px(theme.typography.text_md)),
-            ComponentSize::Large => (px(44.0), px(theme.typography.text_lg)),
-        };
+        let metrics = self.size.control_metrics(theme);
+        let (height, text_size) = (metrics.height, metrics.font_size);
         let selected_label = self
             .selected
             .and_then(|index| self.items.get(index))
@@ -215,7 +326,6 @@ impl RenderOnce for Select {
             .clone()
             .unwrap_or_else(|| self.id.clone());
 
-        let mut root = div().w_full().flex().flex_col().gap_2();
         let mut trigger = div()
             .id(self.id.clone())
             .accessibility(
@@ -254,6 +364,10 @@ impl RenderOnce for Select {
                 })
                 .color(theme.muted_foreground()),
             );
+
+        if let Some(width) = self.width {
+            trigger = trigger.w(width);
+        }
 
         let interactive = self.on_toggle.is_some() || self.on_select.is_some();
         if self.disabled {
@@ -344,18 +458,18 @@ impl RenderOnce for Select {
                     });
             }
         }
-        root = root.child(trigger);
+        let mut root = crate::behavioral_trigger::BehavioralTrigger::new(trigger);
 
-        if self.expanded {
+        if self.expanded && !self.disabled {
             let mut menu = div()
                 .id(format!("{}-menu", self.id))
                 .accessibility(
                     AccessibilityProps::new(Role::ListBox).label(format!("{} options", self.id)),
                 )
-                .w_full()
+                .debug_selector(|| format!("guic-select-menu-{}", self.id))
+                .overflow_y_scroll()
+                .track_scroll(&scroll_handle)
                 .rounded(px(theme.radius.md))
-                .border_1()
-                .border_color(theme.border())
                 .bg(theme.background())
                 .shadow_lg()
                 .flex()
@@ -381,6 +495,7 @@ impl RenderOnce for Select {
                             .disabled(item.disabled),
                     )
                     .debug_selector(|| format!("guic-select-item-{}", index))
+                    .flex_shrink_0()
                     .px(px(theme.spacing.x4))
                     .py(px(theme.spacing.x3))
                     .text_color(if item.disabled {
@@ -400,6 +515,8 @@ impl RenderOnce for Select {
                 menu = if item.disabled {
                     menu.child(row.opacity(0.5))
                 } else if let Some(on_select) = self.on_select.clone() {
+                    let on_toggle = self.on_toggle.clone();
+                    let focus = self.focus_handle.clone();
                     menu.child(
                         row.cursor_pointer()
                             .hover({
@@ -407,7 +524,13 @@ impl RenderOnce for Select {
                                 move |style: gpui::StyleRefinement| style.bg(hover)
                             })
                             .on_click(move |_event: &ClickEvent, window, cx| {
-                                (on_select)(&index, window, cx)
+                                (on_select)(&index, window, cx);
+                                if let Some(on_toggle) = &on_toggle {
+                                    on_toggle(&false, window, cx);
+                                }
+                                if let Some(focus) = &focus {
+                                    focus.focus(window, cx);
+                                }
                             }),
                     )
                 } else {
@@ -415,9 +538,39 @@ impl RenderOnce for Select {
                 };
             }
 
-            root = root.child(menu);
-        } else {
-            root = root.child(Empty);
+            if let Some(on_toggle) = self.on_toggle.clone() {
+                menu = menu.on_mouse_down_out(move |_, window, cx| on_toggle(&false, window, cx));
+            }
+            root = root.anchored_overlay(move |bounds, window, _cx| {
+                let viewport = window.viewport_size();
+                let below = (viewport.height - bounds.bottom()).max(px(0.));
+                let above = bounds.top().max(px(0.));
+                let flip = below < self.max_menu_height && above > below;
+                let available = if flip { above } else { below };
+                menu = menu
+                    .max_h(self.max_menu_height.min(available))
+                    .max_w(viewport.width);
+                menu = match self.menu_width {
+                    SelectMenuWidth::MatchTrigger => menu.w(bounds.size.width.min(viewport.width)),
+                    SelectMenuWidth::Content => menu,
+                    SelectMenuWidth::Fixed(width) => menu.w(width.min(viewport.width)),
+                    SelectMenuWidth::MinTriggerWidth => {
+                        menu.min_w(bounds.size.width.min(viewport.width))
+                    }
+                };
+                let (anchor, position) = if flip {
+                    (gpui::Anchor::BottomLeft, bounds.origin)
+                } else {
+                    (gpui::Anchor::TopLeft, bounds.bottom_left())
+                };
+                overlay_portal(
+                    gpui::anchored()
+                        .anchor(anchor)
+                        .position(position)
+                        .child(menu),
+                    OverlayPriority::FLOATING,
+                )
+            });
         }
 
         root

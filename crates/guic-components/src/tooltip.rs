@@ -5,9 +5,6 @@ use gpui::{
 };
 use guic_core::{AccessibilityElementExt as _, AccessibilityProps, Role};
 use guic_tokens::Theme;
-use std::sync::atomic::{AtomicUsize, Ordering};
-
-static NEXT_TOOLTIP_ID: AtomicUsize = AtomicUsize::new(1);
 
 /// A tooltip wrapper that uses GPUI's native tooltip deployment behavior.
 #[derive(gpui::IntoElement)]
@@ -18,27 +15,29 @@ pub struct Tooltip {
 }
 
 impl Tooltip {
-    /// Creates a new tooltip wrapper.
+    /// Creates a wrapper with stable call-site identity. Use `.id(...)` in loops.
     #[must_use]
+    #[track_caller]
     pub fn new(child: impl IntoElement, message: impl Into<SharedString>) -> Self {
         Self {
-            id: format!(
-                "guic-tooltip-trigger-{}",
-                NEXT_TOOLTIP_ID.fetch_add(1, Ordering::Relaxed)
-            )
-            .into(),
+            id: format!("guic-tooltip-{}", std::panic::Location::caller()).into(),
             child: child.into_any_element(),
             message: message.into(),
         }
+    }
+    /// Sets stable identity. Use a unique ID for siblings created at the same call site.
+    #[must_use]
+    pub fn id(mut self, id: impl Into<SharedString>) -> Self {
+        self.id = id.into();
+        self
     }
 }
 
 impl RenderOnce for Tooltip {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let message = self.message.clone();
-        div()
+        crate::behavioral_trigger::BehavioralTrigger::new(self.child)
             .id(self.id)
-            .child(self.child)
             .tooltip(move |_window, cx: &mut App| -> AnyView {
                 cx.new(|_| TooltipBubble {
                     message: message.clone(),

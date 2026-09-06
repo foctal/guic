@@ -14,6 +14,8 @@ use std::rc::Rc;
 pub struct Dialog {
     id: SharedString,
     open: bool,
+    autofocus: Option<gpui::FocusHandle>,
+    restore_focus: bool,
     title: Option<SharedString>,
     description: Option<SharedString>,
     content: Option<gpui::AnyElement>,
@@ -31,6 +33,8 @@ impl Dialog {
         Self {
             id: id.into(),
             open: false,
+            autofocus: None,
+            restore_focus: true,
             title: None,
             description: None,
             content: None,
@@ -40,6 +44,20 @@ impl Dialog {
             on_confirm: None,
             on_cancel: None,
         }
+    }
+
+    /// Focuses a child after the dialog mounts.
+    #[must_use]
+    pub fn autofocus_target(mut self, target: gpui::FocusHandle) -> Self {
+        self.autofocus = Some(target);
+        self
+    }
+
+    /// Restores the previously focused control on close. Keep the closed dialog rendered.
+    #[must_use]
+    pub fn restore_focus(mut self, restore: bool) -> Self {
+        self.restore_focus = restore;
+        self
     }
 
     /// Sets whether the dialog is visible.
@@ -114,10 +132,21 @@ impl Dialog {
 
 impl RenderOnce for Dialog {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let focus_id = format!("{}-focus-lifecycle", self.id);
         if !self.open {
-            return Empty.into_any_element();
+            return guic_core::OverlayFocus::new(focus_id, Empty)
+                .open(false)
+                .restore_focus(self.restore_focus)
+                .into_any_element();
         }
 
+        let fallback =
+            _window.use_keyed_state(format!("{}-default-focus", self.id), cx, |_, cx| {
+                cx.focus_handle()
+            });
+        let fallback = fallback.read(cx).clone();
+        let target = self.autofocus.or_else(|| Some(fallback.clone()));
+        let trap_id = format!("{}-focus-trap", self.id);
         let theme = Theme::global(cx);
         let mut footer = div().flex().flex_wrap().justify_end().gap_3();
         if let Some(label) = self.secondary_label {
@@ -147,6 +176,7 @@ impl RenderOnce for Dialog {
         let dialog_label = self.title.clone().unwrap_or_else(|| self.id.clone());
         let mut card = div()
             .id(self.id)
+            .track_focus(&fallback)
             .accessibility(AccessibilityProps::new(Role::Dialog).label(dialog_label))
             .debug_selector(|| "guic-dialog-card".to_owned())
             .w(px(480.0))
@@ -209,16 +239,23 @@ impl RenderOnce for Dialog {
             scrim
         };
 
-        overlay_portal(
-            div()
-                .absolute()
-                .inset_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(scrim)
-                .child(card),
+        let portal = overlay_portal(
+            guic_core::FocusTrap::new(
+                trap_id,
+                div()
+                    .absolute()
+                    .inset_0()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(scrim)
+                    .child(card),
+            ),
             OverlayPriority::MODAL,
-        )
+        );
+        guic_core::OverlayFocus::new(focus_id, portal)
+            .autofocus(target)
+            .restore_focus(self.restore_focus)
+            .into_any_element()
     }
 }

@@ -5,7 +5,7 @@ remain application-owner responsibilities.
 
 ## Current Distribution Boundary
 
-GUIC pins `guic-gpui` and `guic-gpui-platform` 0.2.0 from crates.io. These
+GUIC pins `guic-gpui` and `guic-gpui-platform` 0.3.1 from crates.io. These
 packages contain the accessibility and platform APIs used by GUIC, so GPUI no
 longer prevents GUIC crates from being packaged. Every public GUIC crate must
 still pass a package dry run and metadata review before the maintainer publishes

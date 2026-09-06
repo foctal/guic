@@ -116,7 +116,7 @@ impl TextInput {
         Self {
             id: id.into(),
             kind,
-            focus_handle: cx.focus_handle(),
+            focus_handle: cx.focus_handle().tab_stop(true),
             value: String::new(),
             placeholder: match kind {
                 TextInputKind::Text => "Enter text".into(),
@@ -215,24 +215,15 @@ impl TextInput {
                 px(theme.typography.text_lg),
                 6,
             ),
-            (_, ComponentSize::Small) => (
-                px(30.0),
-                px(theme.spacing.x3),
-                px(theme.typography.text_sm),
-                1,
-            ),
-            (_, ComponentSize::Medium) => (
-                px(36.0),
-                px(theme.spacing.x4),
-                px(theme.typography.text_md),
-                1,
-            ),
-            (_, ComponentSize::Large) => (
-                px(44.0),
-                px(theme.spacing.x5),
-                px(theme.typography.text_lg),
-                1,
-            ),
+            _ => {
+                let metrics = self.size.control_metrics(theme);
+                (
+                    metrics.height,
+                    metrics.horizontal_padding,
+                    metrics.font_size,
+                    1,
+                )
+            }
         }
     }
 
@@ -962,7 +953,7 @@ impl Render for TextInput {
                     .disabled(self.disabled),
             )
             .key_context("GuicTextInput")
-            .track_focus(&self.focus_handle(cx))
+            .track_focus(&self.focus_handle(cx).tab_stop(!self.disabled))
             .cursor(if self.disabled {
                 CursorStyle::Arrow
             } else {
@@ -971,8 +962,6 @@ impl Render for TextInput {
             .line_height(line_height)
             .text_size(text_size)
             .px(padding_x)
-            .py(px(theme.spacing.x2))
-            .min_h(height)
             .rounded(px(theme.radius.md))
             .border_1()
             .border_color(border)
@@ -1013,7 +1002,9 @@ impl Render for TextInput {
         }
 
         if self.kind == TextInputKind::TextArea {
-            field = field.items_start();
+            field = field.items_start().py(px(theme.spacing.x2)).min_h(height);
+        } else {
+            field = field.h(height).flex_shrink_0();
         }
 
         let input_element = div()

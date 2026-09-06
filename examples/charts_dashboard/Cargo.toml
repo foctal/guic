@@ -12,13 +12,13 @@ gpui.workspace = true
 guic = { path = "../../crates/guic", features = ["charts"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-gpui_platform = { package = "guic-gpui-platform", version = "=0.2.0", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
+gpui_platform = { package = "guic-gpui-platform", version = "=0.3.1", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-gpui_platform = { package = "guic-gpui-platform", version = "=0.2.0", features = ["font-kit"] }
+gpui_platform = { package = "guic-gpui-platform", version = "=0.3.1", features = ["font-kit"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-gpui_platform = { package = "guic-gpui-platform", version = "=0.2.0" }
+gpui_platform = { package = "guic-gpui-platform", version = "=0.3.1" }
 
 [lints]
 workspace = true

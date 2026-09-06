@@ -73,18 +73,21 @@ release-blocking regardless of this disposition.
 
 ## guic-gpui Registry Dependency
 
-GUIC depends on `guic-gpui` 0.2.0 and uses the dependency alias `gpui`, keeping
+The runtime dependency is `guic-gpui` 0.3.1 and uses the dependency alias `gpui`, keeping
 existing Rust imports source-compatible. Native applications depend on
-`guic-gpui-platform` 0.2.0 through the alias `gpui_platform`, with
+`guic-gpui-platform` 0.3.1 through the alias `gpui_platform`, with
 target-specific renderer features.
 
 The versions are exact because the forked crate family is released in lockstep
 and GUIC validates each update as one platform and accessibility baseline. The
-0.2.0 release requires Rust 1.95, which is also GUIC's MSRV.
+0.3.1 release requires Rust 1.95, which is also GUIC's MSRV.
 
 The migration removes GUIC's Zed Git dependency and its local `ztracing`
 compatibility patch. `Cargo.lock` must contain no Git sources, `ztracing`, or
-`zlog` packages after dependency updates.
+`zlog` packages in the release dependency graph.
+
+Use the crates.io runtime family without GPUI Git patches. Native integration
+validation follows the [platform smoke checklist](platform-smoke.md).
 
 ## gpui-component Comparison
 

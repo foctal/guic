@@ -27,7 +27,10 @@ pub enum ButtonVariant {
 /// A clickable GUIC button.
 #[derive(gpui::IntoElement)]
 pub struct Button {
+    id: SharedString,
+    explicit_id: bool,
     label: SharedString,
+    accessible_label: Option<SharedString>,
     variant: ButtonVariant,
     size: ComponentSize,
     disabled: bool,
@@ -39,9 +42,13 @@ pub struct Button {
 impl Button {
     /// Creates a new button.
     #[must_use]
+    #[track_caller]
     pub fn new(label: impl Into<SharedString>) -> Self {
         Self {
+            explicit_id: false,
+            id: format!("guic-button-{}", std::panic::Location::caller()).into(),
             label: label.into(),
+            accessible_label: None,
             variant: ButtonVariant::Solid,
             size: ComponentSize::Medium,
             disabled: false,
@@ -49,6 +56,29 @@ impl Button {
             focus_handle: None,
             on_click: None,
         }
+    }
+
+    /// Sets a stable logical identity, independent of visible content.
+    /// Required when constructing siblings from the same call site (for example, a loop).
+    #[must_use]
+    pub fn id(mut self, id: impl Into<SharedString>) -> Self {
+        self.id = id.into();
+        self.explicit_id = true;
+        self
+    }
+
+    /// Wraps this control in a tooltip derived from its stable identity.
+    #[must_use]
+    pub fn tooltip(self, message: impl Into<SharedString>) -> crate::Tooltip {
+        let id = format!("{}-tooltip", self.id);
+        crate::Tooltip::new(self, message).id(id)
+    }
+
+    /// Sets the label announced by assistive technology.
+    #[must_use]
+    pub fn accessible_label(mut self, label: impl Into<SharedString>) -> Self {
+        self.accessible_label = Some(label.into());
+        self
     }
 
     /// Sets the button variant.
@@ -110,7 +140,7 @@ impl Button {
     /// Sets an application-owned focus handle for programmatic focus control.
     #[must_use]
     pub fn focusable(mut self, focus_handle: FocusHandle) -> Self {
-        self.focus_handle = Some(focus_handle);
+        self.focus_handle = Some(focus_handle.tab_stop(true));
         self
     }
 
@@ -159,7 +189,7 @@ impl RenderOnce for Button {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = Theme::global(cx);
         let palette = self.palette(theme);
-        let element_id = format!("guic-button-{}", self.label);
+        let element_id = self.id.clone();
         let hover_bg = palette
             .background
             .opacity(if self.variant == ButtonVariant::Ghost {
@@ -167,13 +197,17 @@ impl RenderOnce for Button {
             } else {
                 0.92
             });
-        let (height, padding_x, text_size) = match self.size {
-            ComponentSize::Small => (px(28.0), px(theme.spacing.x3), px(theme.typography.text_sm)),
-            ComponentSize::Medium => (px(34.0), px(theme.spacing.x4), px(theme.typography.text_md)),
-            ComponentSize::Large => (px(42.0), px(theme.spacing.x5), px(theme.typography.text_lg)),
-        };
+        let metrics = self.size.control_metrics(theme);
+        let (height, padding_x, text_size) = (
+            metrics.height,
+            metrics.horizontal_padding,
+            metrics.font_size,
+        );
 
-        let button_label = self.label.clone();
+        let button_label = self
+            .accessible_label
+            .clone()
+            .unwrap_or_else(|| self.label.clone());
         let mut button = div()
             .id(element_id.clone())
             .accessibility(
@@ -181,7 +215,16 @@ impl RenderOnce for Button {
                     .label(button_label)
                     .disabled(self.disabled),
             )
-            .debug_selector(|| element_id.clone())
+            .debug_selector(|| {
+                format!(
+                    "guic-button-{}",
+                    if self.explicit_id {
+                        &self.id
+                    } else {
+                        &self.label
+                    }
+                )
+            })
             .h(height)
             .px(padding_x)
             .rounded(px(theme.radius.md))

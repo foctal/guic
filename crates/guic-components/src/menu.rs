@@ -6,9 +6,9 @@
 //! components emit intent (open/close/activate) and render the current state.
 
 use gpui::{
-    AnyElement, App, ClickEvent, Empty, FocusHandle, InteractiveElement as _, IntoElement,
-    KeyDownEvent, MouseButton, MouseDownEvent, ParentElement as _, Pixels, Point, RenderOnce,
-    SharedString, StatefulInteractiveElement as _, Styled as _, Window, div, point, px,
+    AnyElement, App, ClickEvent, FocusHandle, InteractiveElement as _, IntoElement, KeyDownEvent,
+    MouseButton, MouseDownEvent, ParentElement as _, Pixels, Point, RenderOnce, SharedString,
+    StatefulInteractiveElement as _, Styled as _, Window, div, point, px,
 };
 use guic_core::{
     AccessibilityElementExt as _, AccessibilityProps, OverlayPriority, Role, overlay_portal,
@@ -329,6 +329,9 @@ pub struct Menu {
     on_highlight: Option<HighlightHandler>,
     on_activate: Option<ActivateHandler>,
     on_close: Option<CloseHandler>,
+    open: bool,
+    autofocus: bool,
+    restore_focus: bool,
 }
 
 /// A nested menu surface for hierarchical command groups.
@@ -572,6 +575,9 @@ impl Menu {
     pub fn new(id: impl Into<SharedString>) -> Self {
         Self {
             id: id.into(),
+            open: true,
+            autofocus: false,
+            restore_focus: true,
             items: Vec::new(),
             min_width: None,
             active_index: None,
@@ -580,6 +586,27 @@ impl Menu {
             on_activate: None,
             on_close: None,
         }
+    }
+
+    /// Sets controlled visibility. Keep the closed menu mounted for focus restoration.
+    #[must_use]
+    pub fn open(mut self, open: bool) -> Self {
+        self.open = open;
+        self
+    }
+
+    /// Focuses the menu's focus handle after mounting when enabled.
+    #[must_use]
+    pub fn autofocus(mut self, autofocus: bool) -> Self {
+        self.autofocus = autofocus;
+        self
+    }
+
+    /// Restores previous focus after a controlled close.
+    #[must_use]
+    pub fn restore_focus(mut self, restore: bool) -> Self {
+        self.restore_focus = restore;
+        self
     }
 
     /// Sets the menu items.
@@ -749,8 +776,19 @@ impl Menu {
 
 impl RenderOnce for Menu {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = Theme::global(cx);
-        self.into_surface(theme)
+        let id = format!("{}-focus-lifecycle", self.id);
+        let open = self.open;
+        let target = self.focus_handle.clone().filter(|_| self.autofocus);
+        let restore = self.restore_focus;
+        let child = if open {
+            self.into_surface(Theme::global(cx)).into_any_element()
+        } else {
+            gpui::Empty.into_any_element()
+        };
+        guic_core::OverlayFocus::new(id, child)
+            .open(open)
+            .autofocus(target)
+            .restore_focus(restore)
     }
 }
 
@@ -1047,10 +1085,7 @@ impl RenderOnce for ContextMenu {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let trigger_selector = format!("guic-context-menu-trigger-{}", self.id);
 
-        let mut trigger = div()
-            .id(SharedString::from(format!("{}-trigger", self.id)))
-            .debug_selector(move || trigger_selector.clone())
-            .child(self.trigger);
+        let mut trigger = crate::behavioral_trigger::BehavioralTrigger::new(self.trigger);
 
         if let Some(on_request) = self.on_request.clone() {
             trigger = trigger.on_mouse_down(
@@ -1061,7 +1096,7 @@ impl RenderOnce for ContextMenu {
             );
         }
 
-        let mut root = div().relative().child(trigger);
+        let mut overlay = None;
 
         if self.open {
             let scrim_selector = format!("guic-context-menu-scrim-{}", self.id);
@@ -1089,7 +1124,7 @@ impl RenderOnce for ContextMenu {
                 }
             }
 
-            root = root.child(overlay_portal(
+            overlay = Some(overlay_portal(
                 div().absolute().inset_0().child(scrim).child(
                     div()
                         .absolute()
@@ -1099,11 +1134,17 @@ impl RenderOnce for ContextMenu {
                 ),
                 OverlayPriority::MODAL,
             ));
-        } else {
-            root = root.child(Empty);
         }
 
-        root
+        guic_core::OverlayFocus::new(
+            format!("{}-focus-lifecycle", self.id),
+            trigger
+                .overlay(overlay)
+                .id(SharedString::from(format!("{}-trigger", self.id)))
+                .debug_selector(move || trigger_selector.clone()),
+        )
+        .open(self.open)
+        .autofocus(self.focus_handle)
     }
 }
 

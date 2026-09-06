@@ -12,6 +12,8 @@ use std::rc::Rc;
 /// A square icon-only button.
 #[derive(gpui::IntoElement)]
 pub struct IconButton {
+    id: SharedString,
+    explicit_id: bool,
     icon: IconName,
     variant: ButtonVariant,
     size: ComponentSize,
@@ -24,8 +26,11 @@ pub struct IconButton {
 impl IconButton {
     /// Creates a new icon button.
     #[must_use]
+    #[track_caller]
     pub fn new(icon: IconName) -> Self {
         Self {
+            explicit_id: false,
+            id: format!("guic-icon_button-{}", std::panic::Location::caller()).into(),
             icon,
             variant: ButtonVariant::Ghost,
             size: ComponentSize::Medium,
@@ -34,6 +39,22 @@ impl IconButton {
             focus_handle: None,
             on_click: None,
         }
+    }
+
+    /// Sets a stable logical identity, independent of visible content.
+    /// Required when constructing siblings from the same call site (for example, a loop).
+    #[must_use]
+    pub fn id(mut self, id: impl Into<SharedString>) -> Self {
+        self.id = id.into();
+        self.explicit_id = true;
+        self
+    }
+
+    /// Wraps this control in a tooltip derived from its stable identity.
+    #[must_use]
+    pub fn tooltip(self, message: impl Into<SharedString>) -> crate::Tooltip {
+        let id = format!("{}-tooltip", self.id);
+        crate::Tooltip::new(self, message).id(id)
     }
 
     /// Sets the icon button variant.
@@ -67,7 +88,7 @@ impl IconButton {
     /// Sets an application-owned focus handle for programmatic focus control.
     #[must_use]
     pub fn focusable(mut self, focus_handle: FocusHandle) -> Self {
-        self.focus_handle = Some(focus_handle);
+        self.focus_handle = Some(focus_handle.tab_stop(true));
         self
     }
 
@@ -90,12 +111,9 @@ impl IconButton {
 impl RenderOnce for IconButton {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = Theme::global(cx);
-        let element_id = format!("guic-icon-button-{:?}", self.icon);
-        let (dimension, icon_size) = match self.size {
-            ComponentSize::Small => (px(28.0), 12.0),
-            ComponentSize::Medium => (px(34.0), 14.0),
-            ComponentSize::Large => (px(42.0), 16.0),
-        };
+        let element_id = self.id.clone();
+        let metrics = self.size.control_metrics(theme);
+        let (dimension, icon_size) = (metrics.height, f32::from(metrics.icon_size));
         let (background, foreground, border) = match self.variant {
             ButtonVariant::Solid => (theme.secondary(), theme.foreground(), theme.border()),
             ButtonVariant::Primary => (theme.primary(), white(), theme.primary()),
@@ -108,7 +126,11 @@ impl RenderOnce for IconButton {
             ButtonVariant::Danger => (theme.danger(), white(), theme.danger()),
         };
 
-        let selector = element_id.clone();
+        let selector = if self.explicit_id {
+            format!("guic-icon-button-{}", self.id)
+        } else {
+            format!("guic-icon-button-{:?}", self.icon)
+        };
         let accessibility_label = self
             .label
             .clone()
