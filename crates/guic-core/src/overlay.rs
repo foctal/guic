@@ -1,6 +1,6 @@
 use gpui::{AnyElement, App, FocusHandle, Global, IntoElement, Window, WindowId, deferred};
 use std::collections::BTreeMap;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 type OverlayRenderer = Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>;
 
@@ -25,9 +25,71 @@ pub fn overlay_portal(content: impl IntoElement, priority: usize) -> AnyElement 
     deferred(content).priority(priority).into_any_element()
 }
 
+type ControlledClose = Rc<dyn Fn(&mut Window, &mut App)>;
+struct ControlledEntry {
+    owner: Weak<()>,
+    close: ControlledClose,
+}
+
+/// Stable membership in a window-scoped exclusive controlled-overlay group.
+/// Retain this value across renders. The manager holds only a weak owner token.
+#[derive(Default)]
+pub struct OverlayGroupMember(Rc<()>);
+
+impl OverlayGroupMember {
+    /// Claims the group and requests closure of its previous live member after rendering.
+    /// The host remains responsible for applying the controlled close request.
+    pub fn activate(
+        &self,
+        group: gpui::SharedString,
+        window: &Window,
+        cx: &mut App,
+        close: impl Fn(&mut Window, &mut App) + 'static,
+    ) {
+        let key = (window.window_handle().window_id(), group);
+        let owner = Rc::downgrade(&self.0);
+        let manager = OverlayManager::global_mut(cx);
+        manager
+            .controlled
+            .retain(|_, entry| entry.owner.strong_count() > 0);
+        let previous = manager.controlled.insert(
+            key.clone(),
+            ControlledEntry {
+                owner: owner.clone(),
+                close: Rc::new(close),
+            },
+        );
+        if let Some(previous) = previous.filter(|entry| !entry.owner.ptr_eq(&owner)) {
+            window.defer(cx, move |window, cx| {
+                let reclaimed = OverlayManager::global(cx)
+                    .controlled
+                    .get(&key)
+                    .is_some_and(|entry| entry.owner.ptr_eq(&previous.owner));
+                if !reclaimed && previous.owner.upgrade().is_some() {
+                    (previous.close)(window, cx);
+                }
+            });
+        }
+    }
+
+    /// Releases this membership without dismissing a newer owner of the group.
+    pub fn deactivate(&self, group: &gpui::SharedString, window: &Window, cx: &mut App) {
+        let key = (window.window_handle().window_id(), group.clone());
+        let manager = OverlayManager::global_mut(cx);
+        if manager
+            .controlled
+            .get(&key)
+            .is_some_and(|entry| entry.owner.ptr_eq(&Rc::downgrade(&self.0)))
+        {
+            manager.controlled.remove(&key);
+        }
+    }
+}
+
 /// Shared overlay manager state.
 #[derive(Default)]
 pub struct OverlayManager {
+    controlled: BTreeMap<(WindowId, gpui::SharedString), ControlledEntry>,
     next_id: u64,
     overlays: Vec<OverlayId>,
     entries: BTreeMap<OverlayId, OverlayEntry>,
@@ -82,6 +144,28 @@ impl OverlayManager {
         self.open_entry(kind, options, Some(renderer))
     }
 
+    /// Opens a window-owned overlay and captures current focus for restoration.
+    /// Render this overlay through `Root` to apply autofocus after mounting.
+    #[must_use]
+    pub fn open_rendered_in_window<F, E>(
+        &mut self,
+        kind: OverlayKind,
+        mut options: OverlayOptions,
+        window: &Window,
+        cx: &App,
+        renderer: F,
+    ) -> OverlayId
+    where
+        F: Fn(&mut Window, &mut App) -> E + 'static,
+        E: IntoElement,
+    {
+        options.window_id = Some(window.window_handle().window_id());
+        if options.restore_focus_to.is_none() {
+            options.restore_focus_to = window.focused(cx);
+        }
+        self.open_rendered(kind, options, renderer)
+    }
+
     fn open_entry(
         &mut self,
         kind: OverlayKind,
@@ -100,6 +184,7 @@ impl OverlayManager {
                 dismissible: options.dismissible,
                 traps_focus: options.traps_focus,
                 focus_trap: options.focus_trap,
+                autofocus: options.autofocus,
                 restore_focus_to: options.restore_focus_to,
                 window_id: options.window_id,
                 renderer,
@@ -129,12 +214,12 @@ impl OverlayManager {
     }
 
     /// Dismisses the top-most overlay if it allows dismissal.
+    /// A non-dismissible top layer protects all layers below it.
     pub fn dismiss_top(&mut self, reason: CloseReason) -> Option<ClosedOverlay> {
-        let id = *self
-            .overlays
-            .iter()
-            .rev()
-            .find(|id| self.entries.get(id).is_some_and(|entry| entry.dismissible))?;
+        let id = *self.overlays.last()?;
+        if !self.entries.get(&id).is_some_and(|entry| entry.dismissible) {
+            return None;
+        }
         self.close(id, reason)
     }
 
@@ -173,6 +258,7 @@ impl OverlayManager {
 
     /// Closes all overlays associated with a GPUI window.
     pub fn close_window(&mut self, window_id: WindowId) -> Vec<ClosedOverlay> {
+        self.controlled.retain(|(id, _), _| *id != window_id);
         let ids = self
             .overlays
             .iter()
@@ -245,6 +331,7 @@ pub struct OverlayOptions {
     dismissible: bool,
     traps_focus: bool,
     focus_trap: Option<FocusHandle>,
+    autofocus: Option<FocusHandle>,
     restore_focus_to: Option<FocusHandle>,
     window_id: Option<WindowId>,
 }
@@ -287,6 +374,13 @@ impl OverlayOptions {
         self
     }
 
+    /// Focuses this target after the overlay has mounted in the render tree.
+    #[must_use]
+    pub fn autofocus(mut self, target: FocusHandle) -> Self {
+        self.autofocus = Some(target);
+        self
+    }
+
     /// Sets the focus handle that should be restored after the overlay closes.
     #[must_use]
     pub fn restore_focus_to(mut self, focus_handle: FocusHandle) -> Self {
@@ -313,6 +407,7 @@ pub struct OverlayEntry {
     dismissible: bool,
     traps_focus: bool,
     focus_trap: Option<FocusHandle>,
+    autofocus: Option<FocusHandle>,
     restore_focus_to: Option<FocusHandle>,
     window_id: Option<WindowId>,
     renderer: Option<OverlayRenderer>,
@@ -341,6 +436,12 @@ impl OverlayEntry {
     #[must_use]
     pub fn focus_trap(&self) -> Option<FocusHandle> {
         self.focus_trap.clone()
+    }
+
+    /// Returns the target to focus after mounting.
+    #[must_use]
+    pub fn autofocus(&self) -> Option<FocusHandle> {
+        self.autofocus.clone().or_else(|| self.focus_trap.clone())
     }
 
     /// Returns the focus handle to restore after closure, if one was provided.
@@ -380,6 +481,14 @@ pub struct ClosedOverlay {
 impl ClosedOverlay {
     /// Restores focus to the configured handle, if this overlay captured one.
     pub fn restore_focus(&self, window: &mut Window, cx: &mut App) -> bool {
+        if self.reason == CloseReason::WindowClosed
+            || self
+                .entry
+                .window_id()
+                .is_some_and(|id| id != window.window_handle().window_id())
+        {
+            return false;
+        }
         let Some(handle) = self.entry.restore_focus_to() else {
             return false;
         };
@@ -460,12 +569,14 @@ mod tests {
         );
         let second = manager.open(OverlayKind::Dialog);
 
+        assert!(manager.dismiss_top(CloseReason::OutsideClick).is_none());
+        assert_eq!(manager.top().map(|entry| entry.id), Some(second));
+        manager.close(second, CloseReason::Programmatic);
         let closed = manager
             .dismiss_top(CloseReason::OutsideClick)
-            .expect("dismissible overlay should close");
-
+            .expect("first overlay is now topmost");
         assert_eq!(closed.entry.id, first);
-        assert_eq!(manager.top().map(|entry| entry.id), Some(second));
+        assert!(manager.is_empty());
     }
 
     #[test]

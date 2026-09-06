@@ -1,4 +1,4 @@
-use crate::{Label, ScrollArea};
+use crate::Label;
 use gpui::{
     AnyElement, App, FocusHandle, InteractiveElement as _, IntoElement, KeyDownEvent, Keystroke,
     ParentElement as _, RenderOnce, SharedString, StatefulInteractiveElement as _, Styled as _,
@@ -582,11 +582,12 @@ impl TreeView {
         self
     }
 
-    /// Caps the scrollable tree body height in logical pixels.
+    /// Caps the whole TreeView outer height, including its title, padding, and borders.
+    /// Small trees remain intrinsic; overflowing rows scroll inside the remaining space.
     #[must_use]
     pub fn max_height(mut self, max_height: f32) -> Self {
         if max_height.is_finite() {
-            self.max_height = Some(max_height.max(96.0));
+            self.max_height = Some(max_height.max(0.0));
         }
         self
     }
@@ -851,6 +852,7 @@ impl RenderOnce for TreeView {
         });
         let mut root = div()
             .id(self.id.clone())
+            .debug_selector(|| format!("guic-tree-{}", self.id))
             .accessibility(
                 AccessibilityProps::new(Role::Tree)
                     .label(self.title.clone().unwrap_or_else(|| self.id.clone())),
@@ -981,13 +983,15 @@ impl RenderOnce for TreeView {
         }
 
         let body = if let Some(max_height) = self.max_height {
-            div().w_full().h(px(max_height)).child(
-                ScrollArea::new("guic-tree-scroll", rows)
-                    .vertical(true)
-                    .horizontal(false),
-            )
+            root = root.max_h(px(max_height)).overflow_hidden();
+            div()
+                .id(format!("{}-scroll", self.id))
+                .w_full()
+                .min_h_0()
+                .overflow_y_scroll()
+                .child(rows)
         } else {
-            div().w_full().child(rows)
+            div().id(format!("{}-body", self.id)).w_full().child(rows)
         };
         root.child(body).into_any_element()
     }

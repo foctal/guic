@@ -12,6 +12,8 @@ pub struct Popover {
     trigger: AnyElement,
     content: AnyElement,
     open: bool,
+    autofocus: Option<gpui::FocusHandle>,
+    restore_focus: bool,
     width: Option<f32>,
 }
 
@@ -28,8 +30,24 @@ impl Popover {
             trigger: trigger.into_any_element(),
             content: content.into_any_element(),
             open: false,
+            autofocus: None,
+            restore_focus: true,
             width: None,
         }
+    }
+
+    /// Focuses an overlay child after it mounts.
+    #[must_use]
+    pub fn autofocus_target(mut self, target: gpui::FocusHandle) -> Self {
+        self.autofocus = Some(target);
+        self
+    }
+
+    /// Restores focus when closing a continuously rendered controlled popover.
+    #[must_use]
+    pub fn restore_focus(mut self, restore: bool) -> Self {
+        self.restore_focus = restore;
+        self
     }
 
     /// Sets whether the popover is open.
@@ -53,20 +71,11 @@ impl RenderOnce for Popover {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = Theme::global(cx);
         let panel_id = format!("{}-panel", self.id);
-        let mut root = div()
-            .id(self.id)
-            .relative()
-            .flex()
-            .flex_col()
-            .child(self.trigger);
+        let mut root = crate::behavioral_trigger::BehavioralTrigger::new(self.trigger);
 
         if self.open {
             let mut panel = div()
                 .id(panel_id)
-                .absolute()
-                .top_full()
-                .left_0()
-                .mt_2()
                 .debug_selector(|| "guic-popover-panel".to_owned())
                 .rounded(px(theme.radius.md))
                 .border_1()
@@ -80,10 +89,21 @@ impl RenderOnce for Popover {
                 panel = panel.w(px(width)).max_w_full();
             }
 
-            root = root.child(overlay_portal(panel, OverlayPriority::FLOATING));
+            root = root.anchored_overlay(move |bounds, window, _| {
+                let viewport = window.viewport_size();
+                overlay_portal(
+                    gpui::anchored()
+                        .position(bounds.bottom_left())
+                        .child(panel.max_w(viewport.width).max_h(viewport.height)),
+                    OverlayPriority::FLOATING,
+                )
+            });
         }
 
-        root
+        guic_core::OverlayFocus::new(format!("{}-focus-lifecycle", self.id), root.id(self.id))
+            .open(self.open)
+            .autofocus(self.autofocus)
+            .restore_focus(self.restore_focus)
     }
 }
 

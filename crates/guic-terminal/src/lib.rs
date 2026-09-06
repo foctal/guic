@@ -1,12 +1,13 @@
 //! Native terminal emulator primitives for GUIC.
+//! Protocol, Unicode, and search improvements adapted from muxt-terminal (Apache-2.0).
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
 use gpui::{
     App, Bounds, ClipboardItem, Context, ElementInputHandler, Entity, EntityInputHandler,
-    FocusHandle, FontStyle, FontWeight, Hsla, InteractiveElement as _, IntoElement, KeyDownEvent,
-    Keystroke, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
+    FocusHandle, FontFeatures, FontStyle, FontWeight, Hsla, InteractiveElement as _, IntoElement,
+    KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
     ParentElement as _, Pixels, Point, RenderOnce, ScrollDelta, ScrollWheelEvent, ShapedLine,
     SharedString, StatefulInteractiveElement as _, StrikethroughStyle, Styled as _, TextAlign,
     TextRun, UTF16Selection, UnderlineStyle, Window, canvas, div, fill, font, point, px, size,
@@ -15,28 +16,81 @@ use guic_tokens::Theme;
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::{
     borrow::Cow,
+    cell::RefCell,
     collections::VecDeque,
     io::{ErrorKind, Read, Write},
     ops::Range,
     path::{Path, PathBuf},
+    rc::Rc,
     sync::{
-        Arc, OnceLock,
-        mpsc::{Receiver, channel},
+        Arc, OnceLock, RwLock,
+        mpsc::{Receiver, channel, sync_channel},
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
-use unicode_width::UnicodeWidthChar;
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use vte::{Params, Parser, Perform};
 
 type InputHandler = std::rc::Rc<dyn Fn(&[u8], &mut Window, &mut App)>;
 type SelectionHandler = std::rc::Rc<dyn Fn(&TerminalSelection, &mut Window, &mut App)>;
 type ViewportScrollHandler = std::rc::Rc<dyn Fn(&isize, &mut Window, &mut App)>;
 type ResizeHandler = std::rc::Rc<dyn Fn(&TerminalGridSize, &mut Window, &mut App)>;
+type LinkHandler = std::rc::Rc<dyn Fn(&SharedString, &mut Window, &mut App)>;
+type LinkHoverHandler = std::rc::Rc<dyn Fn(&Option<SharedString>, &mut Window, &mut App)>;
+
+/// Shared, mutable terminal state used by hosts that update a model independently
+/// from GPUI's render tree. Keeping one stable model avoids copying scrollback into
+/// event handlers on every frame.
+pub type SharedTerminalModel = Rc<RefCell<TerminalModel>>;
+
+/// Source retained by a terminal surface without copying screen or scrollback data.
+#[derive(Clone)]
+pub enum TerminalModelSource {
+    /// Immutable snapshot, suitable for publishing from background model owners.
+    Snapshot(Arc<TerminalModel>),
+    /// Mutable model owned on the UI thread. Release mutable borrows before rendering.
+    Shared(SharedTerminalModel),
+}
+impl From<Arc<TerminalModel>> for TerminalModelSource {
+    fn from(model: Arc<TerminalModel>) -> Self {
+        Self::Snapshot(model)
+    }
+}
+impl From<SharedTerminalModel> for TerminalModelSource {
+    fn from(model: SharedTerminalModel) -> Self {
+        Self::Shared(model)
+    }
+}
+enum TerminalModelRead<'a> {
+    Snapshot(&'a TerminalModel),
+    Shared(std::cell::Ref<'a, TerminalModel>),
+}
+impl std::ops::Deref for TerminalModelRead<'_> {
+    type Target = TerminalModel;
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Snapshot(model) => model,
+            Self::Shared(model) => model,
+        }
+    }
+}
+impl TerminalModelSource {
+    fn borrow(&self) -> TerminalModelRead<'_> {
+        match self {
+            Self::Snapshot(model) => TerminalModelRead::Snapshot(model),
+            Self::Shared(model) => TerminalModelRead::Shared(model.borrow()),
+        }
+    }
+}
 
 const MAX_OSC_TITLE_BYTES: usize = 4 * 1024;
 const MAX_OSC_HYPERLINK_BYTES: usize = 8 * 1024;
 const MAX_CELL_GRAPHEME_CHARS: usize = 64;
+const MAX_PROTOCOL_RESPONSE_BYTES: usize = 64 * 1024;
+const MAX_SEARCH_MATCHES: usize = 100_000;
+const MAX_TERMINAL_PASTE_BYTES: usize = 1024 * 1024;
 
 /// Terminal grid dimensions derived from the rendered pane size.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -54,6 +108,39 @@ pub struct TerminalPosition {
     pub row: usize,
     /// Zero-based column.
     pub column: usize,
+}
+
+/// Default base palette, in normal then bright ANSI color order.
+pub const DEFAULT_ANSI_PALETTE: [(u8, u8, u8); 16] = [
+    (0, 0, 0),
+    (205, 49, 49),
+    (13, 188, 121),
+    (229, 229, 16),
+    (36, 114, 200),
+    (188, 63, 188),
+    (17, 168, 205),
+    (229, 229, 229),
+    (102, 102, 102),
+    (241, 76, 76),
+    (35, 209, 139),
+    (245, 245, 67),
+    (59, 142, 234),
+    (214, 112, 214),
+    (41, 184, 219),
+    (255, 255, 255),
+];
+
+/// Accepted ANSI base palette formats.
+pub struct TerminalPalette([[u8; 3]; 16]);
+impl From<[(u8, u8, u8); 16]> for TerminalPalette {
+    fn from(palette: [(u8, u8, u8); 16]) -> Self {
+        Self(palette.map(|(r, g, b)| [r, g, b]))
+    }
+}
+impl From<[[u8; 3]; 16]> for TerminalPalette {
+    fn from(palette: [[u8; 3]; 16]) -> Self {
+        Self(palette)
+    }
 }
 
 /// ANSI terminal colors.
@@ -238,6 +325,58 @@ pub struct TerminalSelection {
     pub anchor: TerminalPosition,
     /// Selection head.
     pub head: TerminalPosition,
+}
+
+/// A text match addressed in the complete scrollback and live-screen history.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TerminalSearchMatch {
+    /// Zero-based row in `scrollback + live screen`.
+    pub row: usize,
+    /// Inclusive starting terminal column.
+    pub start_column: usize,
+    /// Inclusive ending terminal column.
+    pub end_column: usize,
+}
+
+/// Options for bounded terminal-history search.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct TerminalSearchOptions {
+    /// Match letter case exactly.
+    pub case_sensitive: bool,
+    /// Require word boundaries around every result.
+    pub whole_word: bool,
+    /// Interpret the query as a regular expression.
+    pub regex: bool,
+    /// Restrict results to the active terminal selection.
+    pub selection_only: bool,
+    /// Restrict results to output regions reported by OSC 133 shell integration.
+    pub command_output_only: bool,
+}
+
+/// A completed command-output region reported by OSC 133 shell integration.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TerminalCommandOutput {
+    /// Absolute row identity, including evicted scrollback history.
+    pub start_row: u64,
+    /// Inclusive starting column.
+    pub start_column: usize,
+    /// Inclusive absolute ending row identity.
+    pub end_row: u64,
+    /// Inclusive ending column.
+    pub end_column: usize,
+    /// Exit status reported by the shell, when present.
+    pub exit_status: Option<i32>,
+    /// Observed time between output start and completion.
+    pub duration_ms: u64,
+}
+
+/// A bounded terminal notification reported through OSC 9 or OSC 777.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TerminalNotification {
+    /// Optional short notification title.
+    pub title: SharedString,
+    /// Notification body supplied by terminal output.
+    pub body: SharedString,
 }
 
 impl TerminalSelection {
@@ -748,6 +887,17 @@ pub enum TerminalProcessStatus {
     Exited(TerminalExitStatus),
 }
 
+/// State of the background PTY output reader.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TerminalReaderStatus {
+    /// The reader is still receiving output.
+    Running,
+    /// The PTY stream reached end-of-file.
+    Closed,
+    /// Reading failed before the process lifecycle completed.
+    Failed(String),
+}
+
 /// Host-managed terminal tab activity state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TerminalTabStatus {
@@ -998,22 +1148,112 @@ pub fn default_shell_command() -> PathBuf {
         })
 }
 
+type OutputNotifier = Arc<dyn Fn() + Send + Sync>;
+type SharedOutputNotifier = Arc<RwLock<Option<OutputNotifier>>>;
+
+fn notify_output(notifier: &SharedOutputNotifier) {
+    let callback = notifier
+        .read()
+        .unwrap_or_else(|error| error.into_inner())
+        .clone();
+    if let Some(callback) = callback {
+        callback();
+    }
+}
+
+/// Structured PTY process configuration. Arguments and environment are passed directly.
+#[derive(Clone, Debug)]
+pub struct PtySpawnConfig {
+    /// Executable path.
+    pub program: PathBuf,
+    /// Arguments, without shell parsing.
+    pub arguments: Vec<std::ffi::OsString>,
+    /// Environment overrides; the parent environment is inherited.
+    pub environment: Vec<(std::ffi::OsString, std::ffi::OsString)>,
+    /// Initial working directory.
+    pub working_directory: Option<PathBuf>,
+}
+
+impl PtySpawnConfig {
+    /// Creates a configuration for an executable without implicit shell arguments.
+    #[must_use]
+    pub fn new(program: impl Into<PathBuf>) -> Self {
+        Self {
+            program: program.into(),
+            arguments: Vec::new(),
+            environment: Vec::new(),
+            working_directory: None,
+        }
+    }
+}
+
+/// Final child-wait result, independent of PTY reader failures.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TerminalSessionOutcome {
+    /// The operating system reported an exit status.
+    Exited {
+        /// Reported exit code (zero indicates success).
+        status: TerminalExitStatus,
+        /// Whether the host successfully requested forceful termination.
+        termination_requested: bool,
+    },
+    /// Waiting for the child failed; no exit code was obtained.
+    WaitFailed {
+        /// Diagnostic supplied by the process backend.
+        message: String,
+    },
+}
+
 /// A local PTY-backed terminal session.
 pub struct LocalPtySession {
     command: PathBuf,
     cwd: Option<PathBuf>,
     columns: usize,
     rows: usize,
-    notify: Option<Arc<dyn Fn() + Send + Sync>>,
+    notify: SharedOutputNotifier,
+    spawn_config: Option<PtySpawnConfig>,
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
     output: Receiver<Vec<u8>>,
-    exit: Receiver<i32>,
+    exit: Receiver<Result<i32, String>>,
+    outcome: Option<TerminalSessionOutcome>,
+    termination_requested: bool,
+    reader_errors: Receiver<std::io::Error>,
+    reader_state: Arc<RwLock<TerminalReaderStatus>>,
     cached_exit: Option<TerminalExitStatus>,
     killer: Box<dyn ChildKiller + Send + Sync>,
 }
 
 impl LocalPtySession {
+    /// Spawns a program with explicit arguments, environment, and working directory.
+    pub fn spawn(config: PtySpawnConfig, columns: usize, rows: usize) -> anyhow::Result<Self> {
+        Self::spawn_config_impl(
+            config.program.clone(),
+            columns,
+            rows,
+            config.working_directory.clone(),
+            None,
+            Some(config),
+        )
+    }
+
+    /// Rebinds output and exit notification, including after moving to another window.
+    /// A callback already in flight may finish; subsequent events use the new callback.
+    pub fn set_output_notifier(&mut self, notify: impl Fn() + Send + Sync + 'static) {
+        *self
+            .notify
+            .write()
+            .unwrap_or_else(|error| error.into_inner()) = Some(Arc::new(notify));
+    }
+
+    /// Disconnects future output callbacks.
+    pub fn clear_output_notifier(&mut self) {
+        *self
+            .notify
+            .write()
+            .unwrap_or_else(|error| error.into_inner()) = None;
+    }
+
     /// Spawns the user's shell inside a local PTY.
     pub fn spawn_shell(columns: usize, rows: usize) -> anyhow::Result<Self> {
         Self::spawn_command(default_shell_command(), columns, rows)
@@ -1106,6 +1346,18 @@ impl LocalPtySession {
         cwd: Option<PathBuf>,
         notify: Option<Arc<dyn Fn() + Send + Sync>>,
     ) -> anyhow::Result<Self> {
+        Self::spawn_config_impl(command, columns, rows, cwd, notify, None)
+    }
+
+    fn spawn_config_impl(
+        command: impl Into<PathBuf>,
+        columns: usize,
+        rows: usize,
+        cwd: Option<PathBuf>,
+        notify: Option<OutputNotifier>,
+        spawn_config: Option<PtySpawnConfig>,
+    ) -> anyhow::Result<Self> {
+        let notify = Arc::new(RwLock::new(notify));
         let columns = normalize_pty_dimension(columns);
         let rows = normalize_pty_dimension(rows);
         if let Some(cwd) = &cwd {
@@ -1124,7 +1376,14 @@ impl LocalPtySession {
         })?;
         let command = command.into();
         let mut command_builder = CommandBuilder::new(command.clone());
-        configure_shell_command(&mut command_builder, &command);
+        if let Some(config) = &spawn_config {
+            command_builder.args(&config.arguments);
+            for (key, value) in &config.environment {
+                command_builder.env(key, value);
+            }
+        } else {
+            configure_shell_command(&mut command_builder, &command);
+        }
         if let Some(cwd) = &cwd {
             command_builder.cwd(cwd.as_os_str());
         }
@@ -1132,28 +1391,42 @@ impl LocalPtySession {
         let mut reader = pair.master.try_clone_reader()?;
         let writer = pair.master.take_writer()?;
         let killer = child.clone_killer();
-        let (sender, output) = channel();
+        // Bound unread PTY data to about 1 MiB; the producer waits for the consumer.
+        let (sender, output) = sync_channel(128);
+        let (reader_error_sender, reader_errors) = channel();
+        let reader_state = Arc::new(RwLock::new(TerminalReaderStatus::Running));
+        let reader_state_sink = reader_state.clone();
         let output_notify = notify.clone();
         thread::spawn(move || {
             let mut buffer = [0_u8; 8192];
-            loop {
+            let status = loop {
                 match reader.read(&mut buffer) {
-                    Ok(0) => break,
+                    Ok(0) => break TerminalReaderStatus::Closed,
                     Ok(read) => {
                         if sender.send(buffer[..read].to_vec()).is_err() {
-                            break;
+                            break TerminalReaderStatus::Closed;
                         }
-                        if let Some(notify) = &output_notify {
-                            notify();
-                        }
+                        notify_output(&output_notify);
                     }
                     Err(error) if error.kind() == ErrorKind::Interrupted => continue,
                     Err(error) if error.kind() == ErrorKind::WouldBlock => {
                         thread::sleep(Duration::from_millis(5));
                     }
-                    Err(_) => break,
+                    // Unix PTY masters may report EIO after their slave closes.
+                    Err(error) if cfg!(unix) && error.raw_os_error() == Some(5) => {
+                        break TerminalReaderStatus::Closed;
+                    }
+                    Err(error) => {
+                        let status = TerminalReaderStatus::Failed(error.to_string());
+                        let _ = reader_error_sender.send(error);
+                        break status;
+                    }
                 }
-            }
+            };
+            *reader_state_sink
+                .write()
+                .unwrap_or_else(|error| error.into_inner()) = status;
+            notify_output(&output_notify);
         });
         let (exit_sender, exit) = channel();
         let exit_notify = notify.clone();
@@ -1161,11 +1434,9 @@ impl LocalPtySession {
             let code = child
                 .wait()
                 .map(|status| status.exit_code() as i32)
-                .unwrap_or(-1);
+                .map_err(|error| error.to_string());
             let _ = exit_sender.send(code);
-            if let Some(notify) = &exit_notify {
-                notify();
-            }
+            notify_output(&exit_notify);
         });
         Ok(Self {
             command,
@@ -1173,13 +1444,33 @@ impl LocalPtySession {
             columns,
             rows,
             notify,
+            spawn_config,
             master: pair.master,
             writer,
             output,
             exit,
+            reader_errors,
+            reader_state,
+            outcome: None,
+            termination_requested: false,
             cached_exit: None,
             killer,
         })
+    }
+
+    /// Returns the reader lifecycle independently from the child-wait result.
+    #[must_use]
+    pub fn reader_status(&self) -> TerminalReaderStatus {
+        self.reader_state
+            .read()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
+    }
+
+    /// Returns a PTY reader failure independently from child process exit status.
+    /// End-of-file is normal and does not produce an error here.
+    pub fn take_reader_error(&mut self) -> Option<std::io::Error> {
+        self.reader_errors.try_recv().ok()
     }
 
     /// Drains currently available PTY output.
@@ -1210,13 +1501,29 @@ impl LocalPtySession {
     #[must_use]
     pub fn try_exit_status(&mut self) -> Option<TerminalExitStatus> {
         if self.cached_exit.is_none() {
-            self.cached_exit = self
-                .exit
-                .try_recv()
-                .ok()
-                .map(|code| TerminalExitStatus { code });
+            self.cached_exit = self.try_outcome().map(|outcome| match outcome {
+                TerminalSessionOutcome::Exited { status, .. } => status,
+                // Retain the legacy sentinel; new hosts should use try_outcome.
+                TerminalSessionOutcome::WaitFailed { .. } => TerminalExitStatus { code: -1 },
+            });
         }
         self.cached_exit
+    }
+
+    /// Returns the final wait result without turning wait failures into exit codes.
+    /// Reader errors remain available separately through `take_reader_error`.
+    #[must_use]
+    pub fn try_outcome(&mut self) -> Option<TerminalSessionOutcome> {
+        if self.outcome.is_none() {
+            self.outcome = self.exit.try_recv().ok().map(|result| match result {
+                Ok(code) => TerminalSessionOutcome::Exited {
+                    status: TerminalExitStatus { code },
+                    termination_requested: self.termination_requested,
+                },
+                Err(message) => TerminalSessionOutcome::WaitFailed { message },
+            });
+        }
+        self.outcome.clone()
     }
 
     /// Returns the process exit code if the child has exited.
@@ -1265,12 +1572,16 @@ impl LocalPtySession {
         if self.is_running() {
             self.terminate()?;
         }
-        let replacement = Self::spawn_command_impl(
+        let replacement = Self::spawn_config_impl(
             self.command.clone(),
             self.columns,
             self.rows,
             self.cwd.clone(),
-            self.notify.clone(),
+            self.notify
+                .read()
+                .unwrap_or_else(|error| error.into_inner())
+                .clone(),
+            self.spawn_config.clone(),
         )?;
         *self = replacement;
         Ok(())
@@ -1284,7 +1595,17 @@ impl LocalPtySession {
 
     /// Terminates the child process.
     pub fn terminate(&mut self) -> std::io::Result<()> {
+        if matches!(
+            self.try_outcome(),
+            Some(TerminalSessionOutcome::Exited { .. })
+        ) {
+            return Ok(());
+        }
         match self.killer.kill() {
+            Ok(()) => {
+                self.termination_requested = true;
+                Ok(())
+            }
             Err(error)
                 if error.kind() == ErrorKind::InvalidInput
                     || error.kind() == ErrorKind::NotFound
@@ -1300,7 +1621,10 @@ impl LocalPtySession {
 
 impl Drop for LocalPtySession {
     fn drop(&mut self) {
-        if self.cached_exit.is_none() {
+        if !matches!(
+            self.try_outcome(),
+            Some(TerminalSessionOutcome::Exited { .. })
+        ) {
             let _ = self.killer.kill();
         }
     }
@@ -1343,6 +1667,7 @@ pub struct TerminalModel {
     saved_cursor: Option<SavedTerminalCursor>,
     wrap_next: bool,
     title: SharedString,
+    current_directory: Option<SharedString>,
     viewport_offset: usize,
     modes: TerminalModes,
     alternate_lines: Option<(Vec<TerminalLine>, TerminalPosition)>,
@@ -1354,6 +1679,14 @@ pub struct TerminalModel {
     saved_private_modes: Vec<(u16, bool)>,
     response_bytes: Vec<u8>,
     last_printed_char: Option<char>,
+    bell_sequence: u64,
+    history_origin: u64,
+    search_reset_sequence: u64,
+    ambiguous_width_is_wide: bool,
+    command_outputs: VecDeque<TerminalCommandOutput>,
+    active_command_output: Option<(u64, usize, Instant)>,
+    notification: Option<TerminalNotification>,
+    notification_sequence: u64,
 }
 
 impl Clone for TerminalModel {
@@ -1370,6 +1703,7 @@ impl Clone for TerminalModel {
             saved_cursor: self.saved_cursor,
             wrap_next: self.wrap_next,
             title: self.title.clone(),
+            current_directory: self.current_directory.clone(),
             viewport_offset: self.viewport_offset,
             modes: self.modes,
             alternate_lines: self.alternate_lines.clone(),
@@ -1381,6 +1715,14 @@ impl Clone for TerminalModel {
             saved_private_modes: self.saved_private_modes.clone(),
             response_bytes: self.response_bytes.clone(),
             last_printed_char: self.last_printed_char,
+            bell_sequence: self.bell_sequence,
+            history_origin: self.history_origin,
+            search_reset_sequence: self.search_reset_sequence,
+            ambiguous_width_is_wide: self.ambiguous_width_is_wide,
+            command_outputs: self.command_outputs.clone(),
+            active_command_output: self.active_command_output,
+            notification: self.notification.clone(),
+            notification_sequence: self.notification_sequence,
         }
     }
 }
@@ -1395,6 +1737,7 @@ impl std::fmt::Debug for TerminalModel {
             .field("scrollback_len", &self.scrollback.len())
             .field("viewport_offset", &self.viewport_offset)
             .field("title", &self.title)
+            .field("current_directory", &self.current_directory)
             .field("modes", &self.modes)
             .field("selection", &self.selection)
             .field("scroll_region", &self.scroll_region)
@@ -1403,6 +1746,10 @@ impl std::fmt::Debug for TerminalModel {
             .field("saved_private_modes", &self.saved_private_modes)
             .field("response_bytes_len", &self.response_bytes.len())
             .field("last_printed_char", &self.last_printed_char)
+            .field("bell_sequence", &self.bell_sequence)
+            .field("history_origin", &self.history_origin)
+            .field("search_reset_sequence", &self.search_reset_sequence)
+            .field("ambiguous_width_is_wide", &self.ambiguous_width_is_wide)
             .finish()
     }
 }
@@ -1419,6 +1766,7 @@ impl PartialEq for TerminalModel {
             && self.saved_cursor == other.saved_cursor
             && self.wrap_next == other.wrap_next
             && self.title == other.title
+            && self.current_directory == other.current_directory
             && self.viewport_offset == other.viewport_offset
             && self.modes == other.modes
             && self.alternate_lines == other.alternate_lines
@@ -1430,6 +1778,13 @@ impl PartialEq for TerminalModel {
             && self.saved_private_modes == other.saved_private_modes
             && self.response_bytes == other.response_bytes
             && self.last_printed_char == other.last_printed_char
+            && self.bell_sequence == other.bell_sequence
+            && self.history_origin == other.history_origin
+            && self.search_reset_sequence == other.search_reset_sequence
+            && self.ambiguous_width_is_wide == other.ambiguous_width_is_wide
+            && self.command_outputs == other.command_outputs
+            && self.notification == other.notification
+            && self.notification_sequence == other.notification_sequence
     }
 }
 
@@ -1453,6 +1808,7 @@ impl TerminalModel {
             saved_cursor: None,
             wrap_next: false,
             title: SharedString::default(),
+            current_directory: None,
             viewport_offset: 0,
             modes: TerminalModes::default(),
             alternate_lines: None,
@@ -1464,6 +1820,14 @@ impl TerminalModel {
             saved_private_modes: Vec::new(),
             response_bytes: Vec::new(),
             last_printed_char: None,
+            bell_sequence: 0,
+            history_origin: 0,
+            search_reset_sequence: 0,
+            ambiguous_width_is_wide: false,
+            command_outputs: VecDeque::new(),
+            active_command_output: None,
+            notification: None,
+            notification_sequence: 0,
         }
     }
 
@@ -1471,6 +1835,13 @@ impl TerminalModel {
     #[must_use]
     pub fn max_scrollback(mut self, max_scrollback: usize) -> Self {
         self.max_scrollback = max_scrollback;
+        self
+    }
+
+    /// Chooses whether East Asian ambiguous-width characters occupy two cells.
+    #[must_use]
+    pub fn ambiguous_width(mut self, wide: bool) -> Self {
+        self.ambiguous_width_is_wide = wide;
         self
     }
 
@@ -1530,6 +1901,10 @@ impl TerminalModel {
             + self.response_bytes.capacity()
             + self.title.len()
             + self
+                .current_directory
+                .as_ref()
+                .map_or(0, |directory| directory.len())
+            + self
                 .active_hyperlink
                 .as_ref()
                 .map_or(0, |hyperlink| hyperlink.len())
@@ -1547,10 +1922,104 @@ impl TerminalModel {
         &self.title
     }
 
+    /// Returns the current directory reported through OSC 7, when valid.
+    #[must_use]
+    pub fn current_directory(&self) -> Option<&SharedString> {
+        self.current_directory.as_ref()
+    }
+
+    /// Returns bounded completed command-output metadata from OSC 133.
+    pub fn command_outputs(&self) -> &VecDeque<TerminalCommandOutput> {
+        &self.command_outputs
+    }
+
+    /// Returns the latest bounded terminal notification and its change sequence.
+    pub fn latest_notification(&self) -> Option<(u64, &TerminalNotification)> {
+        self.notification
+            .as_ref()
+            .map(|notification| (self.notification_sequence, notification))
+    }
+
+    /// Reveals and selects a completed OSC 133 command-output region.
+    pub fn reveal_command_output(&mut self, index: usize) -> bool {
+        let Some(output) = self.command_outputs.get(index).copied() else {
+            return false;
+        };
+        let history_end = self
+            .history_origin
+            .saturating_add((self.scrollback.len() + self.lines.len()) as u64);
+        if output.end_row < self.history_origin || output.start_row >= history_end {
+            return false;
+        }
+        let start_row = output.start_row.saturating_sub(self.history_origin) as usize;
+        let end_row = output
+            .end_row
+            .min(history_end.saturating_sub(1))
+            .saturating_sub(self.history_origin) as usize;
+        let live_start = self
+            .scrollback
+            .len()
+            .saturating_add(self.lines.len())
+            .saturating_sub(self.rows);
+        let desired_start = end_row
+            .saturating_add(1)
+            .saturating_sub(self.rows)
+            .min(start_row)
+            .min(live_start);
+        self.viewport_offset = live_start
+            .saturating_sub(desired_start)
+            .min(self.scrollback.len());
+        self.selection = Some(TerminalSelection::new(
+            TerminalPosition {
+                row: start_row.saturating_sub(desired_start),
+                column: output.start_column.min(self.columns.saturating_sub(1)),
+            },
+            TerminalPosition {
+                row: end_row.saturating_sub(desired_start),
+                column: output.end_column.min(self.columns.saturating_sub(1)),
+            },
+        ));
+        true
+    }
+
     /// Returns the current terminal mode flags.
     #[must_use]
     pub fn modes(&self) -> TerminalModes {
         self.modes
+    }
+
+    /// Returns whether the live grid or cursor currently requests animation.
+    #[must_use]
+    pub fn has_blinking_content(&self) -> bool {
+        self.modes.cursor_blink
+            || self
+                .lines
+                .iter()
+                .any(|line| line.cells().iter().any(|cell| cell.style.blink))
+    }
+
+    /// Returns a monotonically wrapping sequence incremented for every BEL.
+    #[must_use]
+    pub fn bell_sequence(&self) -> u64 {
+        self.bell_sequence
+    }
+
+    /// Returns the total number of history rows currently addressable by search.
+    #[must_use]
+    pub fn history_len(&self) -> usize {
+        self.scrollback.len() + self.lines.len()
+    }
+
+    /// Returns the number of scrollback rows evicted since model creation.
+    #[must_use]
+    pub fn history_origin(&self) -> u64 {
+        self.history_origin
+    }
+
+    /// Returns a sequence changed whenever cached search rows require a full rebuild.
+    #[must_use]
+    pub fn search_reset_sequence(&self) -> u64 {
+        self.search_reset_sequence
     }
 
     /// Returns the active terminal character set.
@@ -1579,6 +2048,170 @@ impl TerminalModel {
     /// Clears the active text selection.
     pub fn clear_selection(&mut self) {
         self.selection = None;
+    }
+
+    /// Selects the complete live terminal grid.
+    pub fn select_all(&mut self) {
+        self.selection = Some(TerminalSelection::new(
+            TerminalPosition { row: 0, column: 0 },
+            TerminalPosition {
+                row: self.rows.saturating_sub(1),
+                column: self.columns.saturating_sub(1),
+            },
+        ));
+    }
+
+    /// Computes single-, double-, or triple-click selection for rendered rows.
+    #[must_use]
+    pub fn selection_for_click(
+        &self,
+        position: TerminalPosition,
+        click_count: usize,
+        visible_scrollback: usize,
+    ) -> TerminalSelection {
+        if click_count < 2 {
+            return TerminalSelection::new(position, position);
+        }
+        let visible_scrollback = visible_scrollback.min(self.scrollback.len());
+        let line = if self.viewport_offset > 0 && visible_scrollback == 0 {
+            let total = self.scrollback.len() + self.lines.len();
+            let end = total.saturating_sub(self.viewport_offset.min(self.scrollback.len()));
+            let start = end.saturating_sub(self.rows);
+            let index = start + position.row;
+            if index < self.scrollback.len() {
+                self.scrollback.get(index)
+            } else {
+                self.lines.get(index.saturating_sub(self.scrollback.len()))
+            }
+        } else if position.row < visible_scrollback {
+            let start = self.scrollback.len().saturating_sub(visible_scrollback);
+            self.scrollback.get(start + position.row)
+        } else {
+            self.lines.get(position.row - visible_scrollback)
+        };
+        if click_count >= 3 {
+            return TerminalSelection::new(
+                TerminalPosition {
+                    row: position.row,
+                    column: 0,
+                },
+                TerminalPosition {
+                    row: position.row,
+                    column: self.columns.saturating_sub(1),
+                },
+            );
+        }
+        let Some(line) = line else {
+            return TerminalSelection::new(position, position);
+        };
+        let column = position.column.min(self.columns.saturating_sub(1));
+        let class = |cell: &TerminalCell| {
+            let text = cell.text.as_ref();
+            if text.chars().all(char::is_whitespace) {
+                0
+            } else if text
+                .chars()
+                .all(|value| value.is_alphanumeric() || value == '_')
+            {
+                1
+            } else {
+                2
+            }
+        };
+        let selected_class = line.cells.get(column).map_or(0, class);
+        let mut start = column;
+        while start > 0
+            && line
+                .cells
+                .get(start - 1)
+                .is_some_and(|cell| class(cell) == selected_class)
+        {
+            start -= 1;
+        }
+        let mut end = column;
+        while end + 1 < self.columns
+            && line
+                .cells
+                .get(end + 1)
+                .is_some_and(|cell| class(cell) == selected_class)
+        {
+            end += 1;
+        }
+        TerminalSelection::new(
+            TerminalPosition {
+                row: position.row,
+                column: start,
+            },
+            TerminalPosition {
+                row: position.row,
+                column: end,
+            },
+        )
+    }
+
+    /// Returns the OSC 8 hyperlink at a rendered grid position.
+    #[must_use]
+    pub fn hyperlink_at(
+        &self,
+        position: TerminalPosition,
+        visible_scrollback: usize,
+    ) -> Option<&SharedString> {
+        let visible_scrollback = visible_scrollback.min(self.scrollback.len());
+        let line = if self.viewport_offset > 0 && visible_scrollback == 0 {
+            let total = self.scrollback.len() + self.lines.len();
+            let end = total.saturating_sub(self.viewport_offset.min(self.scrollback.len()));
+            let start = end.saturating_sub(self.rows);
+            let index = start + position.row;
+            if index < self.scrollback.len() {
+                self.scrollback.get(index)
+            } else {
+                self.lines.get(index.saturating_sub(self.scrollback.len()))
+            }
+        } else if position.row < visible_scrollback {
+            let start = self.scrollback.len().saturating_sub(visible_scrollback);
+            self.scrollback.get(start + position.row)
+        } else {
+            self.lines
+                .get(position.row.saturating_sub(visible_scrollback))
+        }?;
+        line.cells()
+            .get(position.column.min(self.columns.saturating_sub(1)))?
+            .hyperlink
+            .as_ref()
+    }
+
+    /// Returns an OSC 8 link or a conservatively detected URL/file path.
+    #[must_use]
+    pub fn link_at(
+        &self,
+        position: TerminalPosition,
+        visible_scrollback: usize,
+    ) -> Option<SharedString> {
+        if let Some(link) = self.hyperlink_at(position, visible_scrollback) {
+            return Some(link.clone());
+        }
+        let visible_scrollback = visible_scrollback.min(self.scrollback.len());
+        let line = if self.viewport_offset > 0 && visible_scrollback == 0 {
+            let total = self.scrollback.len() + self.lines.len();
+            let end = total.saturating_sub(self.viewport_offset.min(self.scrollback.len()));
+            let start = end.saturating_sub(self.rows);
+            let index = start + position.row;
+            if index < self.scrollback.len() {
+                self.scrollback.get(index)
+            } else {
+                self.lines.get(index.saturating_sub(self.scrollback.len()))
+            }
+        } else if position.row < visible_scrollback {
+            let start = self.scrollback.len().saturating_sub(visible_scrollback);
+            self.scrollback.get(start + position.row)
+        } else {
+            self.lines
+                .get(position.row.saturating_sub(visible_scrollback))
+        }?;
+        detected_links_in_line(line)
+            .into_iter()
+            .find(|link| (link.start_column..=link.end_column).contains(&position.column))
+            .map(|link| link.target)
     }
 
     /// Returns the selected text from the current viewport.
@@ -1691,6 +2324,207 @@ impl TerminalModel {
             .collect()
     }
 
+    /// Finds text across the complete scrollback and live screen.
+    #[must_use]
+    pub fn search(&self, query: &str, case_sensitive: bool) -> Vec<TerminalSearchMatch> {
+        self.search_with_options(
+            query,
+            TerminalSearchOptions {
+                case_sensitive,
+                ..TerminalSearchOptions::default()
+            },
+        )
+        .unwrap_or_default()
+    }
+
+    /// Finds text with case, whole-word, and regular-expression options.
+    pub fn search_with_options(
+        &self,
+        query: &str,
+        options: TerminalSearchOptions,
+    ) -> Result<Vec<TerminalSearchMatch>, regex::Error> {
+        self.search_from_with_options(query, options, 0)
+    }
+
+    /// Finds text at or after a complete-history row for incremental indexing.
+    #[must_use]
+    pub fn search_from(
+        &self,
+        query: &str,
+        case_sensitive: bool,
+        start_row: usize,
+    ) -> Vec<TerminalSearchMatch> {
+        self.search_from_with_options(
+            query,
+            TerminalSearchOptions {
+                case_sensitive,
+                ..TerminalSearchOptions::default()
+            },
+            start_row,
+        )
+        .unwrap_or_default()
+    }
+
+    /// Searches an immutable snapshot on the supplied background executor.
+    ///
+    /// Cloning the Arc does not copy scrollback. Hosts should discard stale query
+    /// results and compare `history_origin` / `search_reset_sequence` before
+    /// applying coordinates to a newer model. Keep at most one active query per
+    /// view; synchronous search methods are intended for workers or small buffers.
+    pub fn search_async(
+        self: Arc<Self>,
+        executor: &gpui::BackgroundExecutor,
+        query: String,
+        options: TerminalSearchOptions,
+    ) -> gpui::Task<Result<Vec<TerminalSearchMatch>, regex::Error>> {
+        executor.spawn(async move { self.search_with_options(&query, options) })
+    }
+
+    /// Finds configurable matches at or after a complete-history row.
+    pub fn search_from_with_options(
+        &self,
+        query: &str,
+        options: TerminalSearchOptions,
+        start_row: usize,
+    ) -> Result<Vec<TerminalSearchMatch>, regex::Error> {
+        if query.is_empty() {
+            return Ok(Vec::new());
+        }
+        let regex = options.regex.then(|| {
+            let mut builder = regex::RegexBuilder::new(query);
+            builder
+                .case_insensitive(!options.case_sensitive)
+                .size_limit(1 << 20)
+                .dfa_size_limit(1 << 20);
+            builder.build()
+        });
+        let regex = regex.transpose()?;
+        let selection_bounds = if options.selection_only {
+            let selection = match self.selection {
+                Some(selection) => selection,
+                None => return Ok(Vec::new()),
+            };
+            let viewport_start = self
+                .scrollback
+                .len()
+                .saturating_add(self.lines.len())
+                .saturating_sub(self.rows)
+                .saturating_sub(self.viewport_offset.min(self.scrollback.len()));
+            let (start, end) = selection.bounds();
+            Some((
+                TerminalPosition {
+                    row: viewport_start.saturating_add(start.row),
+                    column: start.column,
+                },
+                TerminalPosition {
+                    row: viewport_start.saturating_add(end.row),
+                    column: end.column,
+                },
+            ))
+        } else {
+            None
+        };
+        let matches = self
+            .scrollback
+            .iter()
+            .chain(self.lines.iter())
+            .enumerate()
+            .skip(start_row)
+            .flat_map(|(row, line)| search_terminal_line(line, row, query, options, regex.as_ref()))
+            .filter(|search_match| {
+                selection_bounds.is_none_or(|(start, end)| {
+                    let match_start = (search_match.row, search_match.start_column);
+                    let match_end = (search_match.row, search_match.end_column);
+                    match_start >= (start.row, start.column) && match_end <= (end.row, end.column)
+                })
+            })
+            .filter(|search_match| {
+                !options.command_output_only || self.match_is_command_output(*search_match)
+            })
+            .take(MAX_SEARCH_MATCHES)
+            .collect::<Vec<_>>();
+        Ok(matches)
+    }
+
+    fn match_is_command_output(&self, search_match: TerminalSearchMatch) -> bool {
+        let start = (
+            self.history_origin.saturating_add(search_match.row as u64),
+            search_match.start_column,
+        );
+        let end = (start.0, search_match.end_column);
+        self.command_outputs.iter().any(|output| {
+            start >= (output.start_row, output.start_column)
+                && end <= (output.end_row, output.end_column)
+        }) || self
+            .active_command_output
+            .is_some_and(|(row, column, _)| start >= (row, column))
+    }
+
+    fn absolute_cursor_row(&self) -> u64 {
+        self.history_origin
+            .saturating_add(self.scrollback.len() as u64)
+            .saturating_add(self.cursor.row as u64)
+    }
+
+    fn begin_command_output(&mut self) {
+        self.active_command_output = Some((
+            self.absolute_cursor_row(),
+            self.cursor.column,
+            Instant::now(),
+        ));
+    }
+
+    fn finish_command_output(&mut self, exit_status: Option<i32>) {
+        let Some((start_row, start_column, started_at)) = self.active_command_output.take() else {
+            return;
+        };
+        const MAX_COMMAND_OUTPUTS: usize = 2048;
+        if self.command_outputs.len() == MAX_COMMAND_OUTPUTS {
+            self.command_outputs.pop_front();
+        }
+        let end = (self.absolute_cursor_row(), self.cursor.column).max((start_row, start_column));
+        self.command_outputs.push_back(TerminalCommandOutput {
+            start_row,
+            start_column,
+            end_row: end.0,
+            end_column: end.1,
+            exit_status,
+            duration_ms: started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
+        });
+    }
+
+    /// Reveals and selects a search result in the current viewport.
+    pub fn reveal_search_match(&mut self, search_match: TerminalSearchMatch) -> bool {
+        let total_rows = self.scrollback.len() + self.lines.len();
+        if search_match.row >= total_rows || search_match.start_column >= self.columns {
+            return false;
+        }
+        let live_start = total_rows.saturating_sub(self.rows);
+        self.viewport_offset = live_start
+            .saturating_sub(search_match.row)
+            .min(self.scrollback.len());
+        let viewport_start = total_rows
+            .saturating_sub(self.rows)
+            .saturating_sub(self.viewport_offset);
+        let viewport_row = search_match.row.saturating_sub(viewport_start);
+        if viewport_row >= self.rows {
+            return false;
+        }
+        self.selection = Some(TerminalSelection::new(
+            TerminalPosition {
+                row: viewport_row,
+                column: search_match
+                    .start_column
+                    .min(self.columns.saturating_sub(1)),
+            },
+            TerminalPosition {
+                row: viewport_row,
+                column: search_match.end_column.min(self.columns.saturating_sub(1)),
+            },
+        ));
+        true
+    }
+
     /// Writes terminal output into the model.
     pub fn write(&mut self, text: &str) {
         let mut parser = std::mem::take(&mut self.parser);
@@ -1727,6 +2561,9 @@ impl TerminalModel {
     pub fn resize(&mut self, columns: usize, rows: usize) {
         let columns = columns.max(1);
         let rows = rows.max(1);
+        if columns != self.columns || rows != self.rows {
+            self.search_reset_sequence = self.search_reset_sequence.wrapping_add(1);
+        }
         if columns != self.columns {
             self.reflow(columns, rows);
         } else {
@@ -1751,6 +2588,29 @@ impl TerminalModel {
     }
 
     fn reflow(&mut self, columns: usize, rows: usize) {
+        // OSC 133 regions use physical history rows. Width changes invalidate
+        // those addresses, so discard them instead of applying a stale filter.
+        self.command_outputs.clear();
+        self.active_command_output = None;
+        self.notification = None;
+        let total_rows = self.scrollback.len() + self.lines.len();
+        let old_viewport_start = total_rows
+            .saturating_sub(self.rows)
+            .saturating_sub(self.viewport_offset.min(self.scrollback.len()));
+        let selection_anchors = self.selection.map(|selection| {
+            (
+                reflow_anchor_for_position(
+                    self.scrollback.iter().chain(self.lines.iter()),
+                    old_viewport_start + selection.anchor.row,
+                    selection.anchor.column,
+                ),
+                reflow_anchor_for_position(
+                    self.scrollback.iter().chain(self.lines.iter()),
+                    old_viewport_start + selection.head.row,
+                    selection.head.column,
+                ),
+            )
+        });
         let mut logical_lines: Vec<Vec<TerminalCell>> = Vec::new();
         let mut current = Vec::new();
         for line in self.scrollback.iter().chain(self.lines.iter()) {
@@ -1763,6 +2623,8 @@ impl TerminalModel {
         if !current.is_empty() {
             logical_lines.push(current);
         }
+
+        let logical_lengths = logical_lines.iter().map(Vec::len).collect::<Vec<_>>();
 
         let mut reflowed = Vec::new();
         for logical in logical_lines {
@@ -1790,20 +2652,62 @@ impl TerminalModel {
             .take(split)
             .cloned()
             .collect::<VecDeque<_>>();
+        let mut evicted_rows = 0;
         while self.scrollback.len() > self.max_scrollback {
             self.scrollback.pop_front();
+            self.history_origin = self.history_origin.wrapping_add(1);
+            evicted_rows += 1;
         }
         self.lines = reflowed.into_iter().skip(split).collect();
         self.lines
             .resize_with(rows, || TerminalLine::blank(columns));
         self.viewport_offset = self.viewport_offset.min(self.max_viewport_offset());
+        if let Some((Some(anchor), Some(head))) = selection_anchors {
+            let anchor = position_for_reflow_anchor(anchor, &logical_lengths, columns)
+                .map(|position| position_with_eviction(position, evicted_rows));
+            let head = position_for_reflow_anchor(head, &logical_lengths, columns)
+                .map(|position| position_with_eviction(position, evicted_rows));
+            if let (Some(anchor), Some(head)) = (anchor.flatten(), head.flatten()) {
+                let total_rows = self.scrollback.len() + self.lines.len();
+                let selection_start = anchor.row.min(head.row);
+                let selection_end = anchor.row.max(head.row);
+                let live_start = total_rows.saturating_sub(rows);
+                let desired_start = selection_end
+                    .saturating_add(1)
+                    .saturating_sub(rows)
+                    .min(selection_start)
+                    .min(live_start);
+                self.viewport_offset = live_start
+                    .saturating_sub(desired_start)
+                    .min(self.scrollback.len());
+                self.selection = Some(TerminalSelection::new(
+                    TerminalPosition {
+                        row: anchor.row.saturating_sub(desired_start),
+                        column: anchor.column,
+                    },
+                    TerminalPosition {
+                        row: head.row.saturating_sub(desired_start),
+                        column: head.column,
+                    },
+                ));
+            } else {
+                self.selection = None;
+            }
+        }
     }
 
     fn write_char(&mut self, ch: char) {
         let ch = self.map_charset_char(ch);
-        let width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        let width = if self.ambiguous_width_is_wide {
+            UnicodeWidthChar::width_cjk(ch).unwrap_or(0)
+        } else {
+            UnicodeWidthChar::width(ch).unwrap_or(0)
+        };
         if width == 0 {
             self.append_combining_char(ch);
+            return;
+        }
+        if self.append_grapheme_extension(ch) {
             return;
         }
         self.last_printed_char = Some(ch);
@@ -1856,7 +2760,13 @@ impl TerminalModel {
                 .text
                 .chars()
                 .next()
-                .and_then(UnicodeWidthChar::width)
+                .and_then(|character| {
+                    if self.ambiguous_width_is_wide {
+                        UnicodeWidthChar::width_cjk(character)
+                    } else {
+                        UnicodeWidthChar::width(character)
+                    }
+                })
                 == Some(2)
         {
             column -= 1;
@@ -1869,6 +2779,34 @@ impl TerminalModel {
         text.push(ch);
         cell.text = SharedString::from(text);
         self.viewport_offset = 0;
+    }
+
+    fn append_grapheme_extension(&mut self, ch: char) -> bool {
+        let row = self.cursor.row.min(self.rows - 1);
+        let mut column = if self.wrap_next {
+            self.cursor.column
+        } else if self.cursor.column > 0 {
+            self.cursor.column - 1
+        } else {
+            return false;
+        };
+        if column > 0 && self.lines[row].cells[column].text.as_ref() == " " {
+            column -= 1;
+        }
+        let Some(cell) = self.lines[row].cells.get_mut(column) else {
+            return false;
+        };
+        if cell.text.chars().count() >= MAX_CELL_GRAPHEME_CHARS {
+            return false;
+        }
+        let mut combined = cell.text.to_string();
+        combined.push(ch);
+        if UnicodeSegmentation::graphemes(combined.as_str(), true).count() != 1 {
+            return false;
+        }
+        cell.text = SharedString::from(combined);
+        self.viewport_offset = 0;
+        true
     }
 
     fn mark_current_line_wrapped(&mut self) {
@@ -1888,6 +2826,7 @@ impl TerminalModel {
             self.scrollback.push_back(line);
             while self.scrollback.len() > self.max_scrollback {
                 self.scrollback.pop_front();
+                self.history_origin = self.history_origin.wrapping_add(1);
             }
             let erase_line = self.erase_line();
             self.lines.push(erase_line);
@@ -2031,11 +2970,13 @@ impl TerminalModel {
     fn reset_terminal(&mut self) {
         self.lines = vec![TerminalLine::blank(self.columns); self.rows];
         self.scrollback.clear();
+        self.search_reset_sequence = self.search_reset_sequence.wrapping_add(1);
         self.cursor = TerminalPosition::default();
         self.style = TerminalStyle::default();
         self.saved_cursor = None;
         self.wrap_next = false;
         self.title = SharedString::default();
+        self.current_directory = None;
         self.viewport_offset = 0;
         self.modes = TerminalModes::default();
         self.alternate_lines = None;
@@ -2047,6 +2988,8 @@ impl TerminalModel {
         self.saved_private_modes.clear();
         self.response_bytes.clear();
         self.last_printed_char = None;
+        self.command_outputs.clear();
+        self.active_command_output = None;
     }
 
     fn soft_reset_terminal(&mut self) {
@@ -2077,7 +3020,10 @@ impl TerminalModel {
     }
 
     fn queue_response(&mut self, bytes: impl AsRef<[u8]>) {
-        self.response_bytes.extend_from_slice(bytes.as_ref());
+        let remaining = MAX_PROTOCOL_RESPONSE_BYTES.saturating_sub(self.response_bytes.len());
+        let bytes = bytes.as_ref();
+        self.response_bytes
+            .extend_from_slice(&bytes[..bytes.len().min(remaining)]);
     }
 
     fn map_charset_char(&self, ch: char) -> char {
@@ -2233,6 +3179,7 @@ impl TerminalModel {
             self.scrollback.push_back(line);
             while self.scrollback.len() > self.max_scrollback {
                 self.scrollback.pop_front();
+                self.history_origin = self.history_origin.wrapping_add(1);
             }
             self.lines.push(erase_line);
             return;
@@ -2585,6 +3532,102 @@ impl TerminalModel {
     }
 }
 
+fn search_terminal_line(
+    line: &TerminalLine,
+    row: usize,
+    query: &str,
+    options: TerminalSearchOptions,
+    regex: Option<&regex::Regex>,
+) -> Vec<TerminalSearchMatch> {
+    let text = line.text();
+    if let Some(regex) = regex {
+        return regex
+            .find_iter(&text)
+            .filter(|matched| {
+                matched.start() < matched.end()
+                    && (!options.whole_word
+                        || has_word_boundaries(&text, matched.start(), matched.end()))
+            })
+            .filter_map(|matched| {
+                let start_column = terminal_column_for_byte(line, matched.start())?;
+                let end_byte = matched.end().saturating_sub(1);
+                let end_column = terminal_column_for_byte(line, end_byte)?;
+                Some(TerminalSearchMatch {
+                    row,
+                    start_column,
+                    end_column,
+                })
+            })
+            .collect();
+    }
+    let (haystack, needle, byte_map) = if options.case_sensitive {
+        (
+            text.clone(),
+            query.to_string(),
+            (0..text.len()).collect::<Vec<_>>(),
+        )
+    } else {
+        let (folded, byte_map) = folded_text_with_byte_map(&text);
+        (folded, query.to_lowercase(), byte_map)
+    };
+    haystack
+        .match_indices(&needle)
+        .filter_map(|(start_byte, matched)| {
+            let end_byte = start_byte + matched.len();
+            let original_start = *byte_map.get(start_byte)?;
+            let original_end = *byte_map.get(end_byte.saturating_sub(1))?;
+            let original_end_exclusive = text[original_end..]
+                .chars()
+                .next()
+                .map_or(original_end, |character| {
+                    original_end + character.len_utf8()
+                });
+            if options.whole_word
+                && !has_word_boundaries(&text, original_start, original_end_exclusive)
+            {
+                return None;
+            }
+            let start_column = terminal_column_for_byte(line, original_start)?;
+            let end_column = terminal_column_for_byte(line, original_end)?;
+            Some(TerminalSearchMatch {
+                row,
+                start_column,
+                end_column,
+            })
+        })
+        .collect()
+}
+
+fn has_word_boundaries(text: &str, start: usize, end: usize) -> bool {
+    let is_word = |character: char| character.is_alphanumeric() || character == '_';
+    let previous_is_word = text[..start].chars().next_back().is_some_and(is_word);
+    let next_is_word = text[end..].chars().next().is_some_and(is_word);
+    !previous_is_word && !next_is_word
+}
+
+fn folded_text_with_byte_map(text: &str) -> (String, Vec<usize>) {
+    let mut folded = String::new();
+    let mut byte_map = Vec::new();
+    for (original_byte, character) in text.char_indices() {
+        let lowercase = character.to_lowercase().to_string();
+        byte_map.extend(std::iter::repeat_n(original_byte, lowercase.len()));
+        folded.push_str(&lowercase);
+    }
+    (folded, byte_map)
+}
+
+fn terminal_column_for_byte(line: &TerminalLine, byte_offset: usize) -> Option<usize> {
+    let mut consumed = 0;
+    for (column, cell) in line.cells().iter().enumerate() {
+        let next = consumed + cell.text.len();
+        if byte_offset < next {
+            return Some(column);
+        }
+        consumed = next;
+    }
+    None
+}
+
 struct TerminalPerformer<'a> {
     model: &'a mut TerminalModel,
 }
@@ -2621,6 +3664,7 @@ impl Perform for TerminalPerformer<'_> {
             b'\r' => self.model.carriage_return(),
             0x08 => self.model.backspace(),
             b'\t' => self.model.tab(),
+            0x07 => self.model.bell_sequence = self.model.bell_sequence.wrapping_add(1),
             _ => {}
         }
     }
@@ -2884,12 +3928,105 @@ impl Perform for TerminalPerformer<'_> {
             && let Some(title) = bounded_osc_text(&params[1..], MAX_OSC_TITLE_BYTES)
         {
             self.model.title = SharedString::from(title);
+        } else if params.len() >= 2
+            && params[0] == b"7"
+            && let Some(uri) = bounded_osc_text(&params[1..], MAX_OSC_HYPERLINK_BYTES)
+        {
+            self.model.current_directory = file_uri_path(&uri).map(SharedString::from);
         } else if params.len() >= 3
             && params[0] == b"8"
             && let Some(uri) = bounded_osc_text(&params[2..], MAX_OSC_HYPERLINK_BYTES)
         {
             self.model.set_active_hyperlink(Some(&uri));
+        } else if params.len() >= 2 && params[0] == b"133" {
+            match params[1] {
+                b"C" => self.model.begin_command_output(),
+                b"D" => {
+                    let exit_status = params
+                        .get(2)
+                        .and_then(|value| std::str::from_utf8(value).ok())
+                        .and_then(|value| value.parse::<i32>().ok());
+                    self.model.finish_command_output(exit_status);
+                }
+                _ => {}
+            }
+        } else if params.len() >= 2 && params[0] == b"9" && params[1] != b"4" {
+            if let Some(body) = bounded_osc_text(&params[1..], MAX_OSC_TITLE_BYTES)
+                && !body.is_empty()
+            {
+                self.model.notification = Some(TerminalNotification {
+                    title: SharedString::default(),
+                    body: SharedString::from(body),
+                });
+                self.model.notification_sequence = self.model.notification_sequence.wrapping_add(1);
+            }
+        } else if params.len() >= 4
+            && params[0] == b"777"
+            && params[1] == b"notify"
+            && let (Some(title), Some(body)) = (
+                bounded_osc_text(&params[2..3], MAX_OSC_TITLE_BYTES),
+                bounded_osc_text(&params[3..], MAX_OSC_TITLE_BYTES),
+            )
+            && !body.is_empty()
+        {
+            self.model.notification = Some(TerminalNotification {
+                title: SharedString::from(title),
+                body: SharedString::from(body),
+            });
+            self.model.notification_sequence = self.model.notification_sequence.wrapping_add(1);
         }
+    }
+}
+
+fn file_uri_path(uri: &str) -> Option<String> {
+    let authority_and_path = uri.strip_prefix("file://")?;
+    let path = if authority_and_path.starts_with('/') {
+        authority_and_path
+    } else {
+        let (authority, path) = authority_and_path.split_once('/')?;
+        if !authority.is_empty() && !authority.eq_ignore_ascii_case("localhost") {
+            return None;
+        }
+        path.strip_prefix('/').map_or(path, |path| path)
+    };
+    let path = if path.starts_with('/') {
+        path.to_string()
+    } else {
+        format!("/{path}")
+    };
+    percent_decode_path(&path)
+}
+
+fn percent_decode_path(path: &str) -> Option<String> {
+    let bytes = path.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let high = *bytes.get(index + 1)?;
+            let low = *bytes.get(index + 2)?;
+            let value = (hex_value(high)? << 4) | hex_value(low)?;
+            if value == 0 {
+                return None;
+            }
+            decoded.push(value);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(decoded)
+        .ok()
+        .filter(|path| !path.chars().any(char::is_control))
+}
+
+const fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
     }
 }
 
@@ -2928,7 +4065,37 @@ pub struct TerminalOptions {
     line_height: u16,
     font_family: Option<SharedString>,
     font_size: u16,
+    font_weight: u16,
+    line_height_percent: u16,
+    ligatures: bool,
+    cursor_style: Option<TerminalCursorStyle>,
     measure_font: bool,
+    blink_visible: bool,
+    automatic_blink: bool,
+    ansi_palette: [[u8; 3]; 16],
+    link_activation_modifier: TerminalLinkModifier,
+}
+
+/// Modifier required to activate detected terminal links.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum TerminalLinkModifier {
+    /// Command on macOS and Control on Linux/Windows.
+    #[default]
+    Secondary,
+    /// The Alt/Option key.
+    Alt,
+    /// The Control key on every platform.
+    Control,
+}
+
+impl TerminalLinkModifier {
+    fn is_active(self, modifiers: &gpui::Modifiers) -> bool {
+        match self {
+            Self::Secondary => modifiers.secondary(),
+            Self::Alt => modifiers.alt,
+            Self::Control => modifiers.control,
+        }
+    }
 }
 
 impl Default for TerminalOptions {
@@ -2939,7 +4106,15 @@ impl Default for TerminalOptions {
             line_height: 18,
             font_family: None,
             font_size: 13,
+            font_weight: 400,
+            line_height_percent: 135,
+            ligatures: false,
+            cursor_style: None,
             measure_font: false,
+            blink_visible: true,
+            automatic_blink: true,
+            ansi_palette: default_ansi_palette(),
+            link_activation_modifier: TerminalLinkModifier::Secondary,
         }
     }
 }
@@ -2975,6 +4150,64 @@ impl TerminalOptions {
         self
     }
 
+    /// Sets the base font weight from 1 through 1000.
+    #[must_use]
+    pub fn font_weight(mut self, weight: u16) -> Self {
+        self.font_weight = weight.clamp(1, 1000);
+        self
+    }
+
+    /// Sets minimum line height in pixels for measured fonts, or fixed line height otherwise.
+    #[must_use]
+    pub fn line_height(mut self, height: u16) -> Self {
+        self.line_height = height.max(1);
+        self
+    }
+
+    /// Sets line height as a percentage of the font size.
+    #[must_use]
+    pub fn line_height_percent(mut self, percent: u16) -> Self {
+        self.line_height_percent = percent.clamp(100, 250);
+        self
+    }
+
+    /// Controls contextual terminal font ligatures. They are disabled by default
+    /// so one grid cell cannot visually merge with its neighbors unexpectedly.
+    #[must_use]
+    pub fn ligatures(mut self, enabled: bool) -> Self {
+        self.ligatures = enabled;
+        self
+    }
+
+    /// Overrides the application-requested cursor style when configured.
+    #[must_use]
+    pub fn cursor_style(mut self, style: Option<TerminalCursorStyle>) -> Self {
+        self.cursor_style = style;
+        self
+    }
+
+    /// Overrides automatic blink scheduling with a host-controlled visible phase.
+    #[must_use]
+    pub fn blink_visible(mut self, visible: bool) -> Self {
+        self.blink_visible = visible;
+        self.automatic_blink = false;
+        self
+    }
+
+    /// Replaces the normal and bright ANSI 16-color palette.
+    #[must_use]
+    pub fn ansi_palette(mut self, palette: impl Into<TerminalPalette>) -> Self {
+        self.ansi_palette = palette.into().0;
+        self
+    }
+
+    /// Selects the modifier required for pointer link activation.
+    #[must_use]
+    pub fn link_activation_modifier(mut self, modifier: TerminalLinkModifier) -> Self {
+        self.link_activation_modifier = modifier;
+        self
+    }
+
     /// Enables font-derived cell measurement using GPUI's text system.
     #[must_use]
     pub fn measured_font(mut self) -> Self {
@@ -2987,7 +4220,7 @@ impl TerminalOptions {
 #[derive(gpui::IntoElement)]
 pub struct Terminal {
     id: SharedString,
-    model: TerminalModel,
+    model: TerminalModelSource,
     options: TerminalOptions,
     focus_handle: Option<FocusHandle>,
     input_state: Option<Entity<TerminalInputState>>,
@@ -2995,6 +4228,11 @@ pub struct Terminal {
     on_selection: Option<SelectionHandler>,
     on_viewport_scroll: Option<ViewportScrollHandler>,
     on_resize: Option<ResizeHandler>,
+    on_link: Option<LinkHandler>,
+    on_link_hover: Option<LinkHoverHandler>,
+    hovered_link: Option<SharedString>,
+    search_matches: Vec<TerminalSearchMatch>,
+    active_search_match: Option<usize>,
 }
 
 impl Terminal {
@@ -3003,7 +4241,7 @@ impl Terminal {
     pub fn new(id: impl Into<SharedString>, model: TerminalModel) -> Self {
         Self {
             id: id.into(),
-            model,
+            model: TerminalModelSource::Snapshot(Arc::new(model)),
             options: TerminalOptions::default(),
             focus_handle: None,
             input_state: None,
@@ -3011,6 +4249,32 @@ impl Terminal {
             on_selection: None,
             on_viewport_scroll: None,
             on_resize: None,
+            on_link: None,
+            on_link_hover: None,
+            hovered_link: None,
+            search_matches: Vec::new(),
+            active_search_match: None,
+        }
+    }
+
+    /// Creates a terminal surface backed by a stable shared model.
+    #[must_use]
+    pub fn from_shared(id: impl Into<SharedString>, model: impl Into<TerminalModelSource>) -> Self {
+        Self {
+            id: id.into(),
+            model: model.into(),
+            options: TerminalOptions::default(),
+            focus_handle: None,
+            input_state: None,
+            on_input: None,
+            on_selection: None,
+            on_viewport_scroll: None,
+            on_resize: None,
+            on_link: None,
+            on_link_hover: None,
+            hovered_link: None,
+            search_matches: Vec::new(),
+            active_search_match: None,
         }
     }
 
@@ -3074,18 +4338,101 @@ impl Terminal {
         self.on_resize = Some(std::rc::Rc::new(handler));
         self
     }
+
+    /// Registers a handler for modifier-click activation of an OSC 8 link.
+    #[must_use]
+    pub fn on_link(
+        mut self,
+        handler: impl Fn(&SharedString, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_link = Some(std::rc::Rc::new(handler));
+        self
+    }
+
+    /// Registers a handler that reports the OSC 8 link below the pointer.
+    #[must_use]
+    pub fn on_link_hover(
+        mut self,
+        handler: impl Fn(&Option<SharedString>, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_link_hover = Some(std::rc::Rc::new(handler));
+        self
+    }
+
+    /// Marks an OSC 8 link as hovered for visible pointer feedback.
+    #[must_use]
+    pub fn hovered_link(mut self, uri: Option<SharedString>) -> Self {
+        self.hovered_link = uri;
+        self
+    }
+
+    /// Sets history-addressed matches to highlight and the active result index.
+    #[must_use]
+    pub fn search_matches(
+        mut self,
+        matches: Vec<TerminalSearchMatch>,
+        active: Option<usize>,
+    ) -> Self {
+        self.search_matches = matches;
+        self.active_search_match = active;
+        self
+    }
+}
+
+struct TerminalBlinkState {
+    visible: bool,
+    task: Option<gpui::Task<()>>,
+}
+impl TerminalBlinkState {
+    fn set_active(&mut self, active: bool, cx: &mut Context<Self>) {
+        if !active {
+            self.task = None;
+            self.visible = true;
+        } else if self.task.is_none() {
+            self.task = Some(cx.spawn(async move |this, cx| {
+                loop {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(500))
+                        .await;
+                    if this
+                        .update(cx, |state, cx| {
+                            state.visible = !state.visible;
+                            cx.notify();
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            }));
+        }
+    }
 }
 
 impl RenderOnce for Terminal {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(mut self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let blink = _window.use_keyed_state(format!("{}-blink", self.id), cx, |_, _| {
+            TerminalBlinkState {
+                visible: true,
+                task: None,
+            }
+        });
+        let active = self.options.automatic_blink && self.model.borrow().has_blinking_content();
+        let visible = blink.update(cx, |state, cx| {
+            state.set_active(active, cx);
+            state.visible
+        });
+        if self.options.automatic_blink {
+            self.options.blink_visible = visible;
+        }
         let theme = Theme::global(cx).clone();
         let font_family = terminal_font_family(&self.options, &theme, _window);
         let metrics = terminal_font_metrics(&self.options, &theme, &font_family, _window);
         let cell_width = metrics.cell_width;
         let line_height = metrics.line_height;
         let font_size = px(f32::from(self.options.font_size));
-        let rendered_rows = rendered_row_count(&self.model, &self.options);
-        let rendered_cursor = rendered_cursor_position(&self.model, &self.options);
+        let rendered_rows = rendered_row_count(&self.model.borrow(), &self.options);
+        let rendered_cursor = rendered_cursor_position(&self.model.borrow(), &self.options);
         if let Some(input_state) = &self.input_state
             && let Some(cursor) = rendered_cursor
         {
@@ -3096,16 +4443,16 @@ impl RenderOnce for Terminal {
                         bounds: Bounds::new(
                             point(px(0.0), px(0.0)),
                             size(
-                                cell_width * self.model.columns() as f32,
+                                cell_width * self.model.borrow().columns() as f32,
                                 line_height * rendered_rows as f32,
                             ),
                         ),
                         cell_width,
                         line_height,
-                        columns: self.model.columns(),
+                        columns: self.model.borrow().columns(),
                         rows: rendered_rows,
                     },
-                    modes: self.model.modes(),
+                    modes: self.model.borrow().modes(),
                 });
                 state.set_input_handler(self.on_input.clone());
             });
@@ -3121,11 +4468,7 @@ impl RenderOnce for Terminal {
             .h_full()
             .min_w_0()
             .min_h_0()
-            .rounded(px(theme.radius.lg))
-            .border_1()
-            .border_color(theme.border())
             .bg(theme.background())
-            .p_2()
             .flex()
             .flex_col()
             .overflow_hidden()
@@ -3143,16 +4486,26 @@ impl RenderOnce for Terminal {
                 .on_click(move |_, window, cx| window.focus(&handle, cx))
                 .on_key_down(move |event: &KeyDownEvent, window, cx| {
                     if event.keystroke.modifiers.secondary() && event.keystroke.key == "c" {
-                        if terminal_model.copy_selection_to_clipboard_with_visible_scrollback(
-                            terminal_options.visible_scrollback,
-                            cx,
-                        ) {
+                        let copied = if terminal_model.borrow().viewport_offset() > 0
+                            && terminal_options.visible_scrollback == 0
+                        {
+                            terminal_model.borrow().copy_selection_to_clipboard(cx)
+                        } else {
+                            terminal_model
+                                .borrow()
+                                .copy_selection_to_clipboard_with_visible_scrollback(
+                                    terminal_options.visible_scrollback,
+                                    cx,
+                                )
+                        };
+                        if copied {
                             cx.stop_propagation();
                         }
                         return;
                     }
                     if event.keystroke.modifiers.secondary() && event.keystroke.key == "v" {
-                        if let Some(bytes) = terminal_model.clipboard_paste_bytes(cx) {
+                        let bytes = { terminal_model.borrow().clipboard_paste_bytes(cx) };
+                        if let Some(bytes) = bytes {
                             on_input(&bytes, window, cx);
                             cx.stop_propagation();
                         }
@@ -3161,9 +4514,11 @@ impl RenderOnce for Terminal {
                     if has_input_state && key_event_uses_text_input(event) {
                         return;
                     }
-                    if let Some(bytes) =
-                        terminal_key_down_event_bytes(event, terminal_model.modes())
-                    {
+                    let bytes = {
+                        let modes = terminal_model.borrow().modes();
+                        terminal_key_down_event_bytes(event, modes)
+                    };
+                    if let Some(bytes) = bytes {
                         on_input(&bytes, window, cx);
                         cx.stop_propagation();
                     }
@@ -3221,10 +4576,15 @@ impl RenderOnce for Terminal {
             .inset_0();
             grid = grid.child(input_canvas);
         }
-        if self.on_input.is_some() || self.on_selection.is_some() {
+        if self.on_input.is_some()
+            || self.on_selection.is_some()
+            || self.on_link.is_some()
+            || self.on_link_hover.is_some()
+        {
             let mouse_model = self.model.clone();
             let mouse_metrics = metrics;
-            let mouse_rows = rendered_row_count(&self.model, &self.options);
+            let mouse_rows = rendered_row_count(&self.model.borrow(), &self.options);
+            let mouse_visible_scrollback = self.options.visible_scrollback;
             let down_bounds = grid_bounds.clone();
             let move_bounds = grid_bounds.clone();
             let up_bounds = grid_bounds.clone();
@@ -3236,7 +4596,12 @@ impl RenderOnce for Terminal {
             let move_input = self.on_input.clone();
             let up_input = self.on_input.clone();
             let down_selection = self.on_selection.clone();
+            let down_link = self.on_link.clone();
+            let link_activation_modifier = self.options.link_activation_modifier;
+            let move_link_hover = self.on_link_hover.clone();
+            let exit_link_hover = self.on_link_hover.clone();
             let move_selection = self.on_selection.clone();
+            let move_scroll = self.on_viewport_scroll.clone();
             let up_selection = self.on_selection.clone();
             let down_model = mouse_model.clone();
             let move_model = mouse_model.clone();
@@ -3245,56 +4610,117 @@ impl RenderOnce for Terminal {
                 .on_mouse_down(
                     MouseButton::Left,
                     move |event: &MouseDownEvent, window, cx| {
-                        if let Some(metrics) = metrics_from_bounds(
-                            down_bounds.get(),
-                            &down_model,
-                            mouse_metrics,
-                            mouse_rows,
-                        ) {
+                        // Host callbacks may synchronously mutate this shared model.
+                        // Materialize all borrowed values before invoking them.
+                        let metrics = {
+                            let model = down_model.borrow();
+                            metrics_from_bounds(
+                                down_bounds.get(),
+                                &model,
+                                mouse_metrics,
+                                mouse_rows,
+                            )
+                        };
+                        if let Some(metrics) = metrics {
                             let position = metrics.position_for_point(event.position);
-                            if let Some(bytes) = terminal_mouse_event_bytes(
-                                mouse_event_from_parts(
-                                    position,
-                                    TerminalMouseButton::Left,
-                                    TerminalMouseEventKind::Press,
-                                    event.modifiers,
-                                ),
-                                down_model.modes(),
-                            ) {
+                            let link = if link_activation_modifier.is_active(&event.modifiers) {
+                                down_model
+                                    .borrow()
+                                    .link_at(position, mouse_visible_scrollback)
+                            } else {
+                                None
+                            };
+                            if let (Some(on_link), Some(uri)) = (&down_link, link) {
+                                on_link(&uri, window, cx);
+                                return;
+                            }
+                            let bytes = {
+                                let modes = down_model.borrow().modes();
+                                terminal_mouse_event_bytes(
+                                    mouse_event_from_parts(
+                                        position,
+                                        TerminalMouseButton::Left,
+                                        TerminalMouseEventKind::Press,
+                                        event.modifiers,
+                                    ),
+                                    modes,
+                                )
+                            };
+                            if let Some(bytes) = bytes {
                                 if let Some(on_input) = &down_input {
                                     on_input(&bytes, window, cx);
                                 }
                             } else if let Some(on_selection) = &down_selection {
-                                down_anchor.set(Some(position));
-                                let selection = TerminalSelection::new(position, position);
+                                let selection = {
+                                    let model = down_model.borrow();
+                                    if event.modifiers.shift {
+                                        model
+                                            .selection()
+                                            .map(|selection| {
+                                                TerminalSelection::new(
+                                                    selection.bounds().0,
+                                                    position,
+                                                )
+                                            })
+                                            .unwrap_or_else(|| {
+                                                TerminalSelection::new(position, position)
+                                            })
+                                    } else {
+                                        model.selection_for_click(
+                                            position,
+                                            event.click_count,
+                                            mouse_visible_scrollback,
+                                        )
+                                    }
+                                };
+                                down_anchor.set(Some(selection.bounds().0));
                                 on_selection(&selection, window, cx);
                             }
                         }
                     },
                 )
                 .on_mouse_move(move |event: &MouseMoveEvent, window, cx| {
-                    if let Some(metrics) = metrics_from_bounds(
-                        move_bounds.get(),
-                        &move_model,
-                        mouse_metrics,
-                        mouse_rows,
-                    ) {
-                        let position = metrics.position_for_point(event.position);
-                        if let Some(button) = event.pressed_button.and_then(terminal_mouse_button)
-                            && let Some(bytes) = terminal_mouse_event_bytes(
-                                mouse_event_from_parts(
-                                    position,
-                                    button,
-                                    if event.dragging() {
-                                        TerminalMouseEventKind::Drag
-                                    } else {
-                                        TerminalMouseEventKind::Move
-                                    },
-                                    event.modifiers,
-                                ),
-                                move_model.modes(),
-                            )
+                    let metrics = {
+                        let model = move_model.borrow();
+                        metrics_from_bounds(move_bounds.get(), &model, mouse_metrics, mouse_rows)
+                    };
+                    if let Some(metrics) = metrics {
+                        if event.dragging()
+                            && let Some(on_scroll) = &move_scroll
                         {
+                            if event.position.y < metrics.bounds.top() {
+                                on_scroll(&1, window, cx);
+                            } else if event.position.y > metrics.bounds.bottom() {
+                                on_scroll(&-1, window, cx);
+                            }
+                        }
+                        let position = metrics.position_for_point(event.position);
+                        if let Some(on_link_hover) = &move_link_hover {
+                            let link = move_model
+                                .borrow()
+                                .link_at(position, mouse_visible_scrollback);
+                            on_link_hover(&link, window, cx);
+                        }
+                        let mouse_bytes = event
+                            .pressed_button
+                            .and_then(terminal_mouse_button)
+                            .and_then(|button| {
+                                let modes = move_model.borrow().modes();
+                                terminal_mouse_event_bytes(
+                                    mouse_event_from_parts(
+                                        position,
+                                        button,
+                                        if event.dragging() {
+                                            TerminalMouseEventKind::Drag
+                                        } else {
+                                            TerminalMouseEventKind::Move
+                                        },
+                                        event.modifiers,
+                                    ),
+                                    modes,
+                                )
+                            });
+                        if let Some(bytes) = mouse_bytes {
                             if let Some(on_input) = &move_input {
                                 on_input(&bytes, window, cx);
                             }
@@ -3309,25 +4735,33 @@ impl RenderOnce for Terminal {
                         }
                     }
                 })
+                .on_mouse_exit(move |_, window, cx| {
+                    if let Some(on_link_hover) = &exit_link_hover {
+                        on_link_hover(&None, window, cx);
+                    }
+                })
                 .on_mouse_up(
                     MouseButton::Left,
                     move |event: &MouseUpEvent, window, cx| {
-                        if let Some(metrics) = metrics_from_bounds(
-                            up_bounds.get(),
-                            &up_model,
-                            mouse_metrics,
-                            mouse_rows,
-                        ) {
+                        let metrics = {
+                            let model = up_model.borrow();
+                            metrics_from_bounds(up_bounds.get(), &model, mouse_metrics, mouse_rows)
+                        };
+                        if let Some(metrics) = metrics {
                             let position = metrics.position_for_point(event.position);
-                            if let Some(bytes) = terminal_mouse_event_bytes(
-                                mouse_event_from_parts(
-                                    position,
-                                    TerminalMouseButton::Left,
-                                    TerminalMouseEventKind::Release,
-                                    event.modifiers,
-                                ),
-                                up_model.modes(),
-                            ) {
+                            let bytes = {
+                                let modes = up_model.borrow().modes();
+                                terminal_mouse_event_bytes(
+                                    mouse_event_from_parts(
+                                        position,
+                                        TerminalMouseButton::Left,
+                                        TerminalMouseEventKind::Release,
+                                        event.modifiers,
+                                    ),
+                                    modes,
+                                )
+                            };
+                            if let Some(bytes) = bytes {
                                 if let Some(on_input) = &up_input {
                                     on_input(&bytes, window, cx);
                                 }
@@ -3345,7 +4779,7 @@ impl RenderOnce for Terminal {
         if self.on_input.is_some() || self.on_viewport_scroll.is_some() {
             let wheel_model = self.model.clone();
             let wheel_metrics = metrics;
-            let wheel_rows = rendered_row_count(&self.model, &self.options);
+            let wheel_rows = rendered_row_count(&self.model.borrow(), &self.options);
             let wheel_bounds = grid_bounds.clone();
             let wheel_input = self.on_input.clone();
             let wheel_scroll = self.on_viewport_scroll.clone();
@@ -3354,24 +4788,28 @@ impl RenderOnce for Terminal {
                 if line_delta == 0 {
                     return;
                 }
-                if let Some(metrics) =
-                    metrics_from_bounds(wheel_bounds.get(), &wheel_model, wheel_metrics, wheel_rows)
-                {
+                let metrics = {
+                    let model = wheel_model.borrow();
+                    metrics_from_bounds(wheel_bounds.get(), &model, wheel_metrics, wheel_rows)
+                };
+                if let Some(metrics) = metrics {
                     let position = metrics.position_for_point(event.position);
                     let button = if line_delta > 0 {
                         TerminalMouseButton::WheelUp
                     } else {
                         TerminalMouseButton::WheelDown
                     };
-                    if let Some(bytes) = terminal_mouse_event_bytes(
+                    let modes = wheel_model.borrow().modes();
+                    let mouse_bytes = terminal_mouse_event_bytes(
                         mouse_event_from_parts(
                             position,
                             button,
                             TerminalMouseEventKind::Press,
                             event.modifiers,
                         ),
-                        wheel_model.modes(),
-                    ) {
+                        modes,
+                    );
+                    if let Some(bytes) = mouse_bytes {
                         if let Some(on_input) = &wheel_input {
                             for _ in 0..line_delta.unsigned_abs() {
                                 on_input(&bytes, window, cx);
@@ -3379,9 +4817,8 @@ impl RenderOnce for Terminal {
                         }
                         return;
                     }
-                    if let Some(bytes) =
-                        terminal_alternate_scroll_bytes(line_delta, wheel_model.modes())
-                    {
+                    let alternate_bytes = terminal_alternate_scroll_bytes(line_delta, modes);
+                    if let Some(bytes) = alternate_bytes {
                         if let Some(on_input) = &wheel_input {
                             for _ in 0..line_delta.unsigned_abs() {
                                 on_input(&bytes, window, cx);
@@ -3396,12 +4833,26 @@ impl RenderOnce for Terminal {
             });
         }
 
-        let render_rows = terminal_render_rows(&self.model, &self.options);
+        let model_for_paint = self.model.borrow();
+        let render_rows = terminal_render_rows(&model_for_paint, &self.options);
+        let search_matches = rendered_search_matches(
+            &model_for_paint,
+            &self.options,
+            &self.search_matches,
+            self.active_search_match,
+        );
         let paint_plan = terminal_paint_plan(
             &render_rows,
             &theme,
-            self.model.modes.reverse_video,
+            self.model.borrow().modes.reverse_video,
+            self.model.borrow().modes.cursor_blink,
+            self.options.blink_visible,
             &font_family,
+            self.options.font_weight,
+            self.options.ligatures,
+            &self.options.ansi_palette,
+            self.hovered_link.as_deref(),
+            &search_matches,
         );
         grid = grid.child(
             canvas(
@@ -3495,7 +4946,7 @@ fn shell_quote(value: &std::ffi::OsStr) -> String {
 fn configure_shell_command(builder: &mut CommandBuilder, command: &std::path::Path) {
     builder.env("TERM", "xterm-256color");
     builder.env("COLORTERM", "truecolor");
-    builder.env("TERM_PROGRAM", "guic-terminal");
+    builder.env("TERM_PROGRAM", "guic");
 
     if cfg!(target_os = "windows")
         && command
@@ -3618,9 +5069,14 @@ fn terminal_font_metrics(
     }
 
     let font_size = px(f32::from(options.font_size));
+    let mut metric_font = font(family.clone());
+    metric_font.weight = FontWeight::from(f32::from(options.font_weight));
+    if !options.ligatures {
+        metric_font.features = FontFeatures::disable_ligatures();
+    }
     let run = TextRun {
         len: 1,
-        font: font(family.clone()),
+        font: metric_font.clone(),
         color: theme.foreground(),
         background_color: None,
         underline: None,
@@ -3633,15 +5089,22 @@ fn terminal_font_metrics(
         .and_then(|lines| lines.first().map(|line| line.width()))
         .filter(|width| f32::from(*width).is_finite() && f32::from(*width) > 0.0)
         .unwrap_or_else(|| px(f32::from(options.cell_width)));
-    let measured_line_height = px(f32::from(options.font_size) * 1.35);
+    let measured_line_height =
+        px(f32::from(options.font_size) * f32::from(options.line_height_percent) / 100.0);
     let themed_line_height = px(theme
         .typography
         .line_height_sm
         .max(f32::from(options.font_size)));
 
+    let font_id = window.text_system().resolve_font(&metric_font);
+    let native_height = window.text_system().ascent(font_id, font_size)
+        + window.text_system().descent(font_id, font_size);
     TerminalFontMetrics {
         cell_width,
-        line_height: measured_line_height.max(themed_line_height),
+        line_height: measured_line_height
+            .max(themed_line_height)
+            .max(native_height)
+            .max(px(f32::from(options.line_height))),
     }
 }
 
@@ -3686,15 +5149,13 @@ fn key_event_uses_text_input(event: &KeyDownEvent) -> bool {
 }
 
 fn text_display_width(text: &str) -> usize {
-    text.chars()
-        .map(|ch| UnicodeWidthChar::width(ch).unwrap_or(0))
-        .sum()
+    UnicodeWidthStr::width(text)
 }
 
 fn byte_index_for_display_width(text: &str, target_width: usize) -> usize {
     let mut width = 0;
-    for (index, ch) in text.char_indices() {
-        let next_width = width + UnicodeWidthChar::width(ch).unwrap_or(0);
+    for (index, grapheme) in UnicodeSegmentation::grapheme_indices(text, true) {
+        let next_width = width + UnicodeWidthStr::width(grapheme);
         if next_width > target_width {
             return index;
         }
@@ -3808,9 +5269,12 @@ fn selected_text_from_lines(
                 .skip(start_column)
                 .take(end_column.saturating_sub(start_column).saturating_add(1))
                 .map(|cell| cell.text.as_ref())
-                .collect::<String>()
-                .trim_end()
-                .to_string();
+                .collect::<String>();
+            let line_text = if !line.is_wrapped() && end_column == columns.saturating_sub(1) {
+                line_text.trim_end().to_string()
+            } else {
+                line_text
+            };
             if !text.is_empty()
                 && row
                     .checked_sub(1)
@@ -3836,6 +5300,63 @@ fn meaningful_cells(line: &TerminalLine) -> Vec<TerminalCell> {
         .map(|index| index + 1)
         .unwrap_or(0);
     line.cells.iter().take(end).cloned().collect()
+}
+
+#[derive(Clone, Copy)]
+struct ReflowAnchor {
+    logical_line: usize,
+    cell_offset: usize,
+}
+
+fn reflow_anchor_for_position<'a>(
+    lines: impl Iterator<Item = &'a TerminalLine>,
+    target_row: usize,
+    target_column: usize,
+) -> Option<ReflowAnchor> {
+    let mut logical_line = 0;
+    let mut cell_offset = 0;
+    for (row, line) in lines.enumerate() {
+        let meaningful_len = meaningful_cells(line).len();
+        if row == target_row {
+            return Some(ReflowAnchor {
+                logical_line,
+                cell_offset: cell_offset + target_column.min(meaningful_len.saturating_sub(1)),
+            });
+        }
+        if line.is_wrapped() {
+            cell_offset += meaningful_len;
+        } else {
+            logical_line += 1;
+            cell_offset = 0;
+        }
+    }
+    None
+}
+
+fn position_for_reflow_anchor(
+    anchor: ReflowAnchor,
+    logical_lengths: &[usize],
+    columns: usize,
+) -> Option<TerminalPosition> {
+    let logical_len = *logical_lengths.get(anchor.logical_line)?;
+    let preceding_rows = logical_lengths
+        .iter()
+        .take(anchor.logical_line)
+        .map(|len| (*len).max(1).div_ceil(columns))
+        .sum::<usize>();
+    let offset = anchor.cell_offset.min(logical_len.saturating_sub(1));
+    Some(TerminalPosition {
+        row: preceding_rows + offset / columns,
+        column: offset % columns,
+    })
+}
+
+fn position_with_eviction(
+    mut position: TerminalPosition,
+    evicted_rows: usize,
+) -> Option<TerminalPosition> {
+    position.row = position.row.checked_sub(evicted_rows)?;
+    Some(position)
 }
 
 /// Converts a GPUI keystroke into xterm-compatible input bytes.
@@ -3951,6 +5472,7 @@ fn cursor_key_from_modes(final_byte: char, modes: TerminalModes) -> Vec<u8> {
 /// Encodes pasted text for a terminal session.
 #[must_use]
 pub fn terminal_paste_bytes(text: &str, modes: TerminalModes) -> Vec<u8> {
+    let text = sanitized_terminal_paste(text);
     if modes.bracketed_paste {
         let mut bytes = Vec::with_capacity(text.len() + 12);
         bytes.extend_from_slice(b"\x1b[200~");
@@ -3958,8 +5480,38 @@ pub fn terminal_paste_bytes(text: &str, modes: TerminalModes) -> Vec<u8> {
         bytes.extend_from_slice(b"\x1b[201~");
         bytes
     } else {
-        text.as_bytes().to_vec()
+        text.into_bytes()
     }
+}
+
+fn sanitized_terminal_paste(text: &str) -> String {
+    let mut output = String::with_capacity(text.len().min(MAX_TERMINAL_PASTE_BYTES));
+    let mut skip_lf = false;
+    for character in text.chars() {
+        if skip_lf {
+            skip_lf = false;
+            if character == '\n' {
+                continue;
+            }
+        }
+        let character = if character == '\r' {
+            skip_lf = true;
+            '\n'
+        } else {
+            character
+        };
+        if character != '\n'
+            && character != '\t'
+            && (character.is_control() || character == '\u{7f}')
+        {
+            continue;
+        }
+        if output.len() + character.len_utf8() > MAX_TERMINAL_PASTE_BYTES {
+            break;
+        }
+        output.push(character);
+    }
+    output
 }
 
 /// Encodes a mouse event according to the terminal's current mouse reporting modes.
@@ -4116,6 +5668,69 @@ struct TerminalRenderRow<'a> {
     muted: bool,
 }
 
+struct DetectedTerminalLink {
+    start_column: usize,
+    end_column: usize,
+    target: SharedString,
+}
+
+fn detected_links_in_line(line: &TerminalLine) -> Vec<DetectedTerminalLink> {
+    let mut links = Vec::new();
+    let mut start = 0;
+    while start < line.cells.len() {
+        while start < line.cells.len() && line.cells[start].text.chars().all(char::is_whitespace) {
+            start += 1;
+        }
+        if start == line.cells.len() {
+            break;
+        }
+        let mut end = start;
+        while end + 1 < line.cells.len()
+            && !line.cells[end + 1].text.chars().all(char::is_whitespace)
+        {
+            end += 1;
+        }
+        let raw = line.cells[start..=end]
+            .iter()
+            .map(|cell| cell.text.as_ref())
+            .collect::<String>();
+        let leading = raw
+            .chars()
+            .take_while(|character| "([{\"'".contains(*character))
+            .count();
+        let trailing = raw
+            .chars()
+            .rev()
+            .take_while(|character| ".,;:!?)]}\"'".contains(*character))
+            .count();
+        let candidate = raw
+            .chars()
+            .skip(leading)
+            .take(raw.chars().count().saturating_sub(leading + trailing))
+            .collect::<String>();
+        let candidate_lower = candidate.to_ascii_lowercase();
+        let is_url = candidate_lower.starts_with("http://")
+            || candidate_lower.starts_with("https://")
+            || candidate_lower.starts_with("mailto:");
+        let is_path = candidate.starts_with('/')
+            || candidate.starts_with("./")
+            || candidate.starts_with("../")
+            || candidate.starts_with("~/");
+        if candidate.len() <= MAX_OSC_HYPERLINK_BYTES
+            && !candidate.chars().any(char::is_control)
+            && (is_url || is_path)
+        {
+            links.push(DetectedTerminalLink {
+                start_column: start.saturating_add(leading),
+                end_column: end.saturating_sub(trailing),
+                target: SharedString::from(candidate),
+            });
+        }
+        start = end.saturating_add(1);
+    }
+    links
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct TerminalPaintRect {
     row: usize,
@@ -4137,6 +5752,12 @@ struct TerminalPaintPlan {
     backgrounds: Vec<TerminalPaintRect>,
     cursors: Vec<(usize, usize, TerminalCursorStyle, Hsla)>,
     text: Vec<TerminalPaintTextBatch>,
+}
+
+#[derive(Clone, Copy)]
+struct RenderedSearchMatch {
+    range: TerminalSearchMatch,
+    active: bool,
 }
 
 struct TerminalCanvasLayout {
@@ -4231,6 +5852,28 @@ fn terminal_render_rows<'a>(
     options: &TerminalOptions,
 ) -> Vec<TerminalRenderRow<'a>> {
     let selection = model.selection;
+    if model.viewport_offset > 0 && options.visible_scrollback == 0 {
+        let total = model.scrollback.len() + model.lines.len();
+        let end = total.saturating_sub(model.viewport_offset.min(model.scrollback.len()));
+        let start = end.saturating_sub(model.rows());
+        return (start..end)
+            .enumerate()
+            .map(|(row, index)| {
+                let line = if index < model.scrollback.len() {
+                    &model.scrollback[index]
+                } else {
+                    &model.lines[index - model.scrollback.len()]
+                };
+                TerminalRenderRow {
+                    line: Cow::Borrowed(line),
+                    row,
+                    cursor: None,
+                    selection,
+                    muted: index < model.scrollback.len(),
+                }
+            })
+            .collect();
+    }
     if model.viewport_offset() > 0 {
         return model
             .viewport_lines()
@@ -4266,39 +5909,93 @@ fn terminal_render_rows<'a>(
                 muted: true,
             }),
     );
-    rows.extend(model.lines.iter().enumerate().map(|(row_index, line)| {
-        TerminalRenderRow {
-            line: Cow::Borrowed(line),
-            row: row_index + visible_scrollback,
-            cursor: (model.modes.cursor_visible && row_index == model.cursor.row)
-                .then_some((model.cursor.column, model.modes.cursor_style)),
-            selection,
-            muted: false,
-        }
-    }));
+    rows.extend(
+        model
+            .lines
+            .iter()
+            .enumerate()
+            .map(|(row_index, line)| TerminalRenderRow {
+                line: Cow::Borrowed(line),
+                row: row_index + visible_scrollback,
+                cursor: (model.modes.cursor_visible && row_index == model.cursor.row).then_some((
+                    model.cursor.column,
+                    options.cursor_style.unwrap_or(model.modes.cursor_style),
+                )),
+                selection,
+                muted: false,
+            }),
+    );
     rows
 }
 
+fn rendered_search_matches(
+    model: &TerminalModel,
+    options: &TerminalOptions,
+    matches: &[TerminalSearchMatch],
+    active: Option<usize>,
+) -> Vec<RenderedSearchMatch> {
+    let total = model.history_len();
+    let visible_scrollback = options.visible_scrollback.min(model.scrollback.len());
+    let start = if model.viewport_offset > 0 && visible_scrollback == 0 {
+        total
+            .saturating_sub(model.rows)
+            .saturating_sub(model.viewport_offset.min(model.scrollback.len()))
+    } else {
+        model.scrollback.len().saturating_sub(visible_scrollback)
+    };
+    let end = start.saturating_add(visible_scrollback + model.rows);
+    matches
+        .iter()
+        .enumerate()
+        .filter(|(_, search_match)| (start..end).contains(&search_match.row))
+        .map(|(index, search_match)| RenderedSearchMatch {
+            range: TerminalSearchMatch {
+                row: search_match.row - start,
+                ..*search_match
+            },
+            active: active == Some(index),
+        })
+        .collect()
+}
+
+#[allow(clippy::too_many_arguments)]
 fn terminal_paint_plan(
     rows: &[TerminalRenderRow<'_>],
     theme: &Theme,
     reverse_video: bool,
+    cursor_blink: bool,
+    blink_visible: bool,
     font_family: &SharedString,
+    font_weight: u16,
+    ligatures: bool,
+    ansi_palette: &[[u8; 3]; 16],
+    hovered_link: Option<&str>,
+    search_matches: &[RenderedSearchMatch],
 ) -> TerminalPaintPlan {
     let mut backgrounds = Vec::new();
     let mut cursors = Vec::new();
     let mut text: Vec<TerminalPaintTextBatch> = Vec::new();
 
     for row in rows {
+        let detected_links = detected_links_in_line(&row.line);
         for (column, cell) in row.line.cells.iter().enumerate() {
-            let cursor_style = row
-                .cursor
-                .and_then(|(cursor_column, style)| (cursor_column == column).then_some(style));
+            let cursor_style = row.cursor.and_then(|(cursor_column, style)| {
+                (cursor_column == column && (!cursor_blink || blink_visible)).then_some(style)
+            });
             let (mut foreground, mut background) =
-                terminal_cell_colors(cell.style, theme, reverse_video);
-            if cell.hyperlink.is_some() && cell.style.foreground.is_none() {
+                terminal_cell_colors(cell.style, theme, reverse_video, ansi_palette);
+            let detected_link = detected_links
+                .iter()
+                .find(|link| (link.start_column..=link.end_column).contains(&column));
+            let has_link = cell.hyperlink.is_some() || detected_link.is_some();
+            if has_link && cell.style.foreground.is_none() {
                 foreground = theme.accent();
             }
+            let link_hovered = cell
+                .hyperlink
+                .as_deref()
+                .is_some_and(|link| Some(link) == hovered_link)
+                || detected_link.is_some_and(|link| Some(link.target.as_ref()) == hovered_link);
             if row.muted {
                 foreground = foreground.opacity(0.72);
             }
@@ -4316,6 +6013,16 @@ fn terminal_paint_plan(
                 .is_some_and(|selection| selection.contains(row.row, column))
             {
                 background = theme.primary().opacity(0.28);
+            } else if link_hovered {
+                background = theme.accent().opacity(0.14);
+            } else if let Some(search_match) = search_matches.iter().find(|search_match| {
+                search_match.range.row == row.row
+                    && (search_match.range.start_column..=search_match.range.end_column)
+                        .contains(&column)
+            }) {
+                background = theme
+                    .accent()
+                    .opacity(if search_match.active { 0.32 } else { 0.14 });
             }
             if background != theme.background() {
                 push_terminal_background(
@@ -4333,26 +6040,29 @@ fn terminal_paint_plan(
             {
                 cursors.push((row.row, column, style, theme.primary()));
             }
-            if cell.text.as_ref() == " " || cell.style.hidden {
+            if cell.text.as_ref() == " "
+                || cell.style.hidden
+                || (cell.style.blink && !blink_visible)
+            {
                 continue;
             }
             let mut cell_font = font(font_family.clone());
+            cell_font.weight = FontWeight::from(f32::from(font_weight));
+            if !ligatures {
+                cell_font.features = FontFeatures::disable_ligatures();
+            }
             if cell.style.bold {
-                cell_font.weight = FontWeight::BOLD;
+                cell_font.weight =
+                    FontWeight::from((f32::from(font_weight) + 300.0).clamp(100.0, 900.0));
             }
             if cell.style.italic {
                 cell_font.style = FontStyle::Italic;
             }
-            let underline =
-                (cell.hyperlink.is_some() || cell.style.underline).then_some(UnderlineStyle {
-                    thickness: px(1.0),
-                    color: Some(if cell.hyperlink.is_some() {
-                        theme.accent()
-                    } else {
-                        foreground
-                    }),
-                    wavy: false,
-                });
+            let underline = (has_link || cell.style.underline).then_some(UnderlineStyle {
+                thickness: if link_hovered { px(2.0) } else { px(1.0) },
+                color: Some(if has_link { theme.accent() } else { foreground }),
+                wavy: false,
+            });
             let strikethrough = cell.style.strikethrough.then_some(StrikethroughStyle {
                 thickness: px(1.0),
                 color: Some(foreground),
@@ -4444,18 +6154,19 @@ fn terminal_cell_colors(
     style: TerminalStyle,
     theme: &Theme,
     reverse_video: bool,
+    ansi_palette: &[[u8; 3]; 16],
 ) -> (gpui::Hsla, gpui::Hsla) {
-    let foreground = terminal_hsla(style.foreground, theme);
+    let foreground = terminal_hsla(style.foreground, theme, ansi_palette);
     let background = style.background.map_or(theme.background(), |color| {
-        terminal_hsla(Some(color), theme)
+        terminal_hsla(Some(color), theme, ansi_palette)
     });
     if style.inverse ^ reverse_video {
         (
             style.background.map_or(theme.background(), |color| {
-                terminal_hsla(Some(color), theme)
+                terminal_hsla(Some(color), theme, ansi_palette)
             }),
             style.foreground.map_or(theme.foreground(), |color| {
-                terminal_hsla(Some(color), theme)
+                terminal_hsla(Some(color), theme, ansi_palette)
             }),
         )
     } else {
@@ -4485,42 +6196,36 @@ fn terminal_color(code: u16, bright: bool) -> Option<TerminalColor> {
     })
 }
 
-fn terminal_hsla(color: Option<TerminalColor>, theme: &Theme) -> gpui::Hsla {
+fn terminal_hsla(
+    color: Option<TerminalColor>,
+    theme: &Theme,
+    ansi_palette: &[[u8; 3]; 16],
+) -> gpui::Hsla {
     match color {
-        Some(TerminalColor::Black) => theme.muted(),
-        Some(TerminalColor::Red | TerminalColor::BrightRed) => theme.danger(),
-        Some(TerminalColor::Green | TerminalColor::BrightGreen) => theme.success(),
-        Some(TerminalColor::Yellow | TerminalColor::BrightYellow) => theme.warning(),
-        Some(TerminalColor::Blue | TerminalColor::BrightBlue) => theme.primary(),
-        Some(TerminalColor::Magenta | TerminalColor::BrightMagenta) => theme.accent(),
-        Some(TerminalColor::Cyan | TerminalColor::BrightCyan) => theme.info(),
-        Some(TerminalColor::White | TerminalColor::BrightWhite) | None => theme.foreground(),
-        Some(TerminalColor::BrightBlack) => theme.muted_foreground(),
-        Some(TerminalColor::Indexed(index)) => indexed_hsla(index),
+        Some(TerminalColor::Black) => indexed_hsla(0, ansi_palette),
+        Some(TerminalColor::Red) => indexed_hsla(1, ansi_palette),
+        Some(TerminalColor::Green) => indexed_hsla(2, ansi_palette),
+        Some(TerminalColor::Yellow) => indexed_hsla(3, ansi_palette),
+        Some(TerminalColor::Blue) => indexed_hsla(4, ansi_palette),
+        Some(TerminalColor::Magenta) => indexed_hsla(5, ansi_palette),
+        Some(TerminalColor::Cyan) => indexed_hsla(6, ansi_palette),
+        Some(TerminalColor::White) => indexed_hsla(7, ansi_palette),
+        Some(TerminalColor::BrightBlack) => indexed_hsla(8, ansi_palette),
+        Some(TerminalColor::BrightRed) => indexed_hsla(9, ansi_palette),
+        Some(TerminalColor::BrightGreen) => indexed_hsla(10, ansi_palette),
+        Some(TerminalColor::BrightYellow) => indexed_hsla(11, ansi_palette),
+        Some(TerminalColor::BrightBlue) => indexed_hsla(12, ansi_palette),
+        Some(TerminalColor::BrightMagenta) => indexed_hsla(13, ansi_palette),
+        Some(TerminalColor::BrightCyan) => indexed_hsla(14, ansi_palette),
+        Some(TerminalColor::BrightWhite) => indexed_hsla(15, ansi_palette),
+        None => theme.foreground(),
+        Some(TerminalColor::Indexed(index)) => indexed_hsla(index, ansi_palette),
         Some(TerminalColor::Rgb(red, green, blue)) => rgb_hsla(red, green, blue),
     }
 }
 
-fn indexed_hsla(index: u8) -> gpui::Hsla {
-    const ANSI: [(u8, u8, u8); 16] = [
-        (0, 0, 0),
-        (205, 49, 49),
-        (13, 188, 121),
-        (229, 229, 16),
-        (36, 114, 200),
-        (188, 63, 188),
-        (17, 168, 205),
-        (229, 229, 229),
-        (102, 102, 102),
-        (241, 76, 76),
-        (35, 209, 139),
-        (245, 245, 67),
-        (59, 142, 234),
-        (214, 112, 214),
-        (41, 184, 219),
-        (255, 255, 255),
-    ];
-    if let Some((red, green, blue)) = ANSI.get(usize::from(index)).copied() {
+fn indexed_hsla(index: u8, ansi_palette: &[[u8; 3]; 16]) -> gpui::Hsla {
+    if let Some([red, green, blue]) = ansi_palette.get(usize::from(index)).copied() {
         return rgb_hsla(red, green, blue);
     }
     if (16..=231).contains(&index) {
@@ -4532,6 +6237,19 @@ fn indexed_hsla(index: u8) -> gpui::Hsla {
     }
     let gray = 8 + (index.saturating_sub(232) * 10);
     rgb_hsla(gray, gray, gray)
+}
+
+/// Returns the built-in normal and bright ANSI 16-color palette.
+#[must_use]
+pub const fn default_ansi_palette() -> [[u8; 3]; 16] {
+    let mut palette = [[0; 3]; 16];
+    let mut index = 0;
+    while index < 16 {
+        let (r, g, b) = DEFAULT_ANSI_PALETTE[index];
+        palette[index] = [r, g, b];
+        index += 1;
+    }
+    palette
 }
 
 fn color_cube_component(value: u8) -> u8 {
@@ -4556,9 +6274,10 @@ mod tests {
         TerminalLifecycleAction, TerminalLifecyclePolicy, TerminalLifecycleSupervisor,
         TerminalLine, TerminalModel, TerminalModes, TerminalMouseButton, TerminalMouseEvent,
         TerminalMouseEventKind, TerminalOptions, TerminalPosition, TerminalProcessStatus,
-        TerminalSelection, TerminalStyle, key_event_uses_text_input, normalize_pty_dimension,
-        select_terminal_font_family, terminal_alternate_scroll_bytes, terminal_focus_event_bytes,
-        terminal_key_down_event_bytes, terminal_keystroke_bytes,
+        TerminalSearchMatch, TerminalSearchOptions, TerminalSelection, TerminalStyle,
+        default_ansi_palette, key_event_uses_text_input, normalize_pty_dimension,
+        rendered_search_matches, select_terminal_font_family, terminal_alternate_scroll_bytes,
+        terminal_focus_event_bytes, terminal_key_down_event_bytes, terminal_keystroke_bytes,
         terminal_keystroke_bytes_with_modes, terminal_mouse_event_bytes, terminal_paint_plan,
         terminal_paste_bytes, terminal_render_rows, terminal_text_input_bytes,
     };
@@ -4570,6 +6289,105 @@ mod tests {
         sync::{Arc, Mutex},
         time::Duration,
     };
+
+    #[test]
+    fn base_palette_matches_indexed_colors_and_preserves_bright_variants() {
+        let theme = super::Theme::dark();
+        let options = TerminalOptions::default();
+        assert_eq!(
+            super::terminal_hsla(Some(TerminalColor::Red), &theme, &options.ansi_palette),
+            super::terminal_hsla(
+                Some(TerminalColor::Indexed(1)),
+                &theme,
+                &options.ansi_palette
+            )
+        );
+        assert_ne!(
+            super::terminal_hsla(Some(TerminalColor::Red), &theme, &options.ansi_palette),
+            super::terminal_hsla(
+                Some(TerminalColor::BrightRed),
+                &theme,
+                &options.ansi_palette
+            )
+        );
+        let options = options.ansi_palette([(1, 2, 3); 16]);
+        assert_eq!(
+            super::terminal_hsla(
+                Some(TerminalColor::BrightWhite),
+                &theme,
+                &options.ansi_palette
+            ),
+            super::rgb_hsla(1, 2, 3)
+        );
+    }
+
+    #[test]
+    fn shared_terminal_view_retains_model_allocation() {
+        let model = Arc::new(TerminalModel::new(80, 24));
+        let terminal = Terminal::from_shared("shared", model.clone());
+        assert!(
+            matches!(&terminal.model, super::TerminalModelSource::Snapshot(snapshot) if Arc::ptr_eq(snapshot, &model))
+        );
+    }
+
+    #[test]
+    fn output_notifier_can_be_rebound_without_retaining_old_callback() {
+        let first = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let second = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let first_sink = first.clone();
+        let notifier: super::SharedOutputNotifier =
+            Arc::new(std::sync::RwLock::new(Some(Arc::new(move || {
+                first_sink.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }))));
+        super::notify_output(&notifier);
+        let second_sink = second.clone();
+        *notifier.write().expect("not poisoned") = Some(Arc::new(move || {
+            second_sink.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }));
+        super::notify_output(&notifier);
+        assert_eq!(first.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(second.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn structured_spawn_passes_literal_arguments() {
+        let mut config = super::PtySpawnConfig::new("/usr/bin/printf");
+        config.arguments = vec!["%s".into(), "literal $(not-a-command) ; end".into()];
+        let mut session = super::LocalPtySession::spawn(config, 80, 24).expect("spawn printf");
+        let mut bytes = Vec::new();
+        for _ in 0..100 {
+            bytes.extend(session.drain_output());
+            if bytes.ends_with(b"; end") {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            String::from_utf8(bytes).expect("UTF-8"),
+            "literal $(not-a-command) ; end"
+        );
+    }
+
+    #[gpui::test]
+    async fn background_search_matches_synchronous_results(cx: &mut TestAppContext) {
+        let mut model = TerminalModel::new(80, 24);
+        for _ in 0..1000 {
+            model.write("alpha beta gamma\r\n");
+        }
+        let model = Arc::new(model);
+        let options = super::TerminalSearchOptions {
+            whole_word: true,
+            ..Default::default()
+        };
+        let expected = model.search_with_options("beta", options).expect("query");
+        let found = model
+            .clone()
+            .search_async(&cx.background_executor, "beta".into(), options)
+            .await
+            .expect("query");
+        assert_eq!(found, expected);
+    }
 
     struct TerminalFixture<'a> {
         name: &'a str,
@@ -5062,6 +6880,30 @@ mod tests {
     }
 
     #[test]
+    fn terminal_keeps_emoji_grapheme_clusters_in_one_display_cell() {
+        let mut model = TerminalModel::new(12, 1);
+        model.write("👩‍💻x");
+        assert_eq!(model.lines()[0].cells()[0].text.as_ref(), "👩‍💻");
+        assert_eq!(model.lines()[0].cells()[2].text.as_ref(), "x");
+        assert_eq!(model.cursor(), TerminalPosition { row: 0, column: 3 });
+
+        let mut variation = TerminalModel::new(12, 1);
+        variation.write("✈️x");
+        assert_eq!(variation.lines()[0].cells()[0].text.as_ref(), "✈️");
+    }
+
+    #[test]
+    fn terminal_supports_wide_ambiguous_character_policy() {
+        let mut narrow = TerminalModel::new(8, 1);
+        narrow.write("·x");
+        assert_eq!(narrow.cursor(), TerminalPosition { row: 0, column: 2 });
+
+        let mut wide = TerminalModel::new(8, 1).ambiguous_width(true);
+        wide.write("·x");
+        assert_eq!(wide.cursor(), TerminalPosition { row: 0, column: 3 });
+    }
+
+    #[test]
     fn terminal_full_reset_clears_screen_history_and_modes() {
         let mut model = TerminalModel::new(8, 2);
         model.write("one\r\ntwo\r\nthree");
@@ -5098,6 +6940,31 @@ mod tests {
         model.write("\u{1b}]0;workspace\u{7}");
 
         assert_eq!(model.title().as_ref(), "workspace");
+    }
+
+    #[test]
+    fn terminal_tracks_only_local_osc_7_file_paths() {
+        let mut model = TerminalModel::new(20, 2);
+        model.write("\x1b]7;file://localhost/Users/test/My%20Project\x07");
+        assert_eq!(
+            model.current_directory().map(AsRef::as_ref),
+            Some("/Users/test/My Project")
+        );
+
+        model.write("\x1b]7;file://remote.example/tmp\x07");
+        assert_eq!(model.current_directory(), None);
+        model.write("\x1b]7;https://example.com/tmp\x07");
+        assert_eq!(model.current_directory(), None);
+        model.write("\x1b]7;file:///tmp/%00secret\x07");
+        assert_eq!(model.current_directory(), None);
+    }
+
+    #[test]
+    fn terminal_tracks_bell_events_without_rendering_control_text() {
+        let mut model = TerminalModel::new(8, 2);
+        model.write("one\x07two\x07");
+        assert_eq!(model.bell_sequence(), 2);
+        assert_eq!(model.lines()[0].text(), "onetwo");
     }
 
     #[test]
@@ -5169,6 +7036,39 @@ mod tests {
         );
         assert_eq!(model.lines()[0].cells()[5].hyperlink, None);
         assert_eq!(model.active_hyperlink(), None);
+        assert_eq!(
+            model
+                .hyperlink_at(TerminalPosition { row: 0, column: 2 }, 0)
+                .map(AsRef::as_ref),
+            Some("https://example.test")
+        );
+        assert_eq!(
+            model.hyperlink_at(TerminalPosition { row: 0, column: 8 }, 0),
+            None
+        );
+    }
+
+    #[test]
+    fn terminal_conservatively_detects_plain_urls_and_file_paths() {
+        let mut model = TerminalModel::new(80, 2);
+        model.write("See (https://example.com/docs), and ./src/main.rs");
+
+        assert_eq!(
+            model
+                .link_at(TerminalPosition { row: 0, column: 8 }, 0)
+                .as_deref(),
+            Some("https://example.com/docs")
+        );
+        assert_eq!(
+            model
+                .link_at(TerminalPosition { row: 0, column: 42 }, 0)
+                .as_deref(),
+            Some("./src/main.rs")
+        );
+        assert_eq!(
+            model.link_at(TerminalPosition { row: 0, column: 0 }, 0),
+            None
+        );
     }
 
     #[test]
@@ -5341,6 +7241,244 @@ mod tests {
     }
 
     #[test]
+    fn terminal_selection_tracks_text_across_reflow() {
+        let mut model = TerminalModel::new(12, 2);
+        model.write("alpha beta");
+        model.set_selection(TerminalSelection::new(
+            TerminalPosition { row: 0, column: 2 },
+            TerminalPosition { row: 0, column: 8 },
+        ));
+
+        model.resize(6, 2);
+
+        assert_eq!(model.selected_text().as_deref(), Some("pha bet"));
+        assert_eq!(
+            model.selection(),
+            Some(TerminalSelection::new(
+                TerminalPosition { row: 0, column: 2 },
+                TerminalPosition { row: 1, column: 2 },
+            ))
+        );
+    }
+
+    #[test]
+    fn terminal_multi_click_selection_expands_to_word_and_line() {
+        let mut model = TerminalModel::new(16, 2);
+        model.write("alpha beta");
+        let word = model.selection_for_click(TerminalPosition { row: 0, column: 7 }, 2, 0);
+        assert_eq!(
+            word.bounds(),
+            (
+                TerminalPosition { row: 0, column: 6 },
+                TerminalPosition { row: 0, column: 9 },
+            )
+        );
+        let line = model.selection_for_click(TerminalPosition { row: 0, column: 7 }, 3, 0);
+        assert_eq!(line.bounds().0.column, 0);
+        assert_eq!(line.bounds().1.column, 15);
+    }
+
+    #[test]
+    fn terminal_render_rows_follow_scrollback_viewport() {
+        let mut model = TerminalModel::new(8, 2).max_scrollback(8);
+        model.write("one\r\ntwo\r\nthree");
+        model.scroll_up(1);
+        let rows = terminal_render_rows(&model, &TerminalOptions::default());
+        assert_eq!(rows.len(), 2);
+        assert!(rows[0].line.text().contains("one"));
+        assert!(rows[1].line.text().contains("two"));
+    }
+
+    #[test]
+    fn terminal_search_finds_and_reveals_scrollback_matches() {
+        let mut model = TerminalModel::new(16, 2).max_scrollback(16);
+        model.write("first needle\r\nsecond line\r\nthird NEEDLE\r\n");
+
+        let matches = model.search("needle", false);
+        assert_eq!(matches.len(), 2);
+        assert_eq!(matches[0].start_column, 6);
+        assert!(model.reveal_search_match(matches[0]));
+        assert!(model.viewport_offset() > 0);
+        assert_eq!(model.selected_text().as_deref(), Some("needle"));
+        assert!(model.search("NEEDLE", true).len() == 1);
+        assert!(model.search_from("needle", false, matches[1].row).len() == 1);
+
+        let mut bounded = TerminalModel::new(8, 2).max_scrollback(2);
+        bounded.write("one\r\ntwo\r\nthree\r\nfour\r\nfive");
+        assert!(bounded.history_origin() > 0);
+        assert_eq!(bounded.history_len(), 4);
+    }
+
+    #[test]
+    fn terminal_search_supports_whole_word_case_and_bounded_regex() {
+        let mut model = TerminalModel::new(32, 2);
+        model.write("cat concatenate CAT 123\r\nerror-42 error-7");
+
+        let whole_words = model
+            .search_with_options(
+                "cat",
+                TerminalSearchOptions {
+                    whole_word: true,
+                    ..TerminalSearchOptions::default()
+                },
+            )
+            .expect("literal search should compile");
+        assert_eq!(whole_words.len(), 2);
+
+        let exact_case = model
+            .search_with_options(
+                "cat",
+                TerminalSearchOptions {
+                    case_sensitive: true,
+                    whole_word: true,
+                    regex: false,
+                    ..TerminalSearchOptions::default()
+                },
+            )
+            .expect("literal search should compile");
+        assert_eq!(exact_case.len(), 1);
+
+        let regex = model
+            .search_with_options(
+                r"error-\d+",
+                TerminalSearchOptions {
+                    regex: true,
+                    ..TerminalSearchOptions::default()
+                },
+            )
+            .expect("regular expression should compile");
+        assert_eq!(regex.len(), 2);
+        assert!(
+            model
+                .search_with_options(
+                    "(",
+                    TerminalSearchOptions {
+                        regex: true,
+                        ..TerminalSearchOptions::default()
+                    },
+                )
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn visible_search_highlights_map_history_rows_to_the_viewport() {
+        let mut model = TerminalModel::new(8, 2).max_scrollback(8);
+        model.write("one\r\ntwo\r\nthree");
+        let matches = vec![
+            TerminalSearchMatch {
+                row: 0,
+                start_column: 0,
+                end_column: 2,
+            },
+            TerminalSearchMatch {
+                row: 1,
+                start_column: 0,
+                end_column: 2,
+            },
+            TerminalSearchMatch {
+                row: 2,
+                start_column: 0,
+                end_column: 4,
+            },
+        ];
+
+        let visible =
+            rendered_search_matches(&model, &TerminalOptions::default(), &matches, Some(2));
+
+        assert_eq!(visible.len(), 2);
+        assert_eq!(visible[0].range.row, 0);
+        assert_eq!(visible[1].range.row, 1);
+        assert!(!visible[0].active);
+        assert!(visible[1].active);
+    }
+
+    #[test]
+    fn terminal_search_can_be_restricted_to_the_active_selection() {
+        let mut model = TerminalModel::new(32, 2);
+        model.write("cat outside cat\r\ncat second");
+        model.set_selection(TerminalSelection::new(
+            TerminalPosition { row: 0, column: 0 },
+            TerminalPosition { row: 0, column: 2 },
+        ));
+
+        let matches = model
+            .search_with_options(
+                "cat",
+                TerminalSearchOptions {
+                    selection_only: true,
+                    ..TerminalSearchOptions::default()
+                },
+            )
+            .expect("selection search should compile");
+
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].row, 0);
+        assert_eq!(matches[0].start_column, 0);
+    }
+
+    #[test]
+    fn osc_133_tracks_bounded_command_output_and_search_filtering() {
+        let mut model = TerminalModel::new(40, 3);
+        model.write("prompt\r\n\x1b]133;C\x07wanted output\x1b]133;D;7\x07 outside");
+
+        assert_eq!(model.command_outputs().len(), 1);
+        let output = model.command_outputs()[0];
+        assert_eq!(output.exit_status, Some(7));
+        assert!(output.end_column >= output.start_column);
+        assert_eq!(
+            model
+                .search_with_options(
+                    "wanted",
+                    TerminalSearchOptions {
+                        command_output_only: true,
+                        ..TerminalSearchOptions::default()
+                    },
+                )
+                .expect("command-output search should compile")
+                .len(),
+            1
+        );
+        assert!(
+            model
+                .search_with_options(
+                    "outside",
+                    TerminalSearchOptions {
+                        command_output_only: true,
+                        ..TerminalSearchOptions::default()
+                    },
+                )
+                .expect("command-output search should compile")
+                .is_empty()
+        );
+        assert!(model.reveal_command_output(0));
+        assert!(
+            model
+                .selected_text()
+                .is_some_and(|text| text.contains("wanted output"))
+        );
+    }
+
+    #[test]
+    fn terminal_notifications_are_bounded_and_sequence_changes() {
+        let mut model = TerminalModel::new(20, 2);
+        model.write("\x1b]777;notify;Build;Complete\x07");
+        let (sequence, notification) = model
+            .latest_notification()
+            .expect("notification should be recorded");
+        assert_eq!(sequence, 1);
+        assert_eq!(notification.title.as_ref(), "Build");
+        assert_eq!(notification.body.as_ref(), "Complete");
+
+        model.write("\x1b]9;Second\x07");
+        let (sequence, notification) = model
+            .latest_notification()
+            .expect("second notification should be recorded");
+        assert_eq!(sequence, 2);
+        assert_eq!(notification.body.as_ref(), "Second");
+    }
+
+    #[test]
     fn terminal_selection_extracts_scrollback_viewport_text() {
         let mut model = TerminalModel::new(12, 2);
         model.write("one\r\ntwo\r\nthree\r\nfour");
@@ -5469,6 +7607,19 @@ mod tests {
             terminal_paste_bytes("echo ok", modes),
             b"\x1b[200~echo ok\x1b[201~".to_vec()
         );
+        assert_eq!(
+            terminal_paste_bytes("one\r\ntwo\rthree", TerminalModes::default()),
+            b"one\ntwo\nthree".to_vec()
+        );
+        assert_eq!(
+            terminal_paste_bytes("safe\0\x1b[201~tail\u{7f}", modes),
+            b"\x1b[200~safe[201~tail\x1b[201~".to_vec()
+        );
+
+        let oversized = "é".repeat(super::MAX_TERMINAL_PASTE_BYTES);
+        let bounded = terminal_paste_bytes(&oversized, TerminalModes::default());
+        assert!(bounded.len() <= super::MAX_TERMINAL_PASTE_BYTES);
+        assert!(std::str::from_utf8(&bounded).is_ok());
     }
 
     #[test]
@@ -5715,7 +7866,19 @@ mod tests {
             let mut model = TerminalModel::new(120, 30);
             model.write(&"x".repeat(120 * 30));
             let rows = terminal_render_rows(&model, &TerminalOptions::default());
-            let plan = terminal_paint_plan(&rows, &theme, false, &SharedString::from("Menlo"));
+            let plan = terminal_paint_plan(
+                &rows,
+                &theme,
+                false,
+                false,
+                true,
+                &SharedString::from("Menlo"),
+                400,
+                false,
+                &default_ansi_palette(),
+                None,
+                &[],
+            );
 
             assert_eq!(rows.len(), 30);
             assert!(
@@ -5729,15 +7892,56 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    fn hovered_osc8_link_has_visible_paint_feedback(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            guic_tokens::init(cx);
+            let theme = super::Theme::global(cx).clone();
+            let mut model = TerminalModel::new(16, 1);
+            model.write("\u{1b}]8;;https://example.com\u{7}link\u{1b}]8;;\u{7}");
+            let rows = terminal_render_rows(&model, &TerminalOptions::default());
+            let plan = terminal_paint_plan(
+                &rows,
+                &theme,
+                false,
+                false,
+                true,
+                &SharedString::from("Menlo"),
+                400,
+                false,
+                &default_ansi_palette(),
+                Some("https://example.com"),
+                &[],
+            );
+
+            assert!(
+                plan.backgrounds
+                    .iter()
+                    .any(|background| background.cells == 4)
+            );
+            assert!(
+                plan.text
+                    .iter()
+                    .all(|batch| batch.style.underline.is_some())
+            );
+        });
+    }
+
     #[test]
     fn terminal_options_enable_font_measurement() {
         let options = TerminalOptions::default()
             .font_family("JetBrains Mono")
             .font_size(14)
+            .font_weight(600)
+            .line_height_percent(150)
+            .ligatures(true)
             .measured_font();
 
         assert_eq!(options.font_family.as_deref(), Some("JetBrains Mono"));
         assert_eq!(options.font_size, 14);
+        assert_eq!(options.font_weight, 600);
+        assert_eq!(options.line_height_percent, 150);
+        assert!(options.ligatures);
         assert!(options.measure_font);
     }
 
@@ -5845,5 +8049,118 @@ mod tests {
             Ok(keystroke) => keystroke,
             Err(error) => panic!("{error}"),
         }
+    }
+    #[gpui::test]
+    fn blink_timer_stops_when_content_is_static(cx: &mut TestAppContext) {
+        let state = cx.new(|_| super::TerminalBlinkState {
+            visible: true,
+            task: None,
+        });
+        state.update(cx, |state, cx| state.set_active(true, cx));
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_millis(500));
+        cx.run_until_parked();
+        state.update(cx, |state, cx| {
+            assert!(!state.visible);
+            state.set_active(false, cx);
+            assert!(state.visible);
+            assert!(state.task.is_none());
+        });
+        cx.executor().advance_clock(Duration::from_secs(2));
+        cx.run_until_parked();
+        state.update(cx, |state, _| assert!(state.visible));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn session_outcome_distinguishes_exit_from_wait_failure() {
+        let mut config = super::PtySpawnConfig::new("/bin/sh");
+        config.arguments = vec!["-c".into(), "exit 7".into()];
+        let mut session = super::LocalPtySession::spawn(config, 80, 24).expect("spawn");
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let outcome = loop {
+            if let Some(outcome) = session.try_outcome() {
+                break outcome;
+            }
+            assert!(std::time::Instant::now() < deadline, "process exit timeout");
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        assert_eq!(
+            outcome,
+            super::TerminalSessionOutcome::Exited {
+                status: super::TerminalExitStatus { code: 7 },
+                termination_requested: false
+            }
+        );
+        let (sender, receiver) = std::sync::mpsc::channel();
+        sender
+            .send(Err("wait backend failed".to_owned()))
+            .expect("send");
+        session.exit = receiver;
+        session.outcome = None;
+        assert_eq!(
+            session.try_outcome(),
+            Some(super::TerminalSessionOutcome::WaitFailed {
+                message: "wait backend failed".into()
+            })
+        );
+    }
+
+    #[test]
+    fn malformed_osc_and_progress_do_not_create_notifications() {
+        let mut model = TerminalModel::new(80, 24);
+        model.write("\x1b]7;file:///tmp/%0Aevil\x07\x1b]9;4;1;50\x07");
+        assert!(model.current_directory().is_none());
+        assert_eq!(model.notification_sequence, 0);
+    }
+    struct SharedLinkHarness {
+        model: super::SharedTerminalModel,
+        activations: std::rc::Rc<std::cell::Cell<usize>>,
+    }
+    impl Render for SharedLinkHarness {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl gpui::IntoElement {
+            use gpui::{InteractiveElement as _, ParentElement as _, Styled as _};
+            let model = self.model.clone();
+            let activations = self.activations.clone();
+            gpui::div()
+                .size_full()
+                .debug_selector(|| "shared-link-grid".into())
+                .child(
+                    Terminal::from_shared("shared-links", self.model.clone())
+                        .options(
+                            TerminalOptions::default()
+                                .cell_size(8, 18)
+                                .link_activation_modifier(super::TerminalLinkModifier::Control),
+                        )
+                        .on_link(move |_, _, _| {
+                            model.borrow_mut().write("activated");
+                            activations.set(activations.get() + 1);
+                        }),
+                )
+        }
+    }
+    #[gpui::test]
+    fn shared_model_link_callback_can_mutate_model(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            guic_core::init(cx);
+            guic_tokens::init(cx);
+        });
+        let mut model = TerminalModel::new(80, 24);
+        model.write("\x1b]8;;https://example.com\x07Link\x1b]8;;\x07");
+        let calls = std::rc::Rc::new(std::cell::Cell::new(0));
+        let captured = calls.clone();
+        let (_, cx) = cx.add_window_view(|_, _| SharedLinkHarness {
+            model: std::rc::Rc::new(std::cell::RefCell::new(model)),
+            activations: captured,
+        });
+        let bounds = cx.debug_bounds("shared-link-grid").expect("grid");
+        cx.simulate_click(
+            bounds.origin + point(px(4.), px(9.)),
+            gpui::Modifiers {
+                control: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(calls.get(), 1);
     }
 }

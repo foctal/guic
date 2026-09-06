@@ -62,13 +62,13 @@ impl TabMenu {
 impl RenderOnce for TabMenu {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = Theme::global(cx);
-        let height = match self.size {
-            ComponentSize::Small => px(28.),
-            ComponentSize::Medium => px(34.),
-            ComponentSize::Large => px(40.),
-        };
+        let metrics = self.size.control_metrics(theme);
+        let height = metrics.height;
         let mut row = div()
-            .id(self.id)
+            .id(self.id.clone())
+            .debug_selector(|| format!("guic-tab_menu-{}", self.id))
+            .h(height)
+            .text_size(metrics.font_size)
             .flex()
             .items_center()
             .gap_1()
@@ -87,7 +87,7 @@ impl RenderOnce for TabMenu {
                         .selected(selected)
                         .disabled(item.disabled),
                 )
-                .h(height)
+                .h_full()
                 .px_3()
                 .rounded(px(theme.radius.sm))
                 .flex()

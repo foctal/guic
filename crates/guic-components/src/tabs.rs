@@ -1,7 +1,7 @@
 use crate::{ComponentSize, IndexHandler};
 use gpui::{
     App, ClickEvent, InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _,
-    RenderOnce, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div, px,
+    RenderOnce, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
 };
 use guic_core::{AccessibilityElementExt as _, AccessibilityProps, Role};
 use guic_tokens::Theme;
@@ -110,14 +110,14 @@ fn enabled_tab_from(items: &[TabItem], selected: usize, key: &str) -> Option<usi
 impl RenderOnce for Tabs {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = Theme::global(cx);
-        let height = match self.size {
-            ComponentSize::Small => px(28.0),
-            ComponentSize::Medium => px(34.0),
-            ComponentSize::Large => px(40.0),
-        };
+        let metrics = self.size.control_metrics(theme);
+        let height = metrics.height;
 
         let mut row = div()
-            .id(self.id)
+            .id(self.id.clone())
+            .debug_selector(|| format!("guic-tabs-{}", self.id))
+            .h(height)
+            .text_size(metrics.font_size)
             .w_full()
             .flex()
             .gap_1()
@@ -130,7 +130,7 @@ impl RenderOnce for Tabs {
             let label = item.label.clone();
             let base = div()
                 .px_3()
-                .h(height)
+                .h_full()
                 .flex()
                 .items_center()
                 .justify_center()

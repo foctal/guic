@@ -14,6 +14,7 @@ pub struct Root {
     focus_handle: FocusHandle,
     focus_scope: FocusScopeId,
     active_focus_trap: Option<OverlayId>,
+    autofocused: std::collections::BTreeSet<OverlayId>,
 }
 
 impl Root {
@@ -31,16 +32,18 @@ impl Root {
         };
         let window_id = window.window_handle().window_id();
 
-        let _ = cx.on_release(move |_, cx| {
+        cx.on_release(move |_, cx| {
             FocusManager::global_mut(cx).unregister_scope(focus_scope);
             OverlayManager::global_mut(cx).close_window(window_id);
-        });
+        })
+        .detach();
         cx.global_mut::<GlobalState>().mount_root();
         Self {
             view: view.into(),
             focus_handle,
             focus_scope,
             active_focus_trap: None,
+            autofocused: Default::default(),
         }
     }
 }
@@ -51,26 +54,49 @@ impl Render for Root {
         let theme_name = theme.name.clone();
         let background = theme.background();
         let foreground = theme.foreground();
-        let (overlay_entries, focus_trap) = {
-            let manager = OverlayManager::global(cx);
-            (
-                manager.render_entries(),
-                manager
-                    .active_focus_trap()
-                    .map(|entry| (entry.id, entry.focus_trap())),
-            )
-        };
+        let window_id = _window.window_handle().window_id();
+        let overlay_entries = OverlayManager::global(cx)
+            .render_entries()
+            .into_iter()
+            .filter(|entry| entry.window_id().is_none_or(|id| id == window_id))
+            .collect::<Vec<_>>();
+        self.autofocused
+            .retain(|id| overlay_entries.iter().any(|entry| entry.id == *id));
+        let focus_trap = overlay_entries
+            .iter()
+            .rev()
+            .find(|entry| entry.autofocus().is_some())
+            .map(|entry| (entry.id, entry.autofocus()));
         let overlay_count = overlay_entries.len();
         let overlay_elements = overlay_entries
             .iter()
-            .filter_map(|entry| entry.render(_window, cx))
+            .filter_map(|entry| {
+                entry.render(_window, cx).map(|content| {
+                    if entry.traps_focus() {
+                        crate::FocusTrap::new(format!("guic-managed-trap-{:?}", entry.id), content)
+                            .into_any_element()
+                    } else {
+                        content
+                    }
+                })
+            })
             .collect::<Vec<_>>();
         cx.global_mut::<GlobalState>()
             .set_active_theme_name(theme_name);
         FocusManager::global_mut(cx).set_active_scope(self.focus_scope);
         match focus_trap {
-            Some((id, Some(handle))) if self.active_focus_trap != Some(id) => {
-                handle.focus(_window, cx);
+            Some((id, Some(handle))) if !self.autofocused.contains(&id) => {
+                cx.on_next_frame(_window, move |this, window, cx| {
+                    if this.active_focus_trap == Some(id)
+                        && !this.autofocused.contains(&id)
+                        && OverlayManager::global(cx)
+                            .entries()
+                            .any(|entry| entry.id == id)
+                    {
+                        handle.focus(window, cx);
+                        this.autofocused.insert(id);
+                    }
+                });
                 self.active_focus_trap = Some(id);
             }
             Some((id, _)) => {

@@ -19,16 +19,16 @@ After the crates are published, add GUIC and its platform runtime:
 ```toml
 [dependencies]
 guic = "0.1.0"
-gpui = { package = "guic-gpui", version = "=0.2.0" }
+gpui = { package = "guic-gpui", version = "=0.3.1" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-gpui_platform = { package = "guic-gpui-platform", version = "=0.2.0", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
+gpui_platform = { package = "guic-gpui-platform", version = "=0.3.1", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-gpui_platform = { package = "guic-gpui-platform", version = "=0.2.0", features = ["font-kit"] }
+gpui_platform = { package = "guic-gpui-platform", version = "=0.3.1", features = ["font-kit"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-gpui_platform = { package = "guic-gpui-platform", version = "=0.2.0" }
+gpui_platform = { package = "guic-gpui-platform", version = "=0.3.1" }
 ```
 
 GUIC requires Rust 1.95 or newer. Linux users must also install the native
@@ -84,6 +84,8 @@ Subsystems are opt-in through the `charts`, `editor`, `terminal`, `webview`,
 includes the core component, icon, asset, and native APIs.
 
 ## Documentation
+
+- [Component behavior and host integration](docs/component-behavior.md)
 
 Start with [Getting Started](https://github.com/foctal/guic/blob/main/docs/getting-started.md),
 [Components](https://github.com/foctal/guic/blob/main/docs/components.md), and

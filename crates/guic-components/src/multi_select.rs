@@ -95,7 +95,7 @@ impl MultiSelect {
         self
     }
 
-    /// Sets the component size.
+    /// Sets the single-line trigger size. Overflowing selected chips are clipped.
     #[must_use]
     pub fn size(mut self, size: ComponentSize) -> Self {
         self.size = size;
@@ -127,13 +127,16 @@ impl MultiSelect {
 impl RenderOnce for MultiSelect {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = Theme::global(cx);
-        let (min_height, text_size) = match self.size {
-            ComponentSize::Small => (px(30.0), px(theme.typography.text_sm)),
-            ComponentSize::Medium => (px(36.0), px(theme.typography.text_md)),
-            ComponentSize::Large => (px(44.0), px(theme.typography.text_lg)),
-        };
+        let metrics = self.size.control_metrics(theme);
+        let (min_height, text_size) = (metrics.height, metrics.font_size);
 
-        let mut chips = div().flex_1().flex().flex_wrap().items_center().gap_1();
+        let mut chips = div()
+            .flex_1()
+            .min_w_0()
+            .flex()
+            .items_center()
+            .gap_1()
+            .overflow_hidden();
         if self.selected.is_empty() {
             chips = chips.child(
                 div()
@@ -163,9 +166,9 @@ impl RenderOnce for MultiSelect {
             .items_center()
             .justify_between()
             .gap_2()
-            .min_h(min_height)
+            .h(min_height)
             .px(px(theme.spacing.x3))
-            .py(px(theme.spacing.x1))
+            .overflow_hidden()
             .rounded(px(theme.radius.md))
             .border_1()
             .border_color(theme.border())

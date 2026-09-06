@@ -39,6 +39,7 @@ mod alert;
 mod auto_complete;
 mod avatar;
 mod badge;
+mod behavioral_trigger;
 mod breadcrumb;
 mod button;
 mod card;
@@ -145,9 +146,9 @@ pub use progress::Progress;
 pub use property_list::{PropertyItem, PropertyList};
 pub use radio::Radio;
 pub use scroll_area::ScrollArea;
-pub use select::{Select, SelectItem};
+pub use select::{Select, SelectItem, SelectMenuWidth};
 pub use separator::{Separator, SeparatorAxis};
-pub use size::ComponentSize;
+pub use size::{ComponentSize, ControlMetrics};
 pub use slider::Slider;
 pub use spinner::Spinner;
 pub use splitter::{Splitter, SplitterAxis};
@@ -174,9 +175,9 @@ pub use data_table::{
 };
 #[cfg(feature = "dock")]
 pub use dock::{
-    Dock, DockAxis, DockCommand, DockDragPayload, DockDropTarget, DockDropZone, DockLayout,
-    DockNode, DockPlacement, DockSplitResize, DockStackSelection, DockTab, DockTabSelection,
-    DockTabs,
+    CloseButtonVisibility, Dock, DockAxis, DockClosePolicy, DockCommand, DockDensity,
+    DockDragPayload, DockDropTarget, DockDropZone, DockLayout, DockNode, DockPlacement,
+    DockSplitLimits, DockSplitResize, DockStackSelection, DockTab, DockTabSelection, DockTabs,
 };
 #[cfg(feature = "markdown")]
 pub use markdown::{HtmlFragment, Markdown};
@@ -1437,3 +1438,6 @@ mod binary_input_interaction_tests {
         view.update(cx, |view, _| assert!(view.radio_selected));
     }
 }
+
+#[cfg(test)]
+mod hardening_tests;

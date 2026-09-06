@@ -18,6 +18,8 @@ guic-core = { version = "0.1.0", path = "../guic-core" }
 guic-tokens = { version = "0.1.0", path = "../guic-tokens" }
 portable-pty = "0.9.0"
 unicode-width.workspace = true
+unicode-segmentation.workspace = true
+regex = "1"
 vte = "0.15"
 
 [dev-dependencies]
