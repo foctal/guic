@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## 0.2.0 - Unreleased
+## 0.2.0 - 2026-09-06
 
 - Upgrade the guic-gpui runtime family to 0.3.1.
 - Unify single-line control sizing and stabilize component identity.
