@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- Keep CommandPalette accessibility focus on its search input only.
+- Bound and scroll palette results, including wrapped descriptions, and reveal
+  the active command on keyboard navigation and query changes.
+- Use native Command/Control editing shortcuts and expose typed text-input
+  actions for application overrides.
+
 ## 0.2.0 - 2026-09-06
 
 - Upgrade the guic-gpui runtime family to 0.3.1.
