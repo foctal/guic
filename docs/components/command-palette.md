@@ -28,3 +28,13 @@ Focus the handle returned by `focus_handle()` when the overlay opens. `Up` and
 and `Escape` requests dismissal. The application should register the same
 stable identifiers with `guic_core::CommandRouter` so menus, shortcuts, and the
 palette share one command implementation.
+
+Results use a scrollable viewport capped at 360 logical pixels and reduced for
+short windows. Rows keep their content height, including wrapped descriptions;
+arrow navigation reveals the active row and changing the query returns to the
+first match. `max_results` limits the number of matches, not the viewport size.
+
+The search input is the sole owner of the palette's focus handle. Do not also
+register that handle on a parent with `track_focus`: two focused accessibility
+nodes violate GPUI's tree invariant. The wrapper retains its dialog role and
+key context without a second focus registration.
