@@ -86,7 +86,8 @@ mod switch;
 mod tab_menu;
 mod tabs;
 mod tag;
-mod text_input;
+/// Native text inputs and typed actions for bindings scoped to `GuicTextInput`.
+pub mod text_input;
 mod timeline;
 mod toast;
 mod toolbar;

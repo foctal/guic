@@ -16,19 +16,33 @@ use unicode_segmentation::UnicodeSegmentation;
 actions!(
     guic_text_input,
     [
+        /// Deletes the previous grapheme or selection.
         Backspace,
+        /// Deletes the next grapheme or selection.
         Delete,
+        /// Moves the cursor left.
         Left,
+        /// Moves the cursor right.
         Right,
+        /// Extends the selection left.
         SelectLeft,
+        /// Extends the selection right.
         SelectRight,
+        /// Selects all text.
         SelectAll,
+        /// Moves to the beginning of the line.
         Home,
+        /// Moves to the end of the line.
         End,
+        /// Inserts a newline, or propagates submission for single-line inputs.
         Newline,
+        /// Opens the native character palette.
         ShowCharacterPalette,
+        /// Pastes text from the clipboard.
         Paste,
+        /// Copies and removes the selected text.
         Cut,
+        /// Copies the selected text.
         Copy,
     ]
 );
@@ -1041,18 +1055,154 @@ pub(crate) fn init_key_bindings(cx: &mut App) {
             KeyBinding::new("enter", Newline, Some("GuicTextInput")),
             KeyBinding::new("shift-left", SelectLeft, Some("GuicTextInput")),
             KeyBinding::new("shift-right", SelectRight, Some("GuicTextInput")),
-            KeyBinding::new("cmd-a", SelectAll, Some("GuicTextInput")),
-            KeyBinding::new("cmd-v", Paste, Some("GuicTextInput")),
-            KeyBinding::new("cmd-c", Copy, Some("GuicTextInput")),
-            KeyBinding::new("cmd-x", Cut, Some("GuicTextInput")),
-            KeyBinding::new("home", Home, Some("GuicTextInput")),
-            KeyBinding::new("end", End, Some("GuicTextInput")),
             KeyBinding::new(
-                "ctrl-cmd-space",
-                ShowCharacterPalette,
+                if cfg!(target_os = "macos") {
+                    "cmd-a"
+                } else {
+                    "ctrl-a"
+                },
+                SelectAll,
                 Some("GuicTextInput"),
             ),
+            KeyBinding::new(
+                if cfg!(target_os = "macos") {
+                    "cmd-v"
+                } else {
+                    "ctrl-v"
+                },
+                Paste,
+                Some("GuicTextInput"),
+            ),
+            KeyBinding::new(
+                if cfg!(target_os = "macos") {
+                    "cmd-c"
+                } else {
+                    "ctrl-c"
+                },
+                Copy,
+                Some("GuicTextInput"),
+            ),
+            KeyBinding::new(
+                if cfg!(target_os = "macos") {
+                    "cmd-x"
+                } else {
+                    "ctrl-x"
+                },
+                Cut,
+                Some("GuicTextInput"),
+            ),
+            KeyBinding::new("home", Home, Some("GuicTextInput")),
+            KeyBinding::new("end", End, Some("GuicTextInput")),
         ]);
+        #[cfg(target_os = "macos")]
+        cx.bind_keys([KeyBinding::new(
+            "ctrl-cmd-space",
+            ShowCharacterPalette,
+            Some("GuicTextInput"),
+        )]);
         cx.set_global(TextInputKeyBindingsInstalled);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{Keystroke, TestAppContext, VisualContext as _};
+
+    #[gpui::test]
+    fn native_editing_shortcuts_copy_cut_and_paste(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            guic_core::init(cx);
+            guic_tokens::init(cx);
+            crate::init(cx);
+        });
+        for kind in [
+            TextInputKind::Text,
+            TextInputKind::Search,
+            TextInputKind::TextArea,
+        ] {
+            let (input, cx) = cx.add_window_view(|_, cx| {
+                TextInput::with_kind("edit", kind, cx).value("hello \u{65e5}\u{672c}\u{8a9e}")
+            });
+            cx.update(|window, cx| input.read(cx).focus_handle.clone().focus(window, cx));
+            let modifier = if cfg!(target_os = "macos") {
+                "cmd"
+            } else {
+                "ctrl"
+            };
+            let window = cx.window_handle();
+            for key in ["a", "c", "x"] {
+                cx.dispatch_keystroke(
+                    window,
+                    Keystroke::parse(&format!("{modifier}-{key}"))
+                        .expect("editing shortcut should parse"),
+                );
+                if key == "c" {
+                    cx.update(|_, cx| {
+                        assert_eq!(
+                            input.read(cx).current_value(),
+                            "hello \u{65e5}\u{672c}\u{8a9e}"
+                        );
+                        assert_eq!(
+                            cx.read_from_clipboard()
+                                .expect("copied text")
+                                .text()
+                                .as_deref(),
+                            Some("hello \u{65e5}\u{672c}\u{8a9e}")
+                        );
+                    });
+                }
+            }
+            cx.update(|_, cx| {
+                assert_eq!(input.read(cx).current_value(), "");
+                assert_eq!(
+                    cx.read_from_clipboard()
+                        .expect("cut text")
+                        .text()
+                        .as_deref(),
+                    Some("hello \u{65e5}\u{672c}\u{8a9e}")
+                );
+            });
+            cx.dispatch_keystroke(
+                window,
+                Keystroke::parse(&format!("{modifier}-v")).expect("test value should be available"),
+            );
+            cx.update(|_, cx| {
+                assert_eq!(
+                    input.read(cx).current_value(),
+                    "hello \u{65e5}\u{672c}\u{8a9e}"
+                )
+            });
+        }
+    }
+
+    #[gpui::test]
+    fn later_typed_binding_overrides_default(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            guic_core::init(cx);
+            guic_tokens::init(cx);
+            crate::init(cx);
+            let key = if cfg!(target_os = "macos") {
+                "cmd-a"
+            } else {
+                "ctrl-a"
+            };
+            cx.bind_keys([KeyBinding::new(key, End, Some("GuicTextInput"))]);
+            // Reinitialization must not replace host keybindings.
+            crate::init(cx);
+        });
+        let (input, cx) = cx.add_window_view(|_, cx| TextInput::new("edit", cx).value("hello"));
+        cx.update(|window, cx| input.read(cx).focus_handle.clone().focus(window, cx));
+        let key = if cfg!(target_os = "macos") {
+            "cmd-a"
+        } else {
+            "ctrl-a"
+        };
+        let window = cx.window_handle();
+        cx.dispatch_keystroke(
+            window,
+            Keystroke::parse(key).expect("test value should be available"),
+        );
+        cx.update(|_, cx| assert_eq!(input.read(cx).selected_range, 5..5));
     }
 }
