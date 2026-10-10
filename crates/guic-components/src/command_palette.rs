@@ -459,6 +459,31 @@ mod tests {
     }
 
     #[gpui::test]
+    fn accessibility_focus_belongs_to_the_search_input(cx: &mut TestAppContext) {
+        init(cx);
+        let (palette, cx) = cx.add_window_view(|_, cx| {
+            CommandPalette::new("commands", cx).items(vec![CommandPaletteItem::new("open", "Open")])
+        });
+        cx.update(|window, cx| {
+            window.enable_a11y_for_testing();
+            palette.read(cx).focus_handle().focus(window, cx);
+        });
+        cx.run_until_parked();
+        let tree = cx.update(|window, _| {
+            window
+                .debug_a11y_tree_json()
+                .expect("palette accessibility tree should be built")
+        });
+        let tree: serde_json::Value =
+            serde_json::from_str(&tree).expect("accessibility tree should be valid JSON");
+        let focus = tree["gpui_focus"]
+            .as_str()
+            .expect("search input should be focused");
+        assert_eq!(tree["nodes"][focus]["aria"]["role"], "TextInput");
+        assert_eq!(tree["nodes"][focus]["aria"]["label"], "Command search");
+    }
+
+    #[gpui::test]
     fn arrow_keys_and_enter_activate_the_highlighted_command(cx: &mut TestAppContext) {
         init(cx);
         let activated = Rc::new(RefCell::new(Vec::<SharedString>::new()));

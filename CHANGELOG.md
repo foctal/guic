@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Upgrade the guic-gpui runtime family to 0.4.0.
+- Verify command palette accessibility focus with GPUI's headless tree builder.
 - Fix Linux WebView example startup and embedding with GTK initialization, an
   XCB-to-Xlib parent handle adapter, and GTK event processing. Use X11/XWayland
   and a compatible WebKit rendering default; document native Wayland limits.

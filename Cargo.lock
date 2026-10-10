@@ -2569,9 +2569,9 @@ dependencies = [
 
 [[package]]
 name = "guic-gpui"
-version = "0.3.1"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c46368d0b6a3b964973078fb7b6822999e37e1958cb9e58cc31fa5edeacfeb50"
+checksum = "4031e80ae882cdba0474ccb7ba0d1b2515c6bf85d93c7c9fd7a74304ae2c111c"
 dependencies = [
  "accesskit",
  "anyhow",
@@ -2653,15 +2653,15 @@ dependencies = [
 
 [[package]]
 name = "guic-gpui-assets"
-version = "0.3.1"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6f203e421017a9ce00b225bd8c21e325ca2995844a27f6934767929f04d752d4"
+checksum = "eef631725498772d9c994cd0b693bbeaa1b21f270fed1d21da84574936fa2d22"
 
 [[package]]
 name = "guic-gpui-collections"
-version = "0.3.1"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b323a64fb7b0014879459d2e980b00d208aa685decdb723e16ce67870b65f97f"
+checksum = "1c125494669aecee0d7c0111c1281d22397625791bab9c3cf68383820338f7b2"
 dependencies = [
  "guic-gpui-util",
  "indexmap",
@@ -2670,9 +2670,9 @@ dependencies = [
 
 [[package]]
 name = "guic-gpui-derive-refineable"
-version = "0.3.1"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4e43c1f322cd0dab61e1e151a478e094c1a903c88e3fe4f662c06f34097d1e20"
+checksum = "b9d19bb82574241ca6171050f9fe992e3109d2a670c7305256d7a665fd792f07"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2681,9 +2681,9 @@ dependencies = [
 
 [[package]]
 name = "guic-gpui-http-client"
-version = "0.3.1"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94363de7b5b119464dde671661de595d29870fed2ce23cfd00b05279d4811eb3"
+checksum = "0a6522012edeadfd44d549a96aa7d3e65ab0a8e66dd51b8bdc51b68297375154"
 dependencies = [
  "anyhow",
  "async-compression",
@@ -2702,9 +2702,9 @@ dependencies = [
 
 [[package]]
 name = "guic-gpui-linux"
-version = "0.3.1"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d5b31e2e702cefe7cb657f8f4c7a65b42f26d7802bee56e1d8a78a2a24b086b0"
+checksum = "79a881e59d38a076ac93a024dc13a3218f4e70d2e4b8a4dbd729e60fa4c4a5ec"
 dependencies = [
  "accesskit",
  "accesskit_unix",
@@ -2754,9 +2754,9 @@ dependencies = [
 
 [[package]]
 name = "guic-gpui-macos"
-version = "0.3.1"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ee90cec428fbf9e370c5e60d509ae2b178eef9886e0283b69c90a7123d1427aa"
+checksum = "19ba4d7879ebea25e9989e0fdc276832a794546212f271edfb78aa67af61e372"
 dependencies = [
  "accesskit",
  "accesskit_macos",
@@ -2804,9 +2804,9 @@ dependencies = [
 
 [[package]]
 name = "guic-gpui-macros"
-version = "0.3.1"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "651cc17dd2c17dce3fd43c96b91112a08fe5e2756ee3c2f136ed356d2942accc"
+checksum = "076949b5179231bc549836875e3f1575d8e10ef066e9adb221dda52443d89fa7"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -2816,9 +2816,9 @@ dependencies = [
 
 [[package]]
 name = "guic-gpui-media"
-version = "0.3.1"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6dda5a8c75587da564f756b65283bb3d1bbbbc6d75956294a4503a4ab1aa647f"
+checksum = "2f1409108ce294c21651146607d83bd01d376a6b2694dd38829273d2485c2c98"
 dependencies = [
  "anyhow",
  "bindgen",
@@ -2832,9 +2832,9 @@ dependencies = [
 
 [[package]]
 name = "guic-gpui-platform"
-version = "0.3.1"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "40e017346ee29d92ee40c4ab3159992abb9ef9ad0fb958a76934692aae818213"
+checksum = "7d75f3c429bd124d59427a8da7d83ffc8e4dc46426939a15a5b39b101b25815a"
 dependencies = [
  "console_error_panic_hook",
  "guic-gpui",
@@ -2846,18 +2846,18 @@ dependencies = [
 
 [[package]]
 name = "guic-gpui-refineable"
-version = "0.3.1"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "83245c9303690c32fe349854b628824182ce90fa27e50884c36b201ad155a761"
+checksum = "03e618f7a77ba0db4978becd0c49bb0f1e54733c937f4b32a39e3b5d774ea781"
 dependencies = [
  "guic-gpui-derive-refineable",
 ]
 
 [[package]]
 name = "guic-gpui-scheduler"
-version = "0.3.1"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff4fe8ab36257d412a4021c8e5840cf9981d53cc17eddd8971be0cd9a198af96"
+checksum = "b31be31f5a1dfe9a00702f1595b6d427cf95fe8bfae2b6b543d8b8fe65bcfce9"
 dependencies = [
  "async-task",
  "backtrace",
@@ -2871,9 +2871,9 @@ dependencies = [
 
 [[package]]
 name = "guic-gpui-shared-string"
-version = "0.3.1"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "62fc7ae3d7b587ba6a9bb6b02b2db2d9b479c50a822851f23cd8a2b4cb844a35"
+checksum = "4f0d55a9eefe51897bfce4b3a505d26d647222d3e4964afc0c79ea7497ca9058"
 dependencies = [
  "schemars",
  "serde",
@@ -2882,9 +2882,9 @@ dependencies = [
 
 [[package]]
 name = "guic-gpui-sum-tree"
-version = "0.3.1"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "923afc6d6b74c70ab74fb3a9359faa798d73227961b413c609e99541d68129b5"
+checksum = "ebfe0ac52ff46c5331c048c932d93fcaf5e21b63ffdd46668a03434527654e37"
 dependencies = [
  "heapless",
  "log",
@@ -2894,9 +2894,9 @@ dependencies = [
 
 [[package]]
 name = "guic-gpui-util"
-version = "0.3.1"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d9c03a79a626231b016586c6fb64ab05df2bc5d13f08afd2e665f5e110c4c5a"
+checksum = "dd942e9d447cd751de8b64378a33c39527c78d41e639f58878d4335ed1c8a093"
 dependencies = [
  "anyhow",
  "log",
@@ -2905,9 +2905,9 @@ dependencies = [
 
 [[package]]
 name = "guic-gpui-web"
-version = "0.3.1"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "092ee99dcbd2720703551c8ec6e348aa2510c3402e206fe87dd889b49b221b53"
+checksum = "088d8af41614eb59b4a4500f7bc9d6856b70da43d6ddc60a2c136c2c99f65be6"
 dependencies = [
  "anyhow",
  "console_error_panic_hook",
@@ -2929,9 +2929,9 @@ dependencies = [
 
 [[package]]
 name = "guic-gpui-wgpu"
-version = "0.3.1"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c508a3978aebf95f34562f0eb5da10eaa097bff722eca1282f0738e2d7c77ea7"
+checksum = "c04441b9fd8d125010305574c86b449515ff6cba7968d49b60b6ae7df24d24ed"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -2961,9 +2961,9 @@ dependencies = [
 
 [[package]]
 name = "guic-gpui-windows"
-version = "0.3.1"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf0797af367002d7dc2e382f7654b8267ff72d261b3b81df5246cb5e8c917f4c"
+checksum = "4c8cebd6c4d2525e11632e8b51c136da659cba0c224c44bb33904306a042db06"
 dependencies = [
  "accesskit",
  "accesskit_windows",
