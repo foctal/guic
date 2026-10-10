@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## 0.3.0 - 2026-10-10
+
 - Upgrade the guic-gpui runtime family to 0.4.0.
 - Verify command palette accessibility focus with GPUI's headless tree builder.
 - Fix Linux WebView example startup and embedding with GTK initialization, an

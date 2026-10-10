@@ -6,7 +6,7 @@ themes, application primitives, and a broad component set for desktop apps.
 
 ## Status
 
-GUIC `0.2.x` is a preview release. Core APIs are usable, but breaking changes
+GUIC `0.3.x` is a preview release. Core APIs are usable, but breaking changes
 are expected and the editor, charts, and WebView integrations remain
 experimental. See [API Stability](https://github.com/foctal/guic/blob/main/docs/api-stability.md)
 and [Platform Support](https://github.com/foctal/guic/blob/main/docs/platform-support.md)
@@ -18,7 +18,7 @@ After the crates are published, add GUIC and its platform runtime:
 
 ```toml
 [dependencies]
-guic = "0.2.0"
+guic = "0.3.0"
 gpui = { package = "guic-gpui", version = "=0.4.0" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
