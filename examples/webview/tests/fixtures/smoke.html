@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GUIC WebView smoke test</title>
+<style>
+  body { font: 18px sans-serif; margin: 32px; background: #f6f8fc; color: #14213d; }
+  input, button { font: inherit; padding: 8px; margin: 8px 0; }
+  label { display: block; }
+  #destination { margin-top: 100vh; }
+</style>
+<h1>GUIC WebView smoke test</h1>
+<p id="viewport"></p>
+<label>First input <input id="first" value="Linux 日本語" autocomplete="off"></label>
+<label>Second input <input id="second" autocomplete="off"></label>
+<button id="increment">Increment</button>
+<output id="count">0</output>
+<p><a href="#destination">Go to destination</a></p>
+<section id="destination"><h2>Navigation destination</h2><a href="#">Back to top</a></section>
+<script>
+  const viewport = document.querySelector('#viewport');
+  const updateSize = () => { viewport.textContent = `Viewport: ${innerWidth} × ${innerHeight}`; };
+  addEventListener('resize', updateSize);
+  updateSize();
+  let count = 0;
+  document.querySelector('#increment').addEventListener('click', () => {
+    document.querySelector('#count').textContent = ++count;
+  });
+</script>
+</html>
