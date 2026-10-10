@@ -60,6 +60,8 @@ Always-available presentation widgets:
 - `Image` — framed native image surface with loading and fallback states
 - `Slider` — draggable, keyboard-operable value slider (stateful entity)
 - `DatePicker` — controlled date-selection trigger
+- `InputGroup` / `InputGroupAddon` — native input, unit, and action composition
+- `Skeleton` — static, theme-aware loading placeholder with no animation cost
 - `InputNumber` — numeric stepper with keyboard support (host-managed)
 - `InputOtp` — controlled one-time-code slot display
 - `ColorPicker` — controlled swatch picker

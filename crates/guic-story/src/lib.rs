@@ -20,16 +20,16 @@ use guic::prelude::{
     DataView, DataViewItem, DataViewLayout, DatePicker, Dialog, Dock, DockCommand, DockLayout,
     DockNode, DockTab, DockTabs, Drawer, DrawerSide, EditorBuffer, EditorEdit, EditorSession,
     Fieldset, FilePicker, Form, FormField, FormSummary, HtmlFragment, IconButton, IconName, Image,
-    ImageFit, InputNumber, InputOtp, Label, LineChart, Listbox, ListboxSelectionMode, Markdown,
-    Menu, MenuItem, Menubar, MenubarActivation, MenubarMenu, Message, MessageVariant, MetricCard,
-    MultiSelect, Paginator, Panel, PanelMenu, PasswordInput, PickList, PieChart, Popover, Progress,
-    PropertyItem, PropertyList, Radio, ScrollArea, SearchInput, Select, SelectItem, Separator,
-    Slider, SortDirection, Spinner, Splitter, SplitterAxis, Step, Stepper, Switch, TabItem,
-    TabMenu, TableSort, Tabs, Tag, TagVariant, Terminal, TerminalModel, TerminalOptions, TextArea,
-    TextInput, ThemeContextExt, ThemeRegistry, TieredMenu, Timeline, TimelineEvent, Toast,
-    ToastStack, ToastVariant, Toolbar, Tooltip, TreeNavigation, TreeNode, TreeSelect,
-    TreeSelectNode, TreeTable, TreeTableColumn, TreeTableRow, TreeView, TreeViewport,
-    ValidationIssue, ValidationSeverity, VirtualList,
+    ImageFit, InputGroup, InputGroupAddon, InputNumber, InputOtp, Label, LineChart, Listbox,
+    ListboxSelectionMode, Markdown, Menu, MenuItem, Menubar, MenubarActivation, MenubarMenu,
+    Message, MessageVariant, MetricCard, MultiSelect, Paginator, Panel, PanelMenu, PasswordInput,
+    PickList, PieChart, Popover, Progress, PropertyItem, PropertyList, Radio, ScrollArea,
+    SearchInput, Select, SelectItem, Separator, Skeleton, Slider, SortDirection, Spinner, Splitter,
+    SplitterAxis, Step, Stepper, Switch, TabItem, TabMenu, TableSort, Tabs, Tag, TagVariant,
+    Terminal, TerminalModel, TerminalOptions, TextArea, TextInput, ThemeContextExt, ThemeRegistry,
+    TieredMenu, Timeline, TimelineEvent, Toast, ToastStack, ToastVariant, Toolbar, Tooltip,
+    TreeNavigation, TreeNode, TreeSelect, TreeSelectNode, TreeTable, TreeTableColumn, TreeTableRow,
+    TreeView, TreeViewport, ValidationIssue, ValidationSeverity, VirtualList,
 };
 use guic::tokens::Theme;
 
@@ -1539,7 +1539,7 @@ impl Render for StoryRoot {
                     .size(ComponentSize::Small)
                     .on_click(cx.listener(move |this, _, _, cx| this.set_theme(name, cx)))
             };
-            theme_row = theme_row.child(button);
+            theme_row = theme_row.child(button.id(format!("theme-{name}")));
         }
 
         let alert = if self.alert_open {
@@ -2113,7 +2113,14 @@ impl Render for StoryRoot {
                             .flex_col()
                             .gap_3()
                             .child(self.text_input.clone())
-                            .child(self.search_input.clone())
+                            .child(
+                                InputGroup::new("gallery-search-group")
+                                    .label("Component search")
+                                    .child(InputGroupAddon::new("Find"))
+                                    .child(
+                                        div().flex_1().min_w_0().child(self.search_input.clone()),
+                                    ),
+                            )
                             .child(self.password_input.clone())
                             .child(self.text_area.clone()),
                     ),
@@ -2123,6 +2130,24 @@ impl Render for StoryRoot {
                     .flex()
                     .flex_col()
                     .gap_3()
+                    .child(Label::new("Loading placeholders"))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .max_w(px(320.0))
+                            .child(Skeleton::new().width(40.0).height(40.0).circular(true))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_2()
+                                    .child(Skeleton::new())
+                                    .child(Skeleton::new().width(120.0).height(12.0)),
+                            ),
+                    )
                     .child(Label::new("Progress"))
                     .child(
                         div()
