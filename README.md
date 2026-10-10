@@ -1,4 +1,6 @@
 # GUIC
+[![Crates.io](https://img.shields.io/crates/v/guic.svg)](https://crates.io/crates/guic)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/foctal/guic/blob/main/LICENSE)
 
 GUIC is a native, cross-platform GUI toolkit for Rust built on
 [`guic-gpui`](https://crates.io/crates/guic-gpui). It provides design tokens,
