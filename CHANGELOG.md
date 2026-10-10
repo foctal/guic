@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Fix Linux WebView example startup and embedding with GTK initialization, an
+  XCB-to-Xlib parent handle adapter, and GTK event processing. Use X11/XWayland
+  and a compatible WebKit rendering default; document native Wayland limits.
 - Keep CommandPalette accessibility focus on its search input only.
 - Bound and scroll palette results, including wrapped descriptions, and reveal
   the active command on keyboard navigation and query changes.

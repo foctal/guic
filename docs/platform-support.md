@@ -39,6 +39,9 @@ during shell startup.
 
 `guic-webview` is optional and depends on upstream `wry`. WebView behavior must
 be manually reviewed on macOS, Windows, and Linux before any stable release.
+The Linux WebView example requires X11 or XWayland; it does not embed into a
+native Wayland GPUI window. See [WebView](webview.md#linux-example) for the host
+initialization and event-loop requirements.
 Release notes should record the tested platforms, the pinned `guic-gpui` release, and
 the `wry` version.
 

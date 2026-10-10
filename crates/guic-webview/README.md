@@ -23,6 +23,11 @@ The current wrapper relies on:
 
 Validate WebView behavior on every target platform used by the application.
 
+On Linux, the GPUI example uses X11 (or XWayland on a Wayland desktop), initializes
+GTK, and pumps its event loop on the main thread. Native Wayland embedding into
+a GPUI-owned window is not supported by the example. See
+[Linux host integration](../../docs/webview.md#linux-example).
+
 ## Typical use cases
 
 - OAuth or SSO flows
