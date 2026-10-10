@@ -118,9 +118,14 @@ impl VirtualListMetrics {
         } else {
             0.0
         };
-        let start = (scroll_offset / self.item_height).floor() as usize;
-        let visible = (self.viewport_height / self.item_height).ceil() as usize;
-        let start = start.saturating_sub(self.overscan);
+        // Use widened arithmetic so finite offsets and dimensions cannot overflow.
+        let first = f64::from(scroll_offset) / f64::from(self.item_height);
+        let visible = ((f64::from(self.viewport_height) / f64::from(self.item_height))
+            + first.fract())
+        .ceil() as usize;
+        let start = (first.floor() as usize)
+            .saturating_sub(self.overscan)
+            .min(self.item_count);
         let end = start
             .saturating_add(visible)
             .saturating_add(self.overscan.saturating_mul(2))
@@ -131,7 +136,7 @@ impl VirtualListMetrics {
     /// Returns the total content height.
     #[must_use]
     pub fn total_height(&self) -> f32 {
-        self.item_height * self.item_count as f32
+        (f64::from(self.item_height) * self.item_count as f64).min(f64::from(f32::MAX)) as f32
     }
 }
 
@@ -164,5 +169,32 @@ mod metrics_tests {
         let metrics = VirtualListMetrics::new(f32::INFINITY, f32::NAN, 2, 50);
         assert_eq!(metrics.visible_range(f32::INFINITY), 0..4);
         assert_eq!(metrics.total_height(), 50.0);
+    }
+}
+
+#[cfg(test)]
+mod boundary_tests {
+    use super::VirtualListMetrics;
+
+    #[test]
+    fn partially_visible_last_row_is_included_without_overscan() {
+        let metrics = VirtualListMetrics::new(20.0, 100.0, 0, 50);
+        assert_eq!(metrics.visible_range(1.0), 0..6);
+        assert_eq!(metrics.visible_range(21.0), 1..7);
+        assert_eq!(metrics.visible_range(20.0), 1..6);
+    }
+
+    #[test]
+    fn stale_offset_after_dataset_shrinks_is_safe_to_slice() {
+        let rows = [0; 3];
+        let metrics = VirtualListMetrics::new(20.0, 100.0, 2, rows.len());
+        assert!(rows[metrics.visible_range(10_000.0)].is_empty());
+        assert!(rows[metrics.visible_range(f32::MAX)].is_empty());
+    }
+
+    #[test]
+    fn total_height_stays_finite_for_extreme_content() {
+        let metrics = VirtualListMetrics::new(f32::MAX, 100.0, 0, usize::MAX);
+        assert_eq!(metrics.total_height(), f32::MAX);
     }
 }
