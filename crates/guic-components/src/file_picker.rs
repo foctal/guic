@@ -114,7 +114,9 @@ impl RenderOnce for FilePicker {
         } else {
             let mut chips = div().flex().flex_wrap().gap_2();
             for file in self.files {
-                let mut tag = Tag::new(file.clone()).variant(TagVariant::Info);
+                let mut tag = Tag::new(file.clone())
+                    .id(file.clone())
+                    .variant(TagVariant::Info);
                 if !self.disabled
                     && let Some(on_remove) = self.on_remove.clone()
                 {

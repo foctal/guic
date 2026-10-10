@@ -5,6 +5,7 @@ use gpui::{
     ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _, Window, canvas, div,
     px, relative,
 };
+use guic_icons::{Icon, IconName};
 use guic_tokens::Theme;
 use serde::{Deserialize, Serialize};
 use std::{cell::Cell, collections::HashMap, rc::Rc};
@@ -2212,8 +2213,21 @@ fn render_tabs_leaf(tabs: DockTabs, theme: &Theme, handlers: DockRenderHandlers)
                 .text_color(theme.muted_foreground())
                 .hover(|style: gpui::StyleRefinement| style.bg(theme.secondary().opacity(0.3)))
                 .cursor_pointer()
-                .child("x")
+                .role(gpui::Role::Button)
+                .aria_label("Close")
+                .tab_index(0)
+                .flex()
+                .items_center()
+                .justify_center()
+                .min_w(px(24.0))
+                .min_h(px(24.0))
+                .child(
+                    Icon::new(IconName::X)
+                        .size(14.0)
+                        .color(theme.muted_foreground()),
+                )
                 .on_click(move |_, window, cx| {
+                    cx.stop_propagation();
                     handler(&DockCommand::CloseTab(close_selection.clone()), window, cx);
                 });
             let close = match handlers.close_button_visibility {
@@ -2311,8 +2325,21 @@ fn render_tabs_leaf(tabs: DockTabs, theme: &Theme, handlers: DockRenderHandlers)
                     .text_color(theme.muted_foreground())
                     .hover(|style: gpui::StyleRefinement| style.bg(theme.secondary().opacity(0.3)))
                     .cursor_pointer()
-                    .child("x")
+                    .role(gpui::Role::Button)
+                    .aria_label("Close")
+                    .tab_index(0)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .min_w(px(24.0))
+                    .min_h(px(24.0))
+                    .child(
+                        Icon::new(IconName::X)
+                            .size(14.0)
+                            .color(theme.muted_foreground()),
+                    )
                     .on_click(move |_, window, cx| {
+                        cx.stop_propagation();
                         handler(
                             &DockCommand::CloseStack(stack_selection.clone()),
                             window,

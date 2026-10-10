@@ -17,3 +17,7 @@ Chip::new("Rust")
 
 Use `disabled(true)` to suppress both activation and removal. `Tag` remains the
 better choice for a non-selectable categorization label.
+
+Use `.id(...)` for chips created in a loop or when a label can change. Removing a
+chip does not trigger its primary activation handler. Disabled chips cannot be
+activated or removed. Native Enter/Space activation follows button behavior.

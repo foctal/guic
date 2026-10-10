@@ -356,14 +356,7 @@ impl RenderOnce for Select {
                 move |style| style.border_color(ring)
             })
             .child(selected_label)
-            .child(
-                Icon::new(if self.expanded {
-                    IconName::ChevronDown
-                } else {
-                    IconName::ChevronRight
-                })
-                .color(theme.muted_foreground()),
-            );
+            .child(Icon::new(IconName::ChevronDown).color(theme.muted_foreground()));
 
         if let Some(width) = self.width {
             trigger = trigger.w(width);

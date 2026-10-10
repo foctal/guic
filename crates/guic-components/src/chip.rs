@@ -1,7 +1,7 @@
 use crate::{ButtonVariant, ClickHandler, ComponentSize, IconButton};
 use gpui::{
-    App, ClickEvent, Empty, InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _,
-    RenderOnce, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div, px,
+    App, ClickEvent, Empty, InteractiveElement as _, IntoElement, ParentElement as _, RenderOnce,
+    SharedString, StatefulInteractiveElement as _, Styled as _, Window, div, px,
 };
 use guic_core::{AccessibilityElementExt as _, AccessibilityProps, Role};
 use guic_icons::IconName;
@@ -15,6 +15,7 @@ use std::rc::Rc;
 /// it from [`Chip::on_click`].
 #[derive(gpui::IntoElement)]
 pub struct Chip {
+    id: SharedString,
     label: SharedString,
     selected: bool,
     disabled: bool,
@@ -27,8 +28,10 @@ pub struct Chip {
 impl Chip {
     /// Creates a chip with the supplied label.
     #[must_use]
+    #[track_caller]
     pub fn new(label: impl Into<SharedString>) -> Self {
         Self {
+            id: format!("guic-chip-{}", std::panic::Location::caller()).into(),
             label: label.into(),
             selected: false,
             disabled: false,
@@ -37,6 +40,14 @@ impl Chip {
             on_click: None,
             on_remove: None,
         }
+    }
+
+    /// Sets a stable logical identity, independent of the label.
+    /// Required for siblings constructed from the same call site, such as a loop.
+    #[must_use]
+    pub fn id(mut self, id: impl Into<SharedString>) -> Self {
+        self.id = id.into();
+        self
     }
 
     /// Sets whether the chip is selected.
@@ -107,7 +118,11 @@ impl RenderOnce for Chip {
             (theme.background(), theme.border(), theme.foreground())
         };
         let chip = div()
-            .id(format!("guic-chip-{}", self.label))
+            .id(self.id.clone())
+            .debug_selector({
+                let selector = format!("guic-chip-{}", self.id);
+                move || selector.clone()
+            })
             .accessibility(
                 AccessibilityProps::new(Role::Button)
                     .label(self.label.clone())
@@ -129,20 +144,17 @@ impl RenderOnce for Chip {
                 let hover = theme.secondary().opacity(0.34);
                 move |style: gpui::StyleRefinement| style.bg(hover)
             })
+            .focus_visible({
+                let ring = theme.ring();
+                move |style| style.border_color(ring)
+            })
             .child(self.label);
 
         let chip = if self.disabled {
             chip.opacity(0.5)
         } else if let Some(on_click) = self.on_click {
-            let keyboard_handler = on_click.clone();
             chip.tab_index(0)
                 .key_context("GuicChip")
-                .on_key_down(move |event: &KeyDownEvent, window, cx| {
-                    if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                        keyboard_handler(&ClickEvent::default(), window, cx);
-                        cx.stop_propagation();
-                    }
-                })
                 .on_click(move |event, window, cx| (on_click)(event, window, cx))
         } else {
             chip
@@ -152,8 +164,17 @@ impl RenderOnce for Chip {
             IconButton::new(IconName::X)
                 .variant(ButtonVariant::Ghost)
                 .size(ComponentSize::Small)
+                .id(format!("{}-remove", self.id))
                 .label("Remove chip")
-                .on_click_option(if self.disabled { None } else { self.on_remove })
+                .disabled(self.disabled)
+                .on_click_option(self.on_remove.map(|handler| {
+                    Rc::new(
+                        move |event: &ClickEvent, window: &mut Window, cx: &mut App| {
+                            cx.stop_propagation();
+                            handler(event, window, cx);
+                        },
+                    ) as ClickHandler
+                }))
                 .into_any_element()
         } else {
             Empty.into_any_element()
@@ -174,5 +195,101 @@ mod tests {
         assert!(chip.selected);
         assert!(chip.disabled);
         assert!(chip.removable);
+    }
+}
+
+#[cfg(test)]
+mod interaction_tests {
+    use super::Chip;
+    use gpui::{
+        AppContext as _, Context, KeyUpEvent, Keystroke, Modifiers, ParentElement as _, Render,
+        Styled as _, TestAppContext, VisualContext as _, Window, div,
+    };
+
+    struct Harness {
+        activations: usize,
+        removals: usize,
+        disabled: bool,
+    }
+
+    impl Render for Harness {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
+            div().size_full().p_4().child(
+                Chip::new("Rust")
+                    .id("language")
+                    .disabled(self.disabled)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.activations += 1;
+                        cx.notify();
+                    }))
+                    .on_remove(cx.listener(|this, _, _, cx| {
+                        this.removals += 1;
+                        cx.notify();
+                    })),
+            )
+        }
+    }
+
+    fn init(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            guic_core::init(cx);
+            guic_tokens::init(cx);
+            crate::init(cx);
+        });
+    }
+
+    #[gpui::test]
+    fn removing_a_chip_does_not_activate_it(cx: &mut TestAppContext) {
+        init(cx);
+        let (view, cx) = cx.add_window_view(|_, _| Harness {
+            activations: 0,
+            removals: 0,
+            disabled: false,
+        });
+        let bounds = cx
+            .debug_bounds("guic-icon-button-language-remove")
+            .expect("remove button");
+        cx.simulate_click(bounds.center(), Modifiers::none());
+        view.update(cx, |view, _| {
+            assert_eq!(view.removals, 1);
+            assert_eq!(view.activations, 0);
+        });
+    }
+
+    #[gpui::test]
+    fn disabled_chip_cannot_be_removed(cx: &mut TestAppContext) {
+        init(cx);
+        let (view, cx) = cx.add_window_view(|_, _| Harness {
+            activations: 0,
+            removals: 0,
+            disabled: true,
+        });
+        let bounds = cx
+            .debug_bounds("guic-icon-button-language-remove")
+            .expect("remove button");
+        cx.simulate_click(bounds.center(), Modifiers::none());
+        view.update(cx, |view, _| {
+            assert_eq!(view.removals, 0);
+            assert_eq!(view.activations, 0);
+        });
+    }
+
+    #[gpui::test]
+    fn keyboard_activates_chip_once_per_press(cx: &mut TestAppContext) {
+        init(cx);
+        let (view, cx) = cx.add_window_view(|_, _| Harness {
+            activations: 0,
+            removals: 0,
+            disabled: false,
+        });
+        let window = cx.window_handle();
+        cx.update_window(window, |_, window, cx| window.focus_next(cx))
+            .expect("focus");
+        for (key, count) in [("enter", 1), ("space", 2)] {
+            let keystroke = Keystroke::parse(key).expect("key");
+            cx.dispatch_keystroke(window, keystroke.clone());
+            cx.simulate_event(KeyUpEvent { keystroke });
+            view.update(cx, |view, _| assert_eq!(view.activations, count));
+        }
     }
 }

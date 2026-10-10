@@ -22,3 +22,7 @@ Tag::new("backend")
 
 Unlike `Badge`, `Tag` uses a tinted surface and supports removal. Removal is
 host-managed: react to `on_remove` and drop the item from your model.
+
+Use `.id(...)` for tags created from the same call site, such as in a loop.
+The stable ID scopes the remove button and its accessibility node independently
+of the displayed label.

@@ -147,7 +147,11 @@ impl RenderOnce for MultiSelect {
         } else {
             for index in &self.selected {
                 if let Some(item) = self.items.get(*index) {
-                    chips = chips.child(Tag::new(item.label.clone()).size(ComponentSize::Small));
+                    chips = chips.child(
+                        Tag::new(item.label.clone())
+                            .id(item.id.clone())
+                            .size(ComponentSize::Small),
+                    );
                 }
             }
         }
@@ -178,14 +182,7 @@ impl RenderOnce for MultiSelect {
                 move |style: gpui::StyleRefinement| style.bg(hover)
             })
             .child(chips)
-            .child(
-                Icon::new(if self.expanded {
-                    IconName::ChevronDown
-                } else {
-                    IconName::ChevronRight
-                })
-                .color(theme.muted_foreground()),
-            );
+            .child(Icon::new(IconName::ChevronDown).color(theme.muted_foreground()));
 
         let mut root = div().w_full().flex().flex_col().gap_2();
         root = if self.disabled {
