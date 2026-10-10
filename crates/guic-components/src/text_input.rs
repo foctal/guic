@@ -24,6 +24,14 @@ actions!(
         Left,
         /// Moves the cursor right.
         Right,
+        /// Moves the cursor up one visual line.
+        Up,
+        /// Moves the cursor down one visual line.
+        Down,
+        /// Extends the selection up one visual line.
+        SelectUp,
+        /// Extends the selection down one visual line.
+        SelectDown,
         /// Extends the selection left.
         SelectLeft,
         /// Extends the selection right.
@@ -81,6 +89,7 @@ pub struct TextInput {
     selection_reversed: bool,
     marked_range: Option<Range<usize>>,
     last_layout: Option<TextLayoutState>,
+    preferred_x: Option<Pixels>,
     last_bounds: Option<Bounds<Pixels>>,
     is_selecting: bool,
     on_change: Option<TextChangeHandler>,
@@ -146,6 +155,7 @@ impl TextInput {
             selection_reversed: false,
             marked_range: None,
             last_layout: None,
+            preferred_x: None,
             last_bounds: None,
             is_selecting: false,
             on_change: None,
@@ -257,6 +267,50 @@ impl TextInput {
         }
     }
 
+    fn vertical(&mut self, down: bool, select: bool, cx: &mut Context<Self>) {
+        if self.kind != TextInputKind::TextArea || self.marked_range.is_some() {
+            cx.propagate();
+            return;
+        }
+        if self.disabled {
+            return;
+        }
+        let Some(layout) = self.last_layout.as_ref() else {
+            return;
+        };
+        let Some(position) =
+            layout.display_position_for_index(self.actual_to_display_offset(self.cursor_offset()))
+        else {
+            return;
+        };
+        let x = self.preferred_x.unwrap_or(position.x);
+        let y = position.y + layout.line_height * if down { 1.5 } else { -0.5 };
+        let offset = if y < px(0.0) {
+            0
+        } else {
+            self.display_to_actual_offset(layout.closest_display_index_for_position(point(x, y)))
+        };
+        if select {
+            self.select_to(offset, cx);
+        } else {
+            self.move_to(offset, cx);
+        }
+        self.preferred_x = Some(x);
+    }
+
+    fn up(&mut self, _: &Up, _: &mut Window, cx: &mut Context<Self>) {
+        self.vertical(false, false, cx);
+    }
+    fn down(&mut self, _: &Down, _: &mut Window, cx: &mut Context<Self>) {
+        self.vertical(true, false, cx);
+    }
+    fn select_up(&mut self, _: &SelectUp, _: &mut Window, cx: &mut Context<Self>) {
+        self.vertical(false, true, cx);
+    }
+    fn select_down(&mut self, _: &SelectDown, _: &mut Window, cx: &mut Context<Self>) {
+        self.vertical(true, true, cx);
+    }
+
     fn select_left(&mut self, _: &SelectLeft, _: &mut Window, cx: &mut Context<Self>) {
         self.select_to(self.previous_boundary(self.cursor_offset()), cx);
     }
@@ -361,6 +415,8 @@ impl TextInput {
     }
 
     fn move_to(&mut self, offset: usize, cx: &mut Context<Self>) {
+        self.preferred_x = None;
+        self.selection_reversed = false;
         self.selected_range = offset..offset;
         cx.notify();
     }
@@ -394,6 +450,7 @@ impl TextInput {
     }
 
     fn select_to(&mut self, offset: usize, cx: &mut Context<Self>) {
+        self.preferred_x = None;
         if self.selection_reversed {
             self.selected_range.start = offset;
         } else {
@@ -622,6 +679,7 @@ impl EntityInputHandler for TextInput {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.preferred_x = None;
         let range = range_utf16
             .as_ref()
             .map(|range_utf16| self.range_from_utf16(range_utf16))
@@ -647,6 +705,7 @@ impl EntityInputHandler for TextInput {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.preferred_x = None;
         let range = range_utf16
             .as_ref()
             .map(|range_utf16| self.range_from_utf16(range_utf16))
@@ -990,6 +1049,10 @@ impl Render for TextInput {
             })
             .on_action(cx.listener(Self::backspace))
             .on_action(cx.listener(Self::delete))
+            .on_action(cx.listener(Self::up))
+            .on_action(cx.listener(Self::down))
+            .on_action(cx.listener(Self::select_up))
+            .on_action(cx.listener(Self::select_down))
             .on_action(cx.listener(Self::left))
             .on_action(cx.listener(Self::right))
             .on_action(cx.listener(Self::select_left))
@@ -1052,6 +1115,10 @@ pub(crate) fn init_key_bindings(cx: &mut App) {
             KeyBinding::new("delete", Delete, Some("GuicTextInput")),
             KeyBinding::new("left", Left, Some("GuicTextInput")),
             KeyBinding::new("right", Right, Some("GuicTextInput")),
+            KeyBinding::new("up", Up, Some("GuicTextInput")),
+            KeyBinding::new("down", Down, Some("GuicTextInput")),
+            KeyBinding::new("shift-up", SelectUp, Some("GuicTextInput")),
+            KeyBinding::new("shift-down", SelectDown, Some("GuicTextInput")),
             KeyBinding::new("enter", Newline, Some("GuicTextInput")),
             KeyBinding::new("shift-left", SelectLeft, Some("GuicTextInput")),
             KeyBinding::new("shift-right", SelectRight, Some("GuicTextInput")),
@@ -1204,5 +1271,61 @@ mod tests {
             Keystroke::parse(key).expect("test value should be available"),
         );
         cx.update(|_, cx| assert_eq!(input.read(cx).selected_range, 5..5));
+    }
+}
+
+#[cfg(test)]
+mod vertical_navigation_tests {
+    use super::TextInput;
+    use gpui::{AppContext as _, Keystroke, TestAppContext, VisualContext as _};
+
+    fn init(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            guic_core::init(cx);
+            guic_tokens::init(cx);
+            crate::init(cx);
+        });
+    }
+
+    #[gpui::test]
+    fn vertical_keys_preserve_column_and_extend_selection(cx: &mut TestAppContext) {
+        init(cx);
+        let (input, cx) =
+            cx.add_window_view(|_, cx| TextInput::text_area("area", cx).value("abcd\nx\nabcd"));
+        let window = cx.window_handle();
+        cx.update_window(window, |_, window, cx| {
+            input.update(cx, |input, cx| input.focus_handle.focus(window, cx));
+        })
+        .expect("focus");
+        for (key, cursor) in [("up", 6), ("up", 4), ("down", 6), ("down", 11)] {
+            cx.dispatch_keystroke(window, Keystroke::parse(key).expect("key"));
+            input.update(cx, |input, _| assert_eq!(input.cursor_offset(), cursor));
+        }
+        cx.dispatch_keystroke(window, Keystroke::parse("shift-up").expect("key"));
+        input.update(cx, |input, _| assert_eq!(input.selected_range, 6..11));
+        cx.dispatch_keystroke(window, Keystroke::parse("shift-down").expect("key"));
+        input.update(cx, |input, _| assert_eq!(input.selected_range, 11..11));
+    }
+
+    #[gpui::test]
+    fn vertical_keys_cross_soft_wraps_without_splitting_unicode(cx: &mut TestAppContext) {
+        init(cx);
+        let text = "日本語🙂".repeat(100);
+        let (input, cx) =
+            cx.add_window_view(|_, cx| TextInput::text_area("wrapped", cx).value(text));
+        let window = cx.window_handle();
+        cx.update_window(window, |_, window, cx| {
+            input.update(cx, |input, cx| input.focus_handle.focus(window, cx));
+        })
+        .expect("focus");
+        cx.dispatch_keystroke(window, Keystroke::parse("up").expect("key"));
+        input.update(cx, |input, _| {
+            assert!(input.cursor_offset() < input.value.len());
+            assert!(input.value.is_char_boundary(input.cursor_offset()));
+        });
+        cx.dispatch_keystroke(window, Keystroke::parse("down").expect("key"));
+        input.update(cx, |input, _| {
+            assert_eq!(input.cursor_offset(), input.value.len())
+        });
     }
 }
