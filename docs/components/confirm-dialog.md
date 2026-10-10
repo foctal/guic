@@ -27,3 +27,7 @@ ConfirmDialog::new("delete-confirm")
 ```
 
 The dismiss scrim also fires `on_cancel` unless `.dismissible(false)`.
+
+The modal is centered in the window independently of its parent's layout. Its
+420px card is constrained to the viewport with a 16px margin on each side, and
+overflowing content can scroll vertically.

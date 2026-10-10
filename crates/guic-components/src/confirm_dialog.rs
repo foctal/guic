@@ -1,7 +1,8 @@
 use crate::{Button, ButtonVariant, ClickHandler, ComponentSize};
 use gpui::{
-    App, ClickEvent, Empty, InteractiveElement as _, IntoElement, ParentElement as _, RenderOnce,
-    SharedString, StatefulInteractiveElement as _, Styled as _, Window, div, px,
+    AnchoredPositionMode, App, ClickEvent, Empty, InteractiveElement as _, IntoElement,
+    ParentElement as _, RenderOnce, SharedString, StatefulInteractiveElement as _, Styled as _,
+    Window, anchored, div, point, px,
 };
 use guic_core::{
     AccessibilityElementExt as _, AccessibilityProps, OverlayPriority, Role, overlay_portal,
@@ -133,11 +134,12 @@ impl ConfirmDialog {
 }
 
 impl RenderOnce for ConfirmDialog {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         if !self.open {
             return Empty.into_any_element();
         }
 
+        let viewport = window.viewport_size();
         let theme = Theme::global(cx);
 
         let cancel_button = Button::new(self.cancel_label)
@@ -180,7 +182,10 @@ impl RenderOnce for ConfirmDialog {
             )
             .debug_selector(|| "guic-confirm-dialog-card".to_owned())
             .w(px(420.0))
-            .max_w_full()
+            .max_w((viewport.width - px(32.0)).max(px(0.0)))
+            .max_h((viewport.height - px(32.0)).max(px(0.0)))
+            .flex_shrink_0()
+            .overflow_y_scroll()
             .p_5()
             .rounded(px(theme.radius.lg))
             .border_1()
@@ -223,15 +228,62 @@ impl RenderOnce for ConfirmDialog {
         }
 
         overlay_portal(
-            div()
-                .absolute()
-                .inset_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(scrim)
-                .child(card),
+            anchored()
+                .position(point(px(0.0), px(0.0)))
+                .position_mode(AnchoredPositionMode::Window)
+                .child(guic_core::FocusTrap::new(
+                    format!("{}-focus-trap", self.id),
+                    div()
+                        .relative()
+                        .w(viewport.width)
+                        .h(viewport.height)
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(scrim)
+                        .child(card),
+                )),
             OverlayPriority::MODAL,
         )
+    }
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::ConfirmDialog;
+    use gpui::{Context, ParentElement as _, Render, Styled as _, TestAppContext, Window, div, px};
+    struct Harness;
+    impl Render for Harness {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl gpui::IntoElement {
+            div().size_full().p_4().child(
+                div().w(px(100.0)).h(px(60.0)).child(
+                    ConfirmDialog::new("nested")
+                        .open(true)
+                        .title("Delete project?")
+                        .message("This action cannot be undone.")
+                        .on_cancel(|_, _, _| {})
+                        .on_confirm(|_, _, _| {}),
+                ),
+            )
+        }
+    }
+    #[gpui::test]
+    fn nested_confirmation_keeps_card_and_actions_inside_viewport(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            guic_core::init(cx);
+            guic_tokens::init(cx);
+            crate::init(cx);
+        });
+        let (_, cx) = cx.add_window_view(|_, _| Harness);
+        let card = cx.debug_bounds("guic-confirm-dialog-card").expect("card");
+        let scrim = cx.debug_bounds("guic-confirm-dialog-scrim").expect("scrim");
+        let cancel = cx.debug_bounds("guic-button-Cancel").expect("cancel");
+        let confirm = cx.debug_bounds("guic-button-Confirm").expect("confirm");
+        assert_eq!(card.size.width, px(420.0));
+        assert!(card.size.height > px(100.0));
+        assert!(scrim.contains(&card.origin));
+        assert!(card.contains(&cancel.origin));
+        assert!(card.contains(&confirm.bottom_right()));
+        assert!(cancel.right() <= confirm.left());
     }
 }
