@@ -37,6 +37,7 @@ pub struct Slider {
     max: f32,
     step: f32,
     disabled: bool,
+    dragging: bool,
     focus_handle: FocusHandle,
     last_track_bounds: Option<Bounds<Pixels>>,
     on_change: Option<ChangeHandler>,
@@ -53,7 +54,8 @@ impl Slider {
             max: 100.0,
             step: 1.0,
             disabled: false,
-            focus_handle: cx.focus_handle(),
+            dragging: false,
+            focus_handle: cx.focus_handle().tab_stop(true),
             last_track_bounds: None,
             on_change: None,
         }
@@ -119,11 +121,11 @@ impl Slider {
     /// Returns the value as a `0.0..=1.0` fraction of the range.
     #[must_use]
     pub fn fraction(&self) -> f32 {
-        let span = self.max - self.min;
+        let span = f64::from(self.max) - f64::from(self.min);
         if span <= 0.0 {
             0.0
         } else {
-            ((self.value - self.min) / span).clamp(0.0, 1.0)
+            ((f64::from(self.value) - f64::from(self.min)) / span).clamp(0.0, 1.0) as f32
         }
     }
 
@@ -132,15 +134,24 @@ impl Slider {
         if self.step > 0.0 {
             self.step
         } else {
-            (self.max - self.min) / 100.0
+            ((f64::from(self.max) - f64::from(self.min)) / 100.0) as f32
         }
     }
 
     fn snap(&self, raw: f32) -> f32 {
+        if raw.is_nan() {
+            return self.value;
+        }
         let clamped = raw.clamp(self.min, self.max);
+        // Endpoints must remain reachable even when the span is not a step multiple.
+        if clamped == self.min || clamped == self.max {
+            return clamped;
+        }
         if self.step > 0.0 {
-            let steps = ((clamped - self.min) / self.step).round();
-            (self.min + steps * self.step).clamp(self.min, self.max)
+            let min = f64::from(self.min);
+            let step = f64::from(self.step);
+            let steps = ((f64::from(clamped) - min) / step).round();
+            (min + steps * step).clamp(min, f64::from(self.max)) as f32
         } else {
             clamped
         }
@@ -155,12 +166,13 @@ impl Slider {
             return self.value;
         }
         let fraction = ((f32::from(x) - f32::from(bounds.origin.x)) / width).clamp(0.0, 1.0);
-        self.min + fraction * (self.max - self.min)
+        (f64::from(self.min) + f64::from(fraction) * (f64::from(self.max) - f64::from(self.min)))
+            as f32
     }
 
     fn apply_value(&mut self, raw: f32, window: &mut Window, cx: &mut Context<Self>) {
         let next = self.snap(raw);
-        if (next - self.value).abs() > f32::EPSILON {
+        if next != self.value {
             self.value = next;
             if let Some(on_change) = self.on_change.clone() {
                 on_change(&next, window, cx);
@@ -183,6 +195,7 @@ impl Slider {
         };
         if let Some(next) = next {
             self.apply_value(next, window, cx);
+            cx.stop_propagation();
         }
     }
 }
@@ -255,7 +268,6 @@ impl Render for Slider {
                     .numeric_range(self.min.into(), self.max.into()),
             )
             .key_context("GuicSlider")
-            .track_focus(&self.focus_handle)
             .debug_selector(move || selector.clone())
             .w_full()
             .py(px(8.))
@@ -273,16 +285,31 @@ impl Render for Slider {
             root = root.opacity(0.55);
         } else {
             root = root
+                .track_focus(&self.focus_handle)
                 .cursor_pointer()
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                        this.dragging = true;
+                        this.focus_handle.focus(window, cx);
                         let value = this.value_from_x(event.position.x);
                         this.apply_value(value, window, cx);
                     }),
                 )
+                .on_mouse_up(
+                    MouseButton::Left,
+                    cx.listener(|this, _, _, _| {
+                        this.dragging = false;
+                    }),
+                )
+                .on_mouse_up_out(
+                    MouseButton::Left,
+                    cx.listener(|this, _, _, _| {
+                        this.dragging = false;
+                    }),
+                )
                 .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, window, cx| {
-                    if event.dragging() {
+                    if this.dragging && event.dragging() {
                         let value = this.value_from_x(event.position.x);
                         this.apply_value(value, window, cx);
                     }
@@ -326,6 +353,38 @@ mod tests {
         let slider = cx.new(|cx| Slider::new("c", cx).range(0.0, 50.0).step(0.0));
         slider.update(cx, |slider, _| {
             assert!((slider.keyboard_step() - 0.5).abs() < f32::EPSILON);
+        });
+    }
+
+    #[gpui::test]
+    fn endpoints_are_reachable_with_uneven_steps(cx: &mut TestAppContext) {
+        let slider = cx.new(|cx| Slider::new("uneven", cx).range(0.0, 10.0).step(3.0));
+        slider.update(cx, |slider, _| {
+            assert_eq!(slider.snap(10.0), 10.0);
+            assert_eq!(slider.snap(11.0), 10.0);
+            assert_eq!(slider.snap(0.0), 0.0);
+        });
+    }
+
+    #[gpui::test]
+    fn extreme_finite_ranges_do_not_produce_nan(cx: &mut TestAppContext) {
+        let slider = cx.new(|cx| {
+            Slider::new("wide", cx)
+                .range(-f32::MAX, f32::MAX)
+                .value(0.0)
+                .step(0.0)
+        });
+        slider.update(cx, |slider, _| {
+            assert_eq!(slider.fraction(), 0.5);
+            assert!(slider.keyboard_step().is_finite());
+            slider.step = f32::MIN_POSITIVE;
+            assert!(slider.snap(0.0).is_finite());
+            assert_eq!(slider.snap(f32::NAN), slider.value);
+            slider.last_track_bounds = Some(gpui::Bounds::new(
+                gpui::point(gpui::px(0.0), gpui::px(0.0)),
+                gpui::size(gpui::px(100.0), gpui::px(10.0)),
+            ));
+            assert_eq!(slider.value_from_x(gpui::px(50.0)), 0.0);
         });
     }
 
@@ -401,6 +460,44 @@ mod interaction_tests {
         view.update(cx, |slider, _| {
             assert_eq!(slider.current_value(), 80.0);
         });
+    }
+
+    #[gpui::test]
+    fn disabled_slider_is_not_a_tab_stop(cx: &mut TestAppContext) {
+        init(cx);
+        let (view, cx) = cx.add_window_view(|_, cx| Slider::new("disabled", cx).disabled(true));
+        let window = cx.window_handle();
+        cx.update_window(window, |_, window, cx| {
+            window.focus_next(cx);
+            view.update(cx, |slider, _| {
+                assert!(!slider.focus_handle.is_focused(window))
+            });
+        })
+        .expect("window update");
+    }
+
+    #[gpui::test]
+    fn unrelated_drag_does_not_change_value(cx: &mut TestAppContext) {
+        init(cx);
+        let (view, cx) = cx.add_window_view(|_, cx| Slider::new("s", cx).value(20.0));
+        let bounds = cx.debug_bounds("guic-slider-s").expect("slider bounds");
+        cx.simulate_mouse_move(bounds.center(), MouseButton::Left, Modifiers::none());
+        view.update(cx, |slider, _| assert_eq!(slider.current_value(), 20.0));
+    }
+
+    #[gpui::test]
+    fn click_focuses_slider_and_small_keyboard_steps_are_preserved(cx: &mut TestAppContext) {
+        init(cx);
+        let (view, cx) =
+            cx.add_window_view(|_, cx| Slider::new("tiny", cx).range(0.0, 1e-6).step(1e-8));
+        let bounds = cx.debug_bounds("guic-slider-tiny").expect("slider bounds");
+        cx.simulate_click(bounds.center(), Modifiers::none());
+        let window = cx.window_handle();
+        cx.dispatch_keystroke(window, Keystroke::parse("home").expect("key"));
+        cx.dispatch_keystroke(window, Keystroke::parse("right").expect("key"));
+        view.update(cx, |slider, _| assert_eq!(slider.current_value(), 1e-8));
+        cx.dispatch_keystroke(window, Keystroke::parse("end").expect("key"));
+        view.update(cx, |slider, _| assert_eq!(slider.current_value(), 1e-6));
     }
 
     #[gpui::test]

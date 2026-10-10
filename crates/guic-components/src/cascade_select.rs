@@ -177,7 +177,7 @@ impl RenderOnce for CascadeSelect {
                 theme.foreground()
             })
             .child(trigger_label)
-            .child(Icon::new(IconName::ChevronRight).color(theme.muted_foreground()));
+            .child(Icon::new(IconName::ChevronDown).color(theme.muted_foreground()));
 
         root = if self.disabled {
             root.child(trigger.opacity(0.55))

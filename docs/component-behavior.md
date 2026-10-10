@@ -1,6 +1,6 @@
 # Component Behavior and Host Integration
 
-This guide describes shared layout, identity, focus, Dock, and terminal contracts
+This guide describes shared layout, identity, focus, and Dock contracts
 for application authors. See the [platform smoke checklist](platform-smoke.md)
 for native integration validation requirements.
 
@@ -157,7 +157,7 @@ source ownership, destination ownership, and the drop target.
 
 `DockLayout::apply` deliberately returns false for TransferTab. The host must
 validate source liveness and destination availability, approve the transfer, move
-application resources, rebind terminal notifications, and then update both
+application resources, rebind resource notifications, and then update both
 layouts atomically. A rejected transfer leaves the source untouched. This change
 provides transfer intent; native cross-window drag transport still needs smoke
 validation. `DockLayout::transfer_tab_to` atomically updates two host-resolved
@@ -165,47 +165,3 @@ layouts, rejecting stale sources/destinations and duplicate tab IDs. It preserve
 pinned identity. Apply it to layout clones while preparing resource transfer, then
 install both clones only after resource movement succeeds. Roll back application
 resources if their transfer fails; layout validation alone cannot roll them back.
-
-## Terminal
-
-`Terminal::from_shared` accepts either `Arc<TerminalModel>` immutable snapshots
-or `SharedTerminalModel` (`Rc<RefCell<TerminalModel>>`) on the UI thread. Both retain
-shared storage instead of cloning scrollback per render. Mutable borrows must be
-released before rendering or dispatching input. Snapshot creation costs still
-belong to the model owner.
-
-`LocalPtySession::spawn(PtySpawnConfig, columns, rows)` passes executable,
-arguments, environment overrides, and working directory directly to the process
-builder. The configuration survives restart. Output notifications can be rebound;
-callbacks execute outside the notifier lock. Unread PTY output is bounded to about
-1 MiB through channel backpressure. Reader state distinguishes Running, Closed,
-and Failed. `take_reader_error` retains the diagnostic error API.
-`try_outcome` distinguishes a real child exit (with a termination-request flag)
-from a failed wait. Check reader state independently: an output-read failure does
-not prove that the child exited. The termination-request flag records a successful
-request, not proof of the cause of exit. Legacy `try_exit_status` still represents wait failure with
-code -1 for compatibility; new hosts should use the explicit outcome API.
-
-Terminal rendering includes measured ascent/descent, font weight, minimum pixel
-line height and percentage line height, optional ligatures, and a configurable
-ANSI palette. Existing tuple palettes and array palettes are both accepted.
-Cursor/text blink runs at 500 ms only while blinking content is present; the task
-is canceled when static or unmounted. `.blink_visible(...)` selects host-managed
-animation, including reduced-motion policies.
-
-The muxt-terminal model and rendering improvements were adapted under Apache-2.0:
-
-- OSC 7 local file URI decoding; OSC 8 hyperlinks; bounded OSC 9 and 777
-  notifications; OSC 133 C/D command-output regions and reported exit status.
-  OSC 9 progress subcommands are ignored rather than emitted as notifications.
-- Conservative URL/path detection, hover feedback, and modifier-click callbacks.
-  The host decides whether and how to open the target; GUIC does not launch it.
-- Plain/regex/case/whole-word searches, selection and command-output filtering,
-  result highlighting and reveal, bounded regex compilation and match counts.
-  `Arc<TerminalModel>::search_async` uses the supplied GPUI background executor
-  without copying the snapshot. Hosts discard stale results using their query
-  generation and model history/reset metadata. Search matches address physical
-  rows; multi-row query matching is not provided.
-- Grapheme and emoji cluster handling, configurable ambiguous-width policy,
-  reflow/selection preservation, bounded paste and protocol-response buffers,
-  mouse/focus reporting, and command-output invalidation when reflow changes rows.

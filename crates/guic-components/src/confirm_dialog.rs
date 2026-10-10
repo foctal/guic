@@ -1,7 +1,8 @@
 use crate::{Button, ButtonVariant, ClickHandler, ComponentSize};
 use gpui::{
-    App, ClickEvent, Empty, InteractiveElement as _, IntoElement, ParentElement as _, RenderOnce,
-    SharedString, StatefulInteractiveElement as _, Styled as _, Window, div, px,
+    AnchoredPositionMode, App, ClickEvent, Empty, InteractiveElement as _, IntoElement,
+    ParentElement as _, RenderOnce, SharedString, StatefulInteractiveElement as _, Styled as _,
+    Window, anchored, div, point, px,
 };
 use guic_core::{
     AccessibilityElementExt as _, AccessibilityProps, OverlayPriority, Role, overlay_portal,
@@ -15,6 +16,8 @@ use std::rc::Rc;
 /// for yes/no decisions: it always renders both actions and styles the confirm
 /// button destructively when [`ConfirmDialog::danger`] is set. It is
 /// host-managed via [`ConfirmDialog::open`].
+/// Opening focuses the cancel action; closing restores the previous focus.
+/// Keep the component rendered with `open(false)` to restore focus on closing.
 ///
 /// # Example
 ///
@@ -133,18 +136,29 @@ impl ConfirmDialog {
 }
 
 impl RenderOnce for ConfirmDialog {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let focus_id = format!("{}-focus-lifecycle", self.id);
         if !self.open {
-            return Empty.into_any_element();
+            return guic_core::OverlayFocus::new(focus_id, Empty)
+                .open(false)
+                .into_any_element();
         }
 
+        let cancel_focus =
+            window.use_keyed_state(format!("{}-cancel-focus", self.id), cx, |_, cx| {
+                cx.focus_handle()
+            });
+        let cancel_focus = cancel_focus.read(cx).clone();
+        let viewport = window.viewport_size();
         let theme = Theme::global(cx);
 
         let cancel_button = Button::new(self.cancel_label)
             .variant(ButtonVariant::Secondary)
             .size(ComponentSize::Small);
         let cancel_button = if let Some(on_cancel) = self.on_cancel.clone() {
-            cancel_button.on_click(move |event, window, cx| (on_cancel)(event, window, cx))
+            cancel_button
+                .focusable(cancel_focus.clone())
+                .on_click(move |event, window, cx| (on_cancel)(event, window, cx))
         } else {
             cancel_button
         };
@@ -180,7 +194,10 @@ impl RenderOnce for ConfirmDialog {
             )
             .debug_selector(|| "guic-confirm-dialog-card".to_owned())
             .w(px(420.0))
-            .max_w_full()
+            .max_w((viewport.width - px(32.0)).max(px(0.0)))
+            .max_h((viewport.height - px(32.0)).max(px(0.0)))
+            .flex_shrink_0()
+            .overflow_y_scroll()
             .p_5()
             .rounded(px(theme.radius.lg))
             .border_1()
@@ -197,6 +214,9 @@ impl RenderOnce for ConfirmDialog {
                     .child(self.title),
             );
 
+        if self.on_cancel.is_none() {
+            card = card.track_focus(&cancel_focus);
+        }
         if let Some(message) = self.message {
             card = card.child(
                 div()
@@ -222,16 +242,156 @@ impl RenderOnce for ConfirmDialog {
                 .on_click(move |event: &ClickEvent, window, cx| (on_cancel)(event, window, cx));
         }
 
-        overlay_portal(
-            div()
-                .absolute()
-                .inset_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(scrim)
-                .child(card),
+        let portal = overlay_portal(
+            anchored()
+                .position(point(px(0.0), px(0.0)))
+                .position_mode(AnchoredPositionMode::Window)
+                .child(guic_core::FocusTrap::new(
+                    format!("{}-focus-trap", self.id),
+                    div()
+                        .relative()
+                        .w(viewport.width)
+                        .h(viewport.height)
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(scrim)
+                        .child(card),
+                )),
             OverlayPriority::MODAL,
-        )
+        );
+        guic_core::OverlayFocus::new(focus_id, portal)
+            .autofocus(Some(cancel_focus))
+            .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::ConfirmDialog;
+    use gpui::{Context, ParentElement as _, Render, Styled as _, TestAppContext, Window, div, px};
+    struct Harness;
+    impl Render for Harness {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl gpui::IntoElement {
+            div().size_full().p_4().child(
+                div().w(px(100.0)).h(px(60.0)).child(
+                    ConfirmDialog::new("nested")
+                        .open(true)
+                        .title("Delete project?")
+                        .message("This action cannot be undone.")
+                        .on_cancel(|_, _, _| {})
+                        .on_confirm(|_, _, _| {}),
+                ),
+            )
+        }
+    }
+    #[gpui::test]
+    fn nested_confirmation_keeps_card_and_actions_inside_viewport(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            guic_core::init(cx);
+            guic_tokens::init(cx);
+            crate::init(cx);
+        });
+        let (_, cx) = cx.add_window_view(|_, _| Harness);
+        let card = cx.debug_bounds("guic-confirm-dialog-card").expect("card");
+        let scrim = cx.debug_bounds("guic-confirm-dialog-scrim").expect("scrim");
+        let cancel = cx.debug_bounds("guic-button-Cancel").expect("cancel");
+        let confirm = cx.debug_bounds("guic-button-Confirm").expect("confirm");
+        assert_eq!(card.size.width, px(420.0));
+        assert!(card.size.height > px(100.0));
+        assert!(scrim.contains(&card.origin));
+        assert!(card.contains(&cancel.origin));
+        assert!(card.contains(&confirm.bottom_right()));
+        assert!(cancel.right() <= confirm.left());
+    }
+}
+
+#[cfg(test)]
+mod focus_tests {
+    use super::ConfirmDialog;
+    use crate::Button;
+    use gpui::{
+        Context, FocusHandle, KeyUpEvent, Keystroke, ParentElement as _, Render, Styled as _,
+        TestAppContext, VisualContext as _, Window, div,
+    };
+
+    struct Harness {
+        open: bool,
+        launcher: FocusHandle,
+        cancellations: usize,
+    }
+
+    impl Render for Harness {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
+            div()
+                .size_full()
+                .child(
+                    Button::new("Launch confirmation")
+                        .focusable(self.launcher.clone())
+                        .on_click(|_, _, _| {}),
+                )
+                .child(
+                    ConfirmDialog::new("keyboard-confirm")
+                        .open(self.open)
+                        .on_confirm(|_, _, _| {})
+                        .on_cancel(cx.listener(|this, _, _, cx| {
+                            this.open = false;
+                            this.cancellations += 1;
+                            cx.notify();
+                        })),
+                )
+        }
+    }
+
+    #[gpui::test]
+    fn opening_enters_tab_trap_and_keyboard_cancel_restores_focus(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            guic_core::init(cx);
+            guic_tokens::init(cx);
+            crate::init(cx);
+        });
+        let (view, cx) = cx.add_window_view(|_, cx| Harness {
+            open: false,
+            launcher: cx.focus_handle(),
+            cancellations: 0,
+        });
+        let window = cx.window_handle();
+        cx.update(|window, cx| view.read(cx).launcher.clone().focus(window, cx));
+        view.update(cx, |view, cx| {
+            view.open = true;
+            cx.notify();
+        });
+        let _ = cx
+            .debug_bounds("guic-confirm-dialog-card")
+            .expect("mounted dialog");
+        cx.update(|window, cx| window.simulate_next_frame(cx));
+        cx.run_until_parked();
+        let cancel = cx.update(|window, cx| {
+            assert!(!view.read(cx).launcher.is_focused(window));
+            window.focused(cx).expect("modal focus")
+        });
+        for (key, on_cancel) in [
+            ("tab", false),
+            ("tab", true),
+            ("shift-tab", false),
+            ("shift-tab", true),
+        ] {
+            cx.dispatch_keystroke(window, Keystroke::parse(key).expect("tab key"));
+            cx.update(|window, cx| {
+                assert!(!view.read(cx).launcher.is_focused(window));
+                assert_eq!(cancel.is_focused(window), on_cancel);
+            });
+        }
+        let enter = Keystroke::parse("enter").expect("enter key");
+        cx.dispatch_keystroke(window, enter.clone());
+        cx.simulate_event(KeyUpEvent { keystroke: enter });
+        let _ = cx.debug_bounds("guic-button-Launch confirmation");
+        cx.update(|window, cx| window.simulate_next_frame(cx));
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            assert_eq!(view.read(cx).cancellations, 1);
+            assert!(!view.read(cx).open);
+            assert!(view.read(cx).launcher.is_focused(window));
+        });
     }
 }

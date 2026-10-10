@@ -5,7 +5,7 @@ remain application-owner responsibilities.
 
 ## Current Distribution Boundary
 
-GUIC pins `guic-gpui` and `guic-gpui-platform` 0.3.1 from crates.io. These
+GUIC pins `guic-gpui` and `guic-gpui-platform` 0.4.0 from crates.io. These
 packages contain the accessibility and platform APIs used by GUIC, so GPUI no
 longer prevents GUIC crates from being packaged. Every public GUIC crate must
 still pass a package dry run and metadata review before the maintainer publishes
@@ -29,7 +29,7 @@ it.
    policy required by enabled features.
 3. Sign binaries and the installer with the product's code-signing identity.
 4. Create an MSIX, MSI, or another organization-approved installer.
-5. Test install, upgrade, uninstall, ConPTY, long paths, non-ASCII user paths,
+5. Test install, upgrade, uninstall, long paths, non-ASCII user paths,
    and a standard non-administrator account.
 
 ## Linux

@@ -1,15 +1,15 @@
 # API Stability
 
-GUIC `0.2.x` releases are source previews. Stability labels apply to public
+GUIC `0.3.x` releases are source previews. Stability labels apply to public
 Rust APIs, feature flags, persistence formats, and host contracts.
 
 | Level | Contract |
 | --- | --- |
-| Preview | Usable for migration prototypes. Breaking changes require changelog entries but may ship in a `0.2.x` release. |
+| Preview | Usable for migration prototypes. Breaking changes require changelog entries but may ship in a `0.3.x` release. |
 | Experimental | Design is expected to change and applications should isolate usage behind their own adapter. |
 | Internal | Not published and not part of the support contract. |
 
-`guic-core`, tokens, components, icons, assets, macros, charts, terminal, and
+`guic-core`, tokens, components, icons, assets, macros, charts, and
 WebView are Preview. `guic-editor` is Experimental. Examples, samples, story,
 compatibility crates, and tooling are Internal.
 

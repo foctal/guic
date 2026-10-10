@@ -13,7 +13,6 @@ with native Rust views and explicit application services.
 | frontend fetch | Rust service client running on an application executor |
 | plugin file dialog | Injected native file-dialog service |
 | DOM component library | GUIC component plus host-managed domain state |
-| xterm.js | `guic-terminal` with application-owned PTY lifecycle |
 | charting JavaScript | `guic-charts` with application-owned data and interaction state |
 
 Migrate one workflow at a time:
@@ -40,7 +39,6 @@ state and must be reviewed on every target platform.
 | Router/sidebar and split views | `guic-example-native-reference` controlled `DockLayout` |
 | JavaScript chart dashboard | Native charts with interaction state and SVG/CSV export APIs |
 | Embedded code editor | Controlled `EditorSession` and `CodeEditor` with routed undo/redo |
-| xterm.js panel | Bounded `TerminalModel`; real PTY lifecycle in `guic-example-terminal-workspace` |
 | Browser form validation | Native `Form`, `FormField`, and typed validation severity |
 | Tauri dialog plugin | `FilePicker` routed to `App::prompt_for_paths`, or `FileDialogService` |
 | Promise cancellation/retry | `CancellationToken` and explicit progress/error/retry state |

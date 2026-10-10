@@ -4,31 +4,27 @@ use gpui::{
 };
 use guic_webview::WebView;
 
+#[cfg(target_os = "linux")]
+mod linux;
+
 struct AppView {
     webview: Entity<WebView>,
 }
 
 impl AppView {
-    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn new(window: &mut Window, url: &str, cx: &mut Context<Self>) -> Self {
         let webview = cx.new(|cx| {
-            let builder = wry::WebViewBuilder::new();
+            let builder = wry::WebViewBuilder::new().with_on_page_load_handler(|event, url| {
+                let event = match event {
+                    wry::PageLoadEvent::Started => "started",
+                    wry::PageLoadEvent::Finished => "finished",
+                };
+                eprintln!("WebView {event}: {url}");
+            });
 
-            #[cfg(not(any(
-                target_os = "windows",
-                target_os = "macos",
-                target_os = "ios",
-                target_os = "android"
-            )))]
-            let webview = {
-                use gtk::prelude::*;
-                use wry::WebViewBuilderExtUnix;
-
-                let fixed = gtk::Fixed::builder().build();
-                fixed.show_all();
-                builder
-                    .build_gtk(&fixed)
-                    .expect("failed to create linux webview")
-            };
+            #[cfg(target_os = "linux")]
+            let webview =
+                linux::build_child(builder, window).expect("failed to create Linux child webview");
 
             #[cfg(any(
                 target_os = "windows",
@@ -39,7 +35,8 @@ impl AppView {
             let webview = {
                 use raw_window_handle::HasWindowHandle;
 
-                let window_handle = window.window_handle().expect("no window handle");
+                let window_handle =
+                    HasWindowHandle::window_handle(window).expect("no window handle");
                 builder
                     .build_as_child(&window_handle)
                     .expect("failed to create child webview")
@@ -49,7 +46,7 @@ impl AppView {
         });
 
         webview
-            .update(cx, |view, _| view.load_url("https://example.com"))
+            .update(cx, |view, _| view.load_url(url))
             .expect("failed to load example url");
 
         Self { webview }
@@ -63,6 +60,16 @@ impl Render for AppView {
 }
 
 fn main() {
+    let url = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "https://example.com".into());
+
+    #[cfg(target_os = "linux")]
+    if let Err(error) = linux::init() {
+        eprintln!("GUIC WebView Example: {error}");
+        std::process::exit(1);
+    }
+
     #[cfg(target_os = "windows")]
     // SAFETY: This process-level environment variable is set before the GPUI
     // application is initialized, which avoids concurrent mutation hazards.
@@ -70,8 +77,11 @@ fn main() {
         std::env::set_var("GPUI_DISABLE_DIRECT_COMPOSITION", "true");
     }
 
-    gpui_platform::application().run(|cx: &mut gpui::App| {
+    gpui_platform::application().run(move |cx: &mut gpui::App| {
         guic::init(cx);
+
+        #[cfg(target_os = "linux")]
+        linux::run_gtk_loop(cx);
 
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
@@ -87,7 +97,7 @@ fn main() {
         };
 
         cx.open_window(options, |window, cx| {
-            let app = cx.new(|cx| AppView::new(window, cx));
+            let app = cx.new(|cx| AppView::new(window, &url, cx));
             cx.new(|cx| guic::core::Root::new(app, window, cx))
         })
         .expect("failed to open webview example window");

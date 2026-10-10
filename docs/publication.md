@@ -6,11 +6,11 @@ upload them.
 
 ## Public crate set and order
 
-All public crates use version `0.2.0`. Publish in dependency order:
+All public crates use version `0.3.0`. Publish in dependency order:
 
 1. `guic-macros`, `guic-tokens`, `guic-assets`, and `guic-webview`
 2. `guic-core` and `guic-icons`
-3. `guic-components`, `guic-charts`, `guic-editor`, and `guic-terminal`
+3. `guic-components`, `guic-charts`, and `guic-editor`
 4. `guic`
 
 Examples, samples, `guic-story`, `quick-xml-compat`, and `xtask` are internal
@@ -40,10 +40,10 @@ credentials, platform signing material, and unrelated application assets.
 
 - `guic-core`, `guic-tokens`, `guic-components`, `guic-icons`, `guic-assets`,
   and `guic-macros` are preview APIs.
-- `guic-charts`, `guic-terminal`, and `guic-webview` are preview subsystems.
+- `guic-charts` and `guic-webview` are preview subsystems.
 - `guic-editor` is experimental.
 - The umbrella `guic` crate inherits the least-stable enabled feature.
-- `0.2.x` releases may change preview and experimental APIs between releases.
+- `0.3.x` releases may change preview and experimental APIs between releases.
   Every breaking change must be called out in `CHANGELOG.md`.
 - Rust 1.95 is the current MSRV. Raising it requires release notes and CI
   updates.

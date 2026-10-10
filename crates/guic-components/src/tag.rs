@@ -1,7 +1,7 @@
 use crate::{ButtonVariant, ClickHandler, ComponentSize, IconButton};
 use gpui::{
-    App, ClickEvent, Empty, Hsla, IntoElement, ParentElement as _, RenderOnce, SharedString,
-    Styled as _, Window, div, px,
+    App, ClickEvent, Empty, Hsla, InteractiveElement as _, IntoElement, ParentElement as _,
+    RenderOnce, SharedString, Styled as _, Window, div, px,
 };
 use guic_icons::IconName;
 use guic_tokens::Theme;
@@ -41,6 +41,7 @@ pub enum TagVariant {
 /// ```
 #[derive(gpui::IntoElement)]
 pub struct Tag {
+    id: SharedString,
     text: SharedString,
     variant: TagVariant,
     size: ComponentSize,
@@ -52,8 +53,10 @@ pub struct Tag {
 impl Tag {
     /// Creates a new tag with the given text.
     #[must_use]
+    #[track_caller]
     pub fn new(text: impl Into<SharedString>) -> Self {
         Self {
+            id: format!("guic-tag-{}", std::panic::Location::caller()).into(),
             text: text.into(),
             variant: TagVariant::Neutral,
             size: ComponentSize::Medium,
@@ -61,6 +64,13 @@ impl Tag {
             removable: false,
             on_remove: None,
         }
+    }
+
+    /// Sets a stable identity. Required for siblings created at the same call site.
+    #[must_use]
+    pub fn id(mut self, id: impl Into<SharedString>) -> Self {
+        self.id = id.into();
+        self
     }
 
     /// Sets the tag variant.
@@ -129,6 +139,7 @@ impl RenderOnce for Tag {
         };
 
         let mut root = div()
+            .id(self.id.clone())
             .flex()
             .items_center()
             .gap_1p5()
@@ -149,6 +160,7 @@ impl RenderOnce for Tag {
 
         root.child(if self.removable {
             IconButton::new(IconName::X)
+                .id(format!("{}-remove", self.id))
                 .variant(ButtonVariant::Ghost)
                 .size(ComponentSize::Small)
                 .label("Remove tag")
@@ -157,5 +169,51 @@ impl RenderOnce for Tag {
         } else {
             Empty.into_any_element()
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Tag;
+    use gpui::{
+        Context, Modifiers, ParentElement as _, Render, Styled as _, TestAppContext, Window, div,
+    };
+
+    struct Tags {
+        removed: Vec<usize>,
+    }
+    impl Render for Tags {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
+            div().flex().children((0..2).map(|index| {
+                Tag::new("Same label")
+                    .id(format!("tag-{index}"))
+                    .on_remove(cx.listener(move |this, _, _, cx| {
+                        this.removed.push(index);
+                        cx.notify();
+                    }))
+            }))
+        }
+    }
+
+    #[gpui::test]
+    fn repeated_tags_have_independent_remove_controls(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            guic_core::init(cx);
+            guic_tokens::init(cx);
+            crate::init(cx);
+        });
+        let (view, cx) = cx.add_window_view(|_, _| Tags {
+            removed: Vec::new(),
+        });
+        let first = cx
+            .debug_bounds("guic-icon-button-tag-0-remove")
+            .expect("first remove");
+        let second = cx
+            .debug_bounds("guic-icon-button-tag-1-remove")
+            .expect("second remove");
+        assert_ne!(first, second);
+        cx.simulate_click(second.center(), Modifiers::none());
+        cx.simulate_click(first.center(), Modifiers::none());
+        view.update(cx, |view, _| assert_eq!(view.removed, [1, 0]));
     }
 }

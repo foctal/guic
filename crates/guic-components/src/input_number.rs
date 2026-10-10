@@ -14,8 +14,8 @@ type NumberChangeHandler = Rc<dyn Fn(&f64, &mut Window, &mut App)>;
 ///
 /// `InputNumber` is host-managed: supply the current [`InputNumber::value`] and
 /// react to [`InputNumber::on_change`], which reports the next clamped value
-/// from the step controls or (when [`InputNumber::focusable`]) the up/down
-/// arrow keys.
+/// from the step controls or the up/down arrow keys. Interactive inputs are
+/// keyboard-focusable by default; [`InputNumber::focusable`] supplies a host handle.
 ///
 /// # Example
 ///
@@ -155,8 +155,6 @@ impl RenderOnce for InputNumber {
         let metrics = self.size.control_metrics(theme);
         let (height, text_size) = (metrics.height, metrics.font_size);
 
-        let at_min = self.value <= self.min;
-        let at_max = self.value >= self.max;
         let decremented = self.clamp(self.value - self.step);
         let incremented = self.clamp(self.value + self.step);
 
@@ -166,7 +164,7 @@ impl RenderOnce for InputNumber {
                 .variant(ButtonVariant::Secondary)
                 .size(self.size)
                 .label("Decrement")
-                .disabled(self.disabled || at_min)
+                .disabled(self.disabled || decremented == self.value)
                 .on_click(move |_event, window, cx| {
                     if let Some(handler) = on_change.as_ref() {
                         handler(&decremented, window, cx);
@@ -179,7 +177,7 @@ impl RenderOnce for InputNumber {
                 .variant(ButtonVariant::Secondary)
                 .size(self.size)
                 .label("Increment")
-                .disabled(self.disabled || at_max)
+                .disabled(self.disabled || incremented == self.value)
                 .on_click(move |_event, window, cx| {
                     if let Some(handler) = on_change.as_ref() {
                         handler(&incremented, window, cx);
@@ -219,24 +217,32 @@ impl RenderOnce for InputNumber {
             .flex()
             .items_center()
             .gap_2()
+            .rounded(px(theme.radius.md))
+            .focus_visible({
+                let ring = theme.ring();
+                move |style| {
+                    style.shadow(vec![
+                        gpui::BoxShadow::new(px(0.0), px(0.0), ring).spread_radius(px(2.0)),
+                    ])
+                }
+            })
             .child(decrement)
             .child(value_box)
             .child(increment);
 
-        if let Some(handle) = self.focus_handle {
+        if !self.disabled && self.on_change.is_some() {
+            root = if let Some(handle) = self.focus_handle {
+                root.track_focus(&handle)
+            } else {
+                root.tab_index(0)
+            };
             let on_change = self.on_change.clone();
             let value = self.value;
             let min = self.min;
             let max = self.max;
             let step = self.step;
-            let disabled = self.disabled;
-            root = root
-                .key_context("GuicInputNumber")
-                .track_focus(&handle)
-                .on_key_down(move |event: &KeyDownEvent, window, cx| {
-                    if disabled {
-                        return;
-                    }
+            root = root.key_context("GuicInputNumber").on_key_down(
+                move |event: &KeyDownEvent, window, cx| {
                     let next = match event.keystroke.key.as_str() {
                         "up" => Some((value + step).clamp(min, max)),
                         "down" => Some((value - step).clamp(min, max)),
@@ -244,10 +250,16 @@ impl RenderOnce for InputNumber {
                         "end" => Some(max),
                         _ => None,
                     };
-                    if let (Some(next), Some(handler)) = (next, on_change.as_ref()) {
-                        handler(&next, window, cx);
+                    if let Some(next) = next {
+                        if next != value
+                            && let Some(handler) = on_change.as_ref()
+                        {
+                            handler(&next, window, cx);
+                        }
+                        cx.stop_propagation();
                     }
-                });
+                },
+            );
         }
 
         if self.disabled {
@@ -342,6 +354,44 @@ mod interaction_tests {
             guic_core::init(cx);
             guic_tokens::init(cx);
             crate::init(cx);
+        });
+    }
+
+    struct DefaultFocusHarness {
+        value: f64,
+        changes: usize,
+    }
+
+    impl Render for DefaultFocusHarness {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
+            InputNumber::new("default-focus")
+                .value(self.value)
+                .on_change(cx.listener(|this, value: &f64, _, cx| {
+                    this.value = *value;
+                    this.changes += 1;
+                    cx.notify();
+                }))
+        }
+    }
+
+    #[gpui::test]
+    fn keyboard_works_without_a_host_focus_handle_and_ignores_unchanged_values(
+        cx: &mut TestAppContext,
+    ) {
+        init(cx);
+        let (view, cx) = cx.add_window_view(|_, _| DefaultFocusHarness {
+            value: 99.0,
+            changes: 0,
+        });
+        let window = cx.window_handle();
+        cx.update_window(window, |_, window, cx| window.focus_next(cx))
+            .expect("focus");
+        for _ in 0..2 {
+            cx.dispatch_keystroke(window, Keystroke::parse("up").expect("key"));
+        }
+        view.update(cx, |view, _| {
+            assert_eq!(view.value, 100.0);
+            assert_eq!(view.changes, 1);
         });
     }
 

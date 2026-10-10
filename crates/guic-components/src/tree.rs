@@ -5,6 +5,7 @@ use gpui::{
     Window, div, px,
 };
 use guic_core::{AccessibilityElementExt as _, AccessibilityProps, Role};
+use guic_icons::{Icon, IconName};
 use guic_tokens::Theme;
 use std::{error::Error, fmt, rc::Rc};
 
@@ -1009,13 +1010,20 @@ fn render_node_row(node: &TreeNode, depth: usize, context: TreeRenderContext) ->
     } = context;
     let has_children = node.has_children();
     let marker = if node.loading {
-        "..."
-    } else if has_children && node.expanded {
-        "v"
+        crate::Spinner::new()
+            .size(crate::ComponentSize::Small)
+            .into_any_element()
     } else if has_children {
-        ">"
+        Icon::new(if node.expanded {
+            IconName::ChevronDown
+        } else {
+            IconName::ChevronRight
+        })
+        .size(14.0)
+        .color(theme.muted_foreground())
+        .into_any_element()
     } else {
-        "-"
+        div().w(px(14.0)).into_any_element()
     };
 
     let node_id = node.id.clone();

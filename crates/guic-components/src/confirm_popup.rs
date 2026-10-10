@@ -93,7 +93,7 @@ impl ConfirmPopup {
 }
 
 impl RenderOnce for ConfirmPopup {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = Theme::global(cx);
         let mut root = div().id(self.id.clone()).relative().child(self.trigger);
         if self.open {
@@ -130,7 +130,7 @@ impl RenderOnce for ConfirmPopup {
                     .left_0()
                     .mt_2()
                     .w(px(280.))
-                    .max_w_full()
+                    .max_w((window.viewport_size().width - px(32.0)).max(px(0.0)))
                     .p_3()
                     .rounded(px(theme.radius.md))
                     .border_1()

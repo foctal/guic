@@ -36,7 +36,8 @@ fn write_schema(path: PathBuf, schema: &ThemeSchema, check: bool) -> Result<()> 
     if check {
         let current = fs::read_to_string(&path)
             .with_context(|| format!("failed to read {}", path.display()))?;
-        if current != rendered {
+        // Git may check out the schema with CRLF line endings on Windows.
+        if current.replace("\r\n", "\n") != rendered {
             bail!("theme schema is out of date: {}", path.display());
         }
         return Ok(());
@@ -44,4 +45,27 @@ fn write_schema(path: PathBuf, schema: &ThemeSchema, check: bool) -> Result<()> 
 
     fs::write(&path, rendered).with_context(|| format!("failed to write {}", path.display()))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn schema_check_accepts_checkout_line_endings_but_rejects_stale_content() {
+        let path = env::temp_dir().join(format!("guic-schema-check-{}.json", std::process::id()));
+        let schema = guic_tokens::theme_schema();
+        let rendered = serde_json::to_string_pretty(&schema).expect("serialize schema") + "\n";
+
+        for contents in [rendered.clone(), rendered.replace('\n', "\r\n")] {
+            fs::write(&path, &contents).expect("write schema fixture");
+            write_schema(path.clone(), &schema, true).expect("equivalent schema should pass");
+            assert_eq!(fs::read_to_string(&path).expect("read fixture"), contents);
+        }
+
+        fs::write(&path, "{}\r\n").expect("write stale schema fixture");
+        let result = write_schema(path.clone(), &schema, true);
+        fs::remove_file(&path).expect("remove schema fixture");
+        assert!(result.is_err(), "changed schema content must still fail");
+    }
 }

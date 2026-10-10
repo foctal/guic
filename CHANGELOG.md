@@ -2,6 +2,54 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+## 0.3.0 - 2026-10-10
+
+- Upgrade the guic-gpui runtime family to 0.4.0.
+- Verify command palette accessibility focus with GPUI's headless tree builder.
+- Fix Linux WebView example startup and embedding with GTK initialization, an
+  XCB-to-Xlib parent handle adapter, and GTK event processing. Use X11/XWayland
+  and a compatible WebKit rendering default; document native Wayland limits.
+- Keep CommandPalette accessibility focus on its search input only.
+- Bound and scroll palette results, including wrapped descriptions, and reveal
+  the active command on keyboard navigation and query changes.
+- Use native Command/Control editing shortcuts and expose typed text-input
+  actions for application overrides.
+- Add InputGroup and InputGroupAddon for inputs with adjacent units or actions,
+  and Skeleton for static loading placeholders.
+- Support Up/Down and Shift+Up/Down navigation in TextArea across visual lines,
+  including soft wraps, while preserving the preferred horizontal position.
+- Move focus between child tab stops when Root receives unhandled Tab or
+  Shift+Tab keys.
+- Center ConfirmDialog in the viewport, constrain confirmation overlay sizes,
+  and allow long dialog content to scroll. Focus the cancel action on opening,
+  trap Tab navigation within the dialog, and restore focus on closing.
+- Make interactive InputNumber controls keyboard-focusable by default and avoid
+  reporting unchanged values at range limits.
+- Fix Slider endpoint snapping, extreme finite ranges, and small value changes;
+  focus on click, exclude disabled sliders from tab order, and ignore unrelated
+  drags.
+- Include partially visible rows in VirtualListMetrics, keep ranges safe after
+  data shrinks, and bound total height for extreme content sizes.
+- Add stable Chip and Tag identities independent of labels. Prevent chip removal
+  from activating the chip, suppress disabled removal, and use native keyboard
+  activation.
+- Standardize action icons and improve Dock close-button keyboard and
+  accessibility behavior.
+- Accept CRLF checkout line endings during theme schema validation.
+
+### Migration notes
+
+- Supply a unique, stable `.id(...)` for sibling Chip and Tag instances created
+  at the same call site, such as in a loop. Both components now use the
+  constructor call site as their default identity.
+- Keep ConfirmDialog rendered with `.open(false)` after closing so it can
+  restore focus to the previously focused control.
+- Text-input editing shortcuts use Command on macOS and Control on other
+  platforms. Register application overrides with the public typed actions in
+  `guic_components::text_input` under the `GuicTextInput` key context.
+
 ## 0.2.0 - 2026-09-06
 
 - Upgrade the guic-gpui runtime family to 0.3.1.

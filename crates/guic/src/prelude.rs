@@ -47,20 +47,6 @@ pub use guic_editor::{
     EditorSearchMatch, EditorSelection, EditorSession, SyntaxToken, SyntaxTokenKind,
 };
 
-#[cfg(feature = "terminal")]
-pub use guic_terminal::{
-    LocalPtySession, Terminal, TerminalCell, TerminalCharset, TerminalCloseMode, TerminalColor,
-    TerminalCursorStyle, TerminalExitStatus, TerminalFontMetrics, TerminalGridMetrics,
-    TerminalGridSize, TerminalInputModifiers, TerminalInputSnapshot, TerminalInputState,
-    TerminalLine, TerminalModel, TerminalModes, TerminalMouseButton, TerminalMouseEvent,
-    TerminalMouseEventKind, TerminalOptions, TerminalPosition, TerminalProcessStatus,
-    TerminalSelection, TerminalShellProfile, TerminalStyle, TerminalTabStatus, TerminalTransport,
-    default_shell_command, discover_shell_profiles, terminal_alternate_scroll_bytes,
-    terminal_focus_event_bytes, terminal_key_down_event_bytes, terminal_keystroke_bytes,
-    terminal_keystroke_bytes_with_modes, terminal_mouse_event_bytes, terminal_paste_bytes,
-    terminal_text_input_bytes,
-};
-
 #[cfg(feature = "components")]
 pub use guic_components::{
     Accordion, AccordionSection, Alert, AlertVariant, AutoComplete, Avatar, AvatarShape,
@@ -68,15 +54,16 @@ pub use guic_components::{
     CascadeOption, CascadeSelect, Checkbox, Chip, ColorPicker, ColorSwatch, CommandPalette,
     CommandPaletteItem, ComponentSize, ConfirmDialog, ConfirmPopup, ContextMenu, DataView,
     DataViewItem, DataViewLayout, DatePicker, Dialog, Drawer, DrawerSide, Fieldset, FilePicker,
-    Form, FormField, FormSummary, IconButton, Image, ImageFit, InputNumber, InputOtp, Label,
-    Listbox, ListboxSelectionMode, Menu, MenuItem, Menubar, MenubarActivation, MenubarMenu,
-    Message, MessageVariant, MetricCard, MultiSelect, Paginator, Panel, PanelMenu, PasswordInput,
-    PickList, Popover, Progress, PropertyItem, PropertyList, Radio, ScrollArea, SearchInput,
-    Select, SelectItem, Separator, Slider, Spinner, Splitter, SplitterAxis, Step, Stepper, Switch,
-    TabItem, TabMenu, Tabs, Tag, TagVariant, TextArea, TextInput, TextInputKind, TieredMenu,
-    Timeline, TimelineEvent, Toast, ToastPlacement, ToastStack, ToastVariant, Toolbar, Tooltip,
-    TreeSelect, TreeSelectNode, TreeTable, TreeTableColumn, TreeTableRow, ValidationIssue,
-    ValidationSeverity, VirtualList, VirtualListMetrics,
+    Form, FormField, FormSummary, IconButton, Image, ImageFit, InputGroup, InputGroupAddon,
+    InputNumber, InputOtp, Label, Listbox, ListboxSelectionMode, Menu, MenuItem, Menubar,
+    MenubarActivation, MenubarMenu, Message, MessageVariant, MetricCard, MultiSelect, Paginator,
+    Panel, PanelMenu, PasswordInput, PickList, Popover, Progress, PropertyItem, PropertyList,
+    Radio, ScrollArea, SearchInput, Select, SelectItem, Separator, Skeleton, Slider, Spinner,
+    Splitter, SplitterAxis, Step, Stepper, Switch, TabItem, TabMenu, Tabs, Tag, TagVariant,
+    TextArea, TextInput, TextInputKind, TieredMenu, Timeline, TimelineEvent, Toast, ToastPlacement,
+    ToastStack, ToastVariant, Toolbar, Tooltip, TreeSelect, TreeSelectNode, TreeTable,
+    TreeTableColumn, TreeTableRow, ValidationIssue, ValidationSeverity, VirtualList,
+    VirtualListMetrics,
 };
 
 #[cfg(feature = "data-table")]

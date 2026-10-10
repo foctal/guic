@@ -90,6 +90,7 @@ pub struct CommandPalette {
     query: String,
     items: Vec<CommandPaletteItem>,
     active_index: usize,
+    scroll: gpui::ScrollHandle,
     max_results: usize,
     empty_message: SharedString,
     on_activate: Option<CommandHandler>,
@@ -111,6 +112,7 @@ impl CommandPalette {
         let subscription = cx.subscribe(&input, |this, _, event: &ValueChange<String>, cx| {
             this.query = event.next.clone();
             this.active_index = 0;
+            this.scroll.scroll_to_item(0);
             cx.notify();
         });
         Self {
@@ -123,6 +125,7 @@ impl CommandPalette {
             query: String::new(),
             items: Vec::new(),
             active_index: 0,
+            scroll: gpui::ScrollHandle::new(),
             max_results: 20,
             empty_message: "No matching commands".into(),
             on_activate: None,
@@ -208,6 +211,7 @@ impl CommandPalette {
         } else {
             self.active_index = (self.active_index + len - 1) % len;
         }
+        self.scroll.scroll_to_item(self.active_index);
         cx.notify();
     }
 
@@ -259,7 +263,7 @@ impl CommandPalette {
 }
 
 impl Render for CommandPalette {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let focus_id = format!("{}-focus-lifecycle", self.id);
         if !self.open {
             return guic_core::OverlayFocus::new(focus_id, gpui::Empty)
@@ -277,7 +281,11 @@ impl Render for CommandPalette {
         let mut results = div()
             .id(format!("{}-results", self.id))
             .accessibility(AccessibilityProps::new(Role::ListBox).label("Matching commands"))
+            .debug_selector(|| "guic-command-palette-results".into())
             .w_full()
+            .max_h((window.viewport_size().height - px(200.0)).clamp(px(0.0), px(360.0)))
+            .overflow_y_scroll()
+            .track_scroll(&self.scroll)
             .flex()
             .flex_col()
             .gap_1();
@@ -295,7 +303,13 @@ impl Render for CommandPalette {
             let active = result_index == self.active_index;
             let handler = self.on_activate.clone();
             let callback_item = item.clone();
-            let mut leading = div().flex().flex_col().gap_1().child(item.title.clone());
+            let mut leading = div()
+                .min_w_0()
+                .flex_1()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(item.title.clone());
             if let Some(description) = item.description {
                 leading = leading.child(
                     div()
@@ -314,6 +328,7 @@ impl Render for CommandPalette {
                         .disabled(item.disabled),
                 )
                 .w_full()
+                .flex_shrink_0()
                 .flex()
                 .items_center()
                 .justify_between()
@@ -353,7 +368,6 @@ impl Render for CommandPalette {
         let content = div()
             .id(self.id.clone())
             .key_context("GuicCommandPalette")
-            .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(Self::handle_key))
             .on_action(cx.listener(Self::handle_submit))
             .accessibility(AccessibilityProps::new(Role::Dialog).label("Command palette"))
@@ -445,6 +459,31 @@ mod tests {
     }
 
     #[gpui::test]
+    fn accessibility_focus_belongs_to_the_search_input(cx: &mut TestAppContext) {
+        init(cx);
+        let (palette, cx) = cx.add_window_view(|_, cx| {
+            CommandPalette::new("commands", cx).items(vec![CommandPaletteItem::new("open", "Open")])
+        });
+        cx.update(|window, cx| {
+            window.enable_a11y_for_testing();
+            palette.read(cx).focus_handle().focus(window, cx);
+        });
+        cx.run_until_parked();
+        let tree = cx.update(|window, _| {
+            window
+                .debug_a11y_tree_json()
+                .expect("palette accessibility tree should be built")
+        });
+        let tree: serde_json::Value =
+            serde_json::from_str(&tree).expect("accessibility tree should be valid JSON");
+        let focus = tree["gpui_focus"]
+            .as_str()
+            .expect("search input should be focused");
+        assert_eq!(tree["nodes"][focus]["aria"]["role"], "TextInput");
+        assert_eq!(tree["nodes"][focus]["aria"]["label"], "Command search");
+    }
+
+    #[gpui::test]
     fn arrow_keys_and_enter_activate_the_highlighted_command(cx: &mut TestAppContext) {
         init(cx);
         let activated = Rc::new(RefCell::new(Vec::<SharedString>::new()));
@@ -471,6 +510,78 @@ mod tests {
         cx.dispatch_keystroke(window, Keystroke::parse("enter").expect("keystroke parses"));
 
         assert_eq!(activated.borrow().as_slice(), ["save"]);
+    }
+
+    #[gpui::test]
+    fn keyboard_navigation_scrolls_results_inside_a_small_window(cx: &mut TestAppContext) {
+        init(cx);
+        let (palette, cx) = cx.add_window_view(|_, cx| {
+            CommandPalette::new("commands", cx)
+                .items(
+                    (0..24)
+                        .map(|index| {
+                            CommandPaletteItem::new(index.to_string(), format!("Command {index}"))
+                        })
+                        .collect(),
+                )
+                .max_results(24)
+        });
+        cx.simulate_resize(gpui::size(gpui::px(640.0), gpui::px(480.0)));
+        let window = cx.window_handle();
+        cx.update_window(window, |_, window, cx| {
+            palette.read(cx).focus_handle().focus(window, cx);
+        })
+        .expect("focus palette");
+        for _ in 0..20 {
+            cx.dispatch_keystroke(window, Keystroke::parse("down").expect("down"));
+        }
+        let selected = cx
+            .debug_bounds("guic-command-palette-item-20")
+            .expect("selected result");
+        assert!(selected.top() >= gpui::px(0.0));
+        assert!(selected.bottom() <= gpui::px(480.0));
+    }
+
+    #[gpui::test]
+    fn wrapped_results_scroll_and_query_resets_selection(cx: &mut TestAppContext) {
+        init(cx);
+        let (palette, cx) = cx.add_window_view(|window, cx| {
+            window.set_rem_size(gpui::px(24.0));
+            CommandPalette::new("commands", cx).items((0..24).map(|index| {
+                CommandPaletteItem::new(index.to_string(), format!("Command {index}"))
+                    .description("A longer description that should wrap within this narrow command palette without shrinking the result rows.")
+            }).collect()).max_results(24)
+        });
+        cx.simulate_resize(gpui::size(gpui::px(400.0), gpui::px(480.0)));
+        let window = cx.window_handle();
+        cx.update(|window, cx| palette.read(cx).focus_handle().focus(window, cx));
+        // Up wraps to the last match; down wraps back to the beginning.
+        for (key, index) in [("up", 23), ("down", 0), ("up", 23)] {
+            cx.dispatch_keystroke(window, Keystroke::parse(key).expect("navigation key"));
+            let viewport = cx
+                .debug_bounds("guic-command-palette-results")
+                .expect("results viewport");
+            let row = cx
+                .debug_bounds(if index == 0 {
+                    "guic-command-palette-item-0"
+                } else {
+                    "guic-command-palette-item-23"
+                })
+                .expect("active row");
+            assert!(row.top() >= viewport.top());
+            assert!(row.bottom() <= viewport.bottom());
+            assert!(viewport.bottom() <= gpui::px(480.0));
+        }
+        cx.simulate_input("Command 2");
+        cx.update(|_, cx| assert_eq!(palette.read(cx).active_index, 0));
+        let viewport = cx
+            .debug_bounds("guic-command-palette-results")
+            .expect("results viewport");
+        let row = cx
+            .debug_bounds("guic-command-palette-item-0")
+            .expect("first match");
+        assert!(row.top() >= viewport.top());
+        assert!(row.bottom() <= viewport.bottom());
     }
 
     #[gpui::test]

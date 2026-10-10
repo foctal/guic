@@ -1,6 +1,6 @@
 use crate::{FocusManager, FocusScopeId, GlobalState, OverlayId, OverlayManager};
 use gpui::{
-    AnyView, Context, Entity, FocusHandle, InteractiveElement as _, IntoElement,
+    AnyView, Context, Entity, FocusHandle, InteractiveElement as _, IntoElement, KeyDownEvent,
     ParentElement as _, Render, Styled as _, Window, div,
 };
 use guic_tokens::Theme;
@@ -9,6 +9,7 @@ use guic_tokens::Theme;
 ///
 /// `Root` connects application content to shared GUIC systems such as theming,
 /// overlays, and focus management, then renders the wrapped application view.
+/// Unhandled Tab and Shift-Tab keys move between child tab stops.
 pub struct Root {
     view: AnyView,
     focus_handle: FocusHandle,
@@ -112,6 +113,22 @@ impl Render for Root {
             .bg(background)
             .text_color(foreground)
             .track_focus(&self.focus_handle)
+            .on_key_down(|event: &KeyDownEvent, window, cx| {
+                let modifiers = event.keystroke.modifiers;
+                if event.keystroke.key == "tab"
+                    && !modifiers.control
+                    && !modifiers.alt
+                    && !modifiers.platform
+                {
+                    if modifiers.shift {
+                        window.focus_prev(cx);
+                    } else {
+                        window.focus_next(cx);
+                    }
+                    cx.stop_propagation();
+                    window.prevent_default();
+                }
+            })
             .child(self.view.clone())
             .child(
                 div()

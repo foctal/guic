@@ -48,7 +48,7 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Windows tests
         if: runner.os == 'Windows'
-        run: cargo test --workspace --all-features --lib --test windows_conpty
+        run: cargo test --workspace --all-features --lib
       - name: macOS library tests
         if: runner.os == 'macOS'
         run: cargo test --workspace --all-features --lib

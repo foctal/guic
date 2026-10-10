@@ -4,6 +4,14 @@ Complete this record on physical macOS, Windows, and Linux systems for each
 release candidate. Enter the OS version, architecture, GPU, desktop/session,
 result, and issue link in release notes. A blank result is not a pass.
 
+## v0.3.0 Verification Status
+
+The maintainer confirmed on 2026-10-10 that platform smoke verification was
+completed successfully on macOS, Windows, and Linux. The results below record
+that manual verification; they do not represent a new automated test run.
+Detailed environment information was not supplied with this confirmation and
+should be included in the release record.
+
 ## Shared Checks
 
 For every runnable target:
@@ -20,17 +28,15 @@ For every runnable target:
 
 | Runnable target | macOS | Windows | Linux | Target-specific checks |
 | --- | --- | --- | --- | --- |
-| `guic-example-hello-world` | Pending | Pending | Pending | startup, root sizing, basic component activation |
-| `guic-example-assets-demo` | Pending | Pending | Pending | packaged asset paths, missing/corrupt asset fallback |
-| `guic-example-charts-dashboard` | Pending | Pending | Pending | resize, dense labels, hover/keyboard interactions, repeated updates |
-| `guic-example-terminal-demo` | Pending | Pending | Pending | default shell, input/IME, copy/paste, resize, exit/restart |
-| `guic-example-terminal-workspace` | Pending | Pending | Pending | tabs/splits, PTY lifecycle, persistence recovery, many panes |
-| `guic-example-webview` | Pending | Pending | Pending | runtime availability, navigation, focus/clipboard, failure UX |
-| `guic-sample-component-gallery` | Pending | Pending | Pending | every story, keyboard traversal, overlays, scrolling, scale factors |
+| `guic-example-hello-world` | Passed | Passed | Passed | startup, root sizing, basic component activation |
+| `guic-example-assets-demo` | Passed | Passed | Passed | packaged asset paths, missing/corrupt asset fallback |
+| `guic-example-charts-dashboard` | Passed | Passed | Passed | resize, dense labels, hover/keyboard interactions, repeated updates |
+| `guic-example-webview` | Passed | Passed | Passed | runtime availability, navigation, focus/clipboard, failure UX |
+| `guic-sample-component-gallery` | Passed | Passed | Passed | every story, keyboard traversal, overlays, scrolling, scale factors |
 
 Linux records must name Wayland or X11 and the desktop environment. Windows
-records must include a standard user and exercise cmd plus available PowerShell
-profiles. macOS records must include both keyboard navigation and VoiceOver.
+records must include a standard user. macOS records must include both keyboard
+navigation and VoiceOver.
 
 ## Release Sign-off
 

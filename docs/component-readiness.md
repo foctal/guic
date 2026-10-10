@@ -19,7 +19,7 @@ complete platform accessibility behavior has not been physically audited.
 | Card | Yes | Gallery | N/A | Grouping only | Preview |
 | CascadeSelect | Yes | Model | Trigger/option activation | Button/options | Preview |
 | Checkbox | Yes | Interaction | Space/Enter | Checkbox/checked | Preview |
-| Chip | Yes | Model | Enter/Space activation | Button/selection | Preview |
+| Chip | Yes | Model + interaction | Native Enter/Space activation | Button/selection | Preview |
 | ColorPicker | Yes | Model | Directional swatch navigation/activation | Radio/selection | Preview |
 | CommandPalette | Yes | Interaction | Full navigation/dismissal | Dialog/listbox/options | Preview |
 | ConfirmDialog | Yes | Interaction | Button activation/dismissal | Alert dialog/buttons | Preview |
@@ -35,6 +35,8 @@ complete platform accessibility behavior has not been physically audited.
 | Form / FormField / FormSummary | Yes | Model | Child controls | Partial | Preview |
 | IconButton | Yes | Interaction via button suite | Native activation | Button/label/disabled | Preview |
 | Image | Yes | Model + layout interaction | N/A | Image/label | Preview |
+| InputGroup / InputGroupAddon | Yes | Narrow-layout + keyboard interaction | Child input/action traversal | Group label + child semantics | Preview |
+| Skeleton | Yes | Layout interaction | N/A | Decorative | Preview |
 | InputNumber | Yes | Model + interaction | Arrows/Home/End | Spin button/range | Preview |
 | InputOtp | Yes | Model | Text entry/backspace | Partial | Preview |
 | Label | Yes | Gallery | N/A | Text | Preview |
@@ -73,7 +75,6 @@ complete platform accessibility behavior has not been physically audited.
 | VirtualList | Yes | Model + stress | Host content | N/A | Preview |
 | Charts | Yes | Model + interaction geometry + stress + benchmarks | Point navigation/zoom/reset | Pointer-following datum tooltip + bounded summary + controls | Preview |
 | CodeEditor | Yes | Model + large-file benchmarks | Editing/page navigation/clipboard/undo routing | Partial | Experimental |
-| Terminal | Yes | Model + stress + benchmarks + ConPTY | Terminal input/selection | Partial | Preview |
 
 ## Stable-release gate
 
