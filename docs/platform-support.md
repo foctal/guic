@@ -8,8 +8,8 @@ components, assets, icons, macros, examples, and samples.
 
 | Platform | CI validation | Manual release validation | Notes |
 | --- | --- | --- | --- |
-| macOS latest | `cargo check --workspace --all-targets` | Build, launch, keyboard, mouse, focus, overlay, text input, clipboard, high-contrast review where available | Uses the pinned `guic-gpui` release. |
-| Windows latest | `cargo check --workspace --all-targets`, `cargo test --workspace --all-features --lib`, and the `guic-terminal` ConPTY integration suite | Build, launch, keyboard, mouse, focus, overlay, text input, clipboard, high-contrast review where available | Uses the pinned `guic-gpui` release. The latest recorded checks are in [Windows Validation](windows-validation.md). |
+| macOS latest | `cargo test --workspace --all-features --lib` | Build, launch, keyboard, mouse, focus, overlay, text input, clipboard, high-contrast review where available | Uses the pinned `guic-gpui` release. |
+| Windows latest | `cargo test --workspace --all-features --lib --test windows_conpty` | Build, launch, keyboard, mouse, focus, overlay, text input, clipboard, high-contrast review where available | Uses the pinned `guic-gpui` release. The latest recorded checks are in [Platform Smoke Record](platform-smoke.md). |
 | Ubuntu latest | `cargo fmt`, `cargo test --workspace --all-features`, `cargo doc --workspace --all-features --no-deps`, theme schema check | Build, launch, keyboard, mouse, focus, overlay, text input, clipboard, font fallback, Linux desktop backend review | Linux development dependencies are installed by `scripts/install-linux-deps.sh`. |
 
 ## Linux Desktop Assumptions
