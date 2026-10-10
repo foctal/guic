@@ -7,7 +7,7 @@ use guic::prelude::{
     ChartPoint, ChartSeries, CodeEditor, CodeEditorOptions, Dialog, Dock, DockCommand, DockLayout,
     DockNode, DockTab, DockTabs, EditorCommand, EditorEdit, EditorSession, FilePicker, Form,
     FormField, JsonStore, Label, LineChart, LoadSource, PathPromptOptions, Progress, Root,
-    Terminal, TerminalModel, TerminalOptions, ValidationSeverity,
+    ValidationSeverity,
 };
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, rc::Rc, time::Duration};
@@ -44,7 +44,6 @@ struct NativeReferenceApp {
     editor_focus: FocusHandle,
     editor: EditorSession,
     chart: ChartInteractionState,
-    terminal: TerminalModel,
     dialog_open: bool,
     progress: f32,
     cancellation: CancellationToken,
@@ -66,15 +65,10 @@ impl NativeReferenceApp {
             )),
             DockNode::Tabs(DockTabs::new(
                 "tools",
-                vec![
-                    DockTab::new("editor", "Editor", "Editor"),
-                    DockTab::new("terminal", "Terminal", "Terminal"),
-                ],
+                vec![DockTab::new("editor", "Editor", "Editor")],
             )),
             560,
         ));
-        let mut terminal = TerminalModel::new(72, 12).max_scrollback(2_000);
-        terminal.write("\x1b[32mNative reference workspace ready\x1b[0m\r\n");
         let store = JsonStore::new(reference_state_path().join("workspace.json"));
         let mut app = Self {
             dock,
@@ -84,7 +78,6 @@ impl NativeReferenceApp {
                 "fn main() {\n    println!(\"native GUIC\");\n}",
             )),
             chart: ChartInteractionState::new(),
-            terminal,
             dialog_open: false,
             progress: 35.0,
             cancellation: CancellationToken::new(),
@@ -94,7 +87,7 @@ impl NativeReferenceApp {
             light_theme: false,
         };
         match app.store.load_recovering::<ReferenceSnapshot>() {
-            Ok(Some(recovered)) if recovered.value.version == 1 => {
+            Ok(Some(recovered)) if recovered.value.version == 2 => {
                 if let Ok(dock) = DockLayout::from_json(&recovered.value.dock) {
                     app.dock = dock;
                     app.progress = recovered.value.progress.clamp(0.0, 100.0);
@@ -136,7 +129,7 @@ impl NativeReferenceApp {
 
     fn snapshot(&self) -> Result<ReferenceSnapshot, String> {
         Ok(ReferenceSnapshot {
-            version: 1,
+            version: 2,
             dock: self.dock.to_json().map_err(|error| error.to_string())?,
             progress: self.progress,
         })
@@ -167,7 +160,6 @@ impl Render for NativeReferenceApp {
         let editor_buffer = self.editor.buffer().clone();
         let editor_selections = self.editor.selections().to_vec();
         let editor_focus = self.editor_focus.clone();
-        let terminal = self.terminal.clone();
         let domain = self.chart.domain();
         let status_text = self.status.clone();
         let asset_count = guic::assets::AssetManifest::global(cx).len();
@@ -261,9 +253,6 @@ impl Render for NativeReferenceApp {
                         move |command, window, cx| editor_command(command, window, cx)
                     })
                     .into_any_element(),
-                "terminal" => Terminal::new("reference-terminal", terminal.clone())
-                    .options(TerminalOptions::default().visible_scrollback(4))
-                    .into_any_element(),
                 _ => Label::new("Unknown workspace surface").into_any_element(),
             });
 
@@ -291,7 +280,7 @@ impl Render for NativeReferenceApp {
                     .justify_between()
                     .child(Label::new("GUIC Native Reference").secondary(
                         format!(
-                            "Dashboard, forms, native workflows, Dock, editor, terminal, and {asset_count} registered asset",
+                            "Dashboard, forms, native workflows, Dock, editor, and {asset_count} registered asset",
                         ),
                     ))
                     .child(

@@ -31,7 +31,7 @@ services to one async runtime. `DroppedItem` normalizes platform drag/drop.
 
 The runnable `guic-example-native-reference` demonstrates a controlled Dock
 workspace containing a dashboard, validated form and native file import
-trigger, editable code surface with undo/redo routing, terminal, dialogs,
+trigger, editable code surface with undo/redo routing, dialogs,
 retry/error states, and cancellable work state:
 
 ```bash

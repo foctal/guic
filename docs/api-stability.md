@@ -9,7 +9,7 @@ Rust APIs, feature flags, persistence formats, and host contracts.
 | Experimental | Design is expected to change and applications should isolate usage behind their own adapter. |
 | Internal | Not published and not part of the support contract. |
 
-`guic-core`, tokens, components, icons, assets, macros, charts, terminal, and
+`guic-core`, tokens, components, icons, assets, macros, charts, and
 WebView are Preview. `guic-editor` is Experimental. Examples, samples, story,
 compatibility crates, and tooling are Internal.
 

@@ -38,9 +38,6 @@ properties:
 
 The planned specialized crates are:
 
-- `guic-terminal` — a terminal subsystem with PTY transport, ANSI/VT parsing,
-  scrollback, selection, clipboard, resize handling, and high-throughput
-  rendering;
 - `guic-editor` — a code-editor subsystem with large-buffer editing,
   selections, undo/redo, diagnostics, search, syntax infrastructure, and
   virtualized rendering; and

@@ -75,7 +75,6 @@ complete platform accessibility behavior has not been physically audited.
 | VirtualList | Yes | Model + stress | Host content | N/A | Preview |
 | Charts | Yes | Model + interaction geometry + stress + benchmarks | Point navigation/zoom/reset | Pointer-following datum tooltip + bounded summary + controls | Preview |
 | CodeEditor | Yes | Model + large-file benchmarks | Editing/page navigation/clipboard/undo routing | Partial | Experimental |
-| Terminal | Yes | Model + stress + benchmarks + ConPTY | Terminal input/selection | Partial | Preview |
 
 ## Stable-release gate
 

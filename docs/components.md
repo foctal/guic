@@ -90,7 +90,6 @@ Optional subsystem crates:
 - `LineChart` / `BarChart` / `AreaChart` / `PieChart` — `guic-charts` via the
   `charts` feature on `guic`
 - `CodeEditor` — `guic-editor` via the `editor` feature on `guic`
-- `Terminal` — `guic-terminal` via the `terminal` feature on `guic`
 
 All reusable components live in the single `guic-components` crate. The optional
 subsystems above are compiled only when their feature flag is enabled, either

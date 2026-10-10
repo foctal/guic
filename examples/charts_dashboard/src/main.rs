@@ -92,7 +92,7 @@ impl Render for ChartsDashboard {
                                 ChartPoint::category("Components", 52.0),
                                 ChartPoint::category("Charts", 18.0),
                                 ChartPoint::category("Editor", 16.0),
-                                ChartPoint::category("Terminal", 14.0),
+                                ChartPoint::category("WebView", 14.0),
                             ])]),
                     ),
             )

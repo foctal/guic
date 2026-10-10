@@ -88,4 +88,3 @@ The gallery includes live examples for:
 - `AreaChart`
 - `PieChart`
 - `CodeEditor`
-- `Terminal`

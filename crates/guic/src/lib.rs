@@ -45,9 +45,6 @@ pub use guic_charts as charts;
 #[cfg(feature = "editor")]
 pub use guic_editor as editor;
 
-#[cfg(feature = "terminal")]
-pub use guic_terminal as terminal;
-
 #[cfg(feature = "icons")]
 pub use guic_icons as icons;
 

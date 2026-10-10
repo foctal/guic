@@ -16,7 +16,6 @@ dependent_packages=(
   guic-components
   guic-charts
   guic-editor
-  guic-terminal
   guic
 )
 

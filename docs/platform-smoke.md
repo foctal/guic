@@ -31,14 +31,12 @@ For every runnable target:
 | `guic-example-hello-world` | Passed | Passed | Passed | startup, root sizing, basic component activation |
 | `guic-example-assets-demo` | Passed | Passed | Passed | packaged asset paths, missing/corrupt asset fallback |
 | `guic-example-charts-dashboard` | Passed | Passed | Passed | resize, dense labels, hover/keyboard interactions, repeated updates |
-| `guic-example-terminal-demo` | Passed | Passed | Passed | default shell, input/IME, copy/paste, resize, exit/restart |
-| `guic-example-terminal-workspace` | Passed | Passed | Passed | tabs/splits, PTY lifecycle, persistence recovery, many panes |
 | `guic-example-webview` | Passed | Passed | Passed | runtime availability, navigation, focus/clipboard, failure UX |
 | `guic-sample-component-gallery` | Passed | Passed | Passed | every story, keyboard traversal, overlays, scrolling, scale factors |
 
 Linux records must name Wayland or X11 and the desktop environment. Windows
-records must include a standard user and exercise cmd plus available PowerShell
-profiles. macOS records must include both keyboard navigation and VoiceOver.
+records must include a standard user. macOS records must include both keyboard
+navigation and VoiceOver.
 
 ## Release Sign-off
 

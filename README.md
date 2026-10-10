@@ -7,7 +7,7 @@ themes, application primitives, and a broad component set for desktop apps.
 ## Status
 
 GUIC `0.2.x` is a preview release. Core APIs are usable, but breaking changes
-are expected and the editor, terminal, charts, and WebView integrations remain
+are expected and the editor, charts, and WebView integrations remain
 experimental. See [API Stability](https://github.com/foctal/guic/blob/main/docs/api-stability.md)
 and [Platform Support](https://github.com/foctal/guic/blob/main/docs/platform-support.md)
 before adopting GUIC in a product.
@@ -75,11 +75,10 @@ cargo run -p guic-sample-component-gallery
 - `guic-components`: native controls and application components
 - `guic-charts`: native chart models and renderers
 - `guic-editor`: experimental editor surface
-- `guic-terminal`: experimental terminal model, renderer, and PTY host
 - `guic-webview`: optional experimental WebView integration
 - `guic-icons`, `guic-assets`, and `guic-macros`: supporting APIs
 
-Subsystems are opt-in through the `charts`, `editor`, `terminal`, `webview`,
+Subsystems are opt-in through the `charts`, `editor`, `webview`,
 `data-table`, `tree`, `dock`, and `markdown` features. The default feature set
 includes the core component, icon, asset, and native APIs.
 

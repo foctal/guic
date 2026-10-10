@@ -15,7 +15,7 @@ rust-version.workspace = true
 default = []
 # Optional component subsystems. Each flag gates a self-contained widget family
 # and only pulls in the extra dependencies that family needs. New subsystem
-# flags (charts, editor, terminal, ...) are added only once they gate real code.
+# flags (charts, editor, ...) are added only once they gate real code.
 data-table = []
 tree = []
 dock = ["dep:serde", "dep:serde_json"]

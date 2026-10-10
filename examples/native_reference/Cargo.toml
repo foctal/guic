@@ -9,7 +9,7 @@ rust-version.workspace = true
 
 [dependencies]
 gpui.workspace = true
-guic = { path = "../../crates/guic", features = ["charts", "dock", "editor", "terminal"] }
+guic = { path = "../../crates/guic", features = ["charts", "dock", "editor"] }
 serde.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]

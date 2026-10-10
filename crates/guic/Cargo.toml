@@ -17,7 +17,6 @@ native = []
 components = ["dep:guic-components"]
 charts = ["dep:guic-charts"]
 editor = ["dep:guic-editor"]
-terminal = ["dep:guic-terminal"]
 webview = ["dep:guic-webview"]
 icons = ["dep:guic-icons"]
 assets = ["dep:guic-assets"]
@@ -37,7 +36,6 @@ guic-charts = { version = "0.2.0", path = "../guic-charts", optional = true }
 guic-core = { version = "0.2.0", path = "../guic-core" }
 guic-editor = { version = "0.2.0", path = "../guic-editor", optional = true }
 guic-icons = { version = "0.2.0", path = "../guic-icons", optional = true }
-guic-terminal = { version = "0.2.0", path = "../guic-terminal", optional = true }
 guic-macros = { version = "0.2.0", path = "../guic-macros" }
 guic-tokens = { version = "0.2.0", path = "../guic-tokens" }
 guic-webview = { version = "0.2.0", path = "../guic-webview", optional = true }

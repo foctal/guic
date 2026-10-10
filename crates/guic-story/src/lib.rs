@@ -26,10 +26,10 @@ use guic::prelude::{
     PickList, PieChart, Popover, Progress, PropertyItem, PropertyList, Radio, ScrollArea,
     SearchInput, Select, SelectItem, Separator, Skeleton, Slider, SortDirection, Spinner, Splitter,
     SplitterAxis, Step, Stepper, Switch, TabItem, TabMenu, TableSort, Tabs, Tag, TagVariant,
-    Terminal, TerminalModel, TerminalOptions, TextArea, TextInput, ThemeContextExt, ThemeRegistry,
-    TieredMenu, Timeline, TimelineEvent, Toast, ToastStack, ToastVariant, Toolbar, Tooltip,
-    TreeNavigation, TreeNode, TreeSelect, TreeSelectNode, TreeTable, TreeTableColumn, TreeTableRow,
-    TreeView, TreeViewport, ValidationIssue, ValidationSeverity, VirtualList,
+    TextArea, TextInput, ThemeContextExt, ThemeRegistry, TieredMenu, Timeline, TimelineEvent,
+    Toast, ToastStack, ToastVariant, Toolbar, Tooltip, TreeNavigation, TreeNode, TreeSelect,
+    TreeSelectNode, TreeTable, TreeTableColumn, TreeTableRow, TreeView, TreeViewport,
+    ValidationIssue, ValidationSeverity, VirtualList,
 };
 use guic::tokens::Theme;
 
@@ -185,7 +185,7 @@ impl StoryRoot {
                         SelectItem::new("accordion", "Accordion"),
                         SelectItem::new("cascade", "CascadeSelect"),
                         SelectItem::new("charts", "Charts"),
-                        SelectItem::new("terminal", "Terminal"),
+                        SelectItem::new("webview", "WebView"),
                         SelectItem::new("tree-table", "TreeTable"),
                     ])
                     .on_select(move |item, _window, app| {
@@ -204,7 +204,7 @@ impl StoryRoot {
                             .keywords(["load", "document"]),
                         CommandPaletteItem::new("settings.open", "Open settings")
                             .shortcut("⌘,"),
-                        CommandPaletteItem::new("terminal.toggle", "Toggle terminal")
+                        CommandPaletteItem::new("inspector.toggle", "Toggle inspector")
                             .shortcut("⌃`"),
                     ])
                     .on_activate(move |item, _window, app| {
@@ -761,7 +761,7 @@ impl StoryRoot {
                     vec![
                         MenuItem::header("Panels"),
                         MenuItem::new("sidebar", "Toggle Sidebar"),
-                        MenuItem::new("terminal", "Toggle Terminal").disabled(true),
+                        MenuItem::new("inspector", "Toggle Inspector").disabled(true),
                     ],
                 ),
             ])
@@ -821,7 +821,7 @@ impl StoryRoot {
                 MenuItem::new("insert", "Insert").children(vec![
                     MenuItem::new("insert-chart", "Chart"),
                     MenuItem::new("insert-table", "Table"),
-                    MenuItem::new("insert-terminal", "Terminal"),
+                    MenuItem::new("insert-image", "Image"),
                 ]),
                 MenuItem::new("format", "Format").children(vec![
                     MenuItem::new("format-code", "Code"),
@@ -1308,7 +1308,7 @@ impl StoryRoot {
                     .metadata("Expanded")
                     .badge("UI"),
                 DataViewItem::new("subsystems", "Subsystems")
-                    .description("Charts, editor, and terminal crates")
+                    .description("Charts and editor crates")
                     .metadata("Preview")
                     .badge("New"),
             ])
@@ -1343,7 +1343,7 @@ impl StoryRoot {
                 CascadeOption::new("subsystem", "Subsystem").children(vec![
                     CascadeOption::new("charts", "Charts"),
                     CascadeOption::new("editor", "Editor"),
-                    CascadeOption::new("terminal", "Terminal"),
+                    CascadeOption::new("webview", "WebView"),
                 ]),
             ])
             .on_toggle(cx.listener(|this, expanded, _, cx| {
@@ -1370,7 +1370,7 @@ impl StoryRoot {
                     .children(vec![
                         TreeSelectNode::new("charts", "Charts"),
                         TreeSelectNode::new("editor", "Editor"),
-                        TreeSelectNode::new("terminal", "Terminal"),
+                        TreeSelectNode::new("webview", "WebView"),
                     ]),
             ])
             .on_toggle(cx.listener(|this, expanded, _, cx| {
@@ -1469,12 +1469,6 @@ impl StoryRoot {
                 cx.notify();
             }));
 
-        let mut terminal_model = TerminalModel::new(48, 6);
-        terminal_model.write("\u{1b}[32mguic\u{1b}[0m check\n");
-        terminal_model.write("charts: ready\neditor: ready\nterminal: ready\n");
-        let terminal = Terminal::new("gallery-terminal", terminal_model)
-            .options(TerminalOptions::default().visible_scrollback(1));
-
         div()
             .flex()
             .flex_col()
@@ -1507,12 +1501,11 @@ impl StoryRoot {
                                 ChartPoint::category("Components", 52.0),
                                 ChartPoint::category("Charts", 18.0),
                                 ChartPoint::category("Editor", 16.0),
-                                ChartPoint::category("Terminal", 14.0),
+                                ChartPoint::category("WebView", 14.0),
                             ])]),
                     ),
             )
             .child(div().max_w(px(760.0)).child(editor))
-            .child(div().max_w(px(760.0)).child(terminal))
     }
 }
 

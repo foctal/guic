@@ -9,7 +9,7 @@ components, assets, icons, macros, examples, and samples.
 | Platform | CI validation | Manual release validation | Notes |
 | --- | --- | --- | --- |
 | macOS latest | `cargo test --workspace --all-features --lib` | Build, launch, keyboard, mouse, focus, overlay, text input, clipboard, high-contrast review where available | Uses the pinned `guic-gpui` release. |
-| Windows latest | `cargo test --workspace --all-features --lib --test windows_conpty` | Build, launch, keyboard, mouse, focus, overlay, text input, clipboard, high-contrast review where available | Uses the pinned `guic-gpui` release. The latest recorded checks are in [Platform Smoke Record](platform-smoke.md). |
+| Windows latest | `cargo test --workspace --all-features --lib` | Build, launch, keyboard, mouse, focus, overlay, text input, clipboard, high-contrast review where available | Uses the pinned `guic-gpui` release. The latest recorded checks are in [Platform Smoke Record](platform-smoke.md). |
 | Ubuntu latest | `cargo fmt`, `cargo test --workspace --all-features`, `cargo doc --workspace --all-features --no-deps`, theme schema check | Build, launch, keyboard, mouse, focus, overlay, text input, clipboard, font fallback, Linux desktop backend review | Linux development dependencies are installed by `scripts/install-linux-deps.sh`. |
 
 ## Linux Desktop Assumptions
@@ -24,16 +24,6 @@ needed for local development and CI smoke validation:
 
 Applications that enable `guic-webview` also require the WebKitGTK packages
 installed by that helper.
-
-## Windows Terminal Assumptions
-
-`guic-terminal` uses Windows ConPTY through `portable-pty`. The automated
-Windows integration suite launches cmd and each available PowerShell profile,
-then validates terminal query replies, input/output, working-directory
-inheritance, resize propagation, restart, graceful exit, and force close.
-Windows terminal hosts must feed PTY output into `TerminalModel` and write its
-response bytes back promptly because ConPTY can request the cursor position
-during shell startup.
 
 ## WebView Support
 

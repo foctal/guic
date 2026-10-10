@@ -29,7 +29,7 @@ it.
    policy required by enabled features.
 3. Sign binaries and the installer with the product's code-signing identity.
 4. Create an MSIX, MSI, or another organization-approved installer.
-5. Test install, upgrade, uninstall, ConPTY, long paths, non-ASCII user paths,
+5. Test install, upgrade, uninstall, long paths, non-ASCII user paths,
    and a standard non-administrator account.
 
 ## Linux

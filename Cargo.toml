@@ -6,7 +6,6 @@ members = [
     "crates/guic-components",
     "crates/guic-charts",
     "crates/guic-editor",
-    "crates/guic-terminal",
     "crates/guic-webview",
     "crates/guic-icons",
     "crates/guic-assets",
@@ -16,8 +15,6 @@ members = [
     "examples/hello_world",
     "examples/assets_demo",
     "examples/charts_dashboard",
-    "examples/terminal_demo",
-    "examples/terminal_workspace",
     "examples/native_reference",
     "examples/webview",
     "samples/component-gallery",
@@ -50,8 +47,6 @@ smallvec = "1"
 thiserror = "2"
 tracing = "0.1"
 unicode-segmentation = "1"
-unicode-width = "0.2"
-vte = "0.15"
 wry = "0.53.3"
 
 [patch.crates-io]
