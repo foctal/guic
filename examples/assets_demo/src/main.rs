@@ -51,7 +51,14 @@ impl Render for AssetsDemo {
 }
 
 fn main() {
-    let asset_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets");
+    let asset_root = if cfg!(feature = "packaged-resources") {
+        guic_assets::ResourceRoot::discover("guic-example-assets-demo")
+            .expect("installed resources or absolute GUIC_RESOURCE_DIR must exist")
+            .resolve("assets")
+            .expect("packaged assets must exist")
+    } else {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets")
+    };
 
     gpui_platform::application()
         .with_assets(FileAssetSource::new(&asset_root))

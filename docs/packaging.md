@@ -1,7 +1,14 @@
 # Packaging Native Applications
 
-GUIC does not publish, sign, notarize, or create installers. Those operations
-remain application-owner responsibilities.
+The GUIC runtime does not publish, sign, notarize, or create installers.
+Application owners control those operations through their packaging workflow.
+
+The [cargo-guic CLI](cargo-guic.md) provides project planning, development builds,
+immutable build records, native packaging, resource staging and explicit signing
+operations through a cargo-packager library adapter. In this version, native
+packaging uses `package-trial`; normal `build`/`bundle` distribution formats are
+disabled. See the CLI guide for commands and restrictions. Release execution
+and approval remain application-owner responsibilities.
 
 ## Current Distribution Boundary
 
@@ -10,6 +17,10 @@ packages contain the accessibility and platform APIs used by GUIC, so GPUI no
 longer prevents GUIC crates from being packaged. Every public GUIC crate must
 still pass a package dry run and metadata review before the maintainer publishes
 it.
+
+The platform checklists below cover application distribution in general.
+cargo-guic currently exposes app/DMG, NSIS and deb/AppImage through
+`package-trial`; other formats require separate tooling.
 
 ## macOS
 
@@ -28,7 +39,7 @@ it.
 2. Include icons, version resources, runtime assets, and any WebView runtime
    policy required by enabled features.
 3. Sign binaries and the installer with the product's code-signing identity.
-4. Create an MSIX, MSI, or another organization-approved installer.
+4. Create an NSIS installer, or use separate tooling for MSI or MSIX.
 5. Test install, upgrade, uninstall, long paths, non-ASCII user paths,
    and a standard non-administrator account.
 

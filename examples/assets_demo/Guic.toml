@@ -1,0 +1,31 @@
+schema-version = 1
+
+[app]
+identifier = "org.guic.fixture.assets"
+product-name = "GUIC Resources Fixture"
+
+[build]
+package = "guic-example-assets-demo"
+bin = "guic-example-assets-demo"
+features = ["packaged-resources"]
+
+[platform.windows.build.windows-resources]
+icon = "packaging/icon.ico"
+company-name = "GUIC Fixture"
+copyright = "Apache-2.0"
+
+[bundle]
+resource-contract = "guic-native-v1"
+icons = ["packaging/icon.png"]
+
+[bundle.formats]
+macos = ["app", "dmg"]
+windows = ["nsis"]
+linux = ["deb", "appimage"]
+
+[[bundle.resources]]
+source = "assets"
+destination = "assets"
+
+[platform.windows.bundle]
+icons = ["packaging/icon.ico"]

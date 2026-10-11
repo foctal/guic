@@ -7,6 +7,12 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[features]
+packaged-resources = []
+
+[build-dependencies]
+guic-build = { path = "../../crates/guic-build" }
+
 [dependencies]
 gpui.workspace = true
 guic = { path = "../../crates/guic" }

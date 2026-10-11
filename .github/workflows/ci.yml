@@ -46,6 +46,9 @@ jobs:
       - name: Format
         if: runner.os == 'Linux'
         run: cargo fmt --all -- --check
+      - name: cargo-guic CLI tests
+        if: runner.os != 'Linux'
+        run: cargo test -p cargo-guic -p guic-build --locked
       - name: Windows tests
         if: runner.os == 'Windows'
         run: cargo test --workspace --all-features --lib

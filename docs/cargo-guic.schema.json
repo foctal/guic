@@ -1,0 +1,710 @@
+{
+  "$defs": {
+    "App": {
+      "additionalProperties": false,
+      "properties": {
+        "identifier": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "product-name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Backend": {
+      "additionalProperties": false,
+      "properties": {
+        "cargo-packager": {
+          "$ref": "#/$defs/Packager",
+          "default": {
+            "category": null,
+            "copyright": null,
+            "deb-depends": [],
+            "deb-desktop-template": null,
+            "dmg-background": null,
+            "license-file": null,
+            "long-description": null,
+            "macos-entitlements": null,
+            "macos-frameworks": [],
+            "macos-info-plist": null,
+            "nsis-header-image": null,
+            "nsis-installer-icon": null,
+            "nsis-sidebar-image": null,
+            "publisher": null
+          }
+        }
+      },
+      "type": "object"
+    },
+    "Build": {
+      "additionalProperties": false,
+      "properties": {
+        "bin": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "default-features": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "deployment-target": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "features": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "inputs": {
+          "default": [],
+          "description": "Files embedded or otherwise consumed by the build, including generated inputs.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "package": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "profile": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "target": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "windows-resources": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WindowsResources"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Bundle": {
+      "additionalProperties": false,
+      "properties": {
+        "file-associations": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/FileAssociation"
+          },
+          "type": "array"
+        },
+        "formats": {
+          "$ref": "#/$defs/Formats",
+          "default": {
+            "linux": [],
+            "macos": [],
+            "windows": []
+          }
+        },
+        "icons": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "protocols": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Protocol"
+          },
+          "type": "array"
+        },
+        "resource-contract": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResourceContract"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Versioned installed resource layout implemented by the application."
+        },
+        "resources": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Resource"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "FileAssociation": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "extensions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "mime-type": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "extensions"
+      ],
+      "type": "object"
+    },
+    "Formats": {
+      "additionalProperties": false,
+      "properties": {
+        "linux": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "macos": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "windows": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "Hook": {
+      "additionalProperties": false,
+      "properties": {
+        "args": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "program": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "program",
+        "cwd"
+      ],
+      "type": "object"
+    },
+    "Hooks": {
+      "additionalProperties": false,
+      "properties": {
+        "before-build": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Hook"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "before-bundle": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Hook"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Override": {
+      "additionalProperties": false,
+      "properties": {
+        "app": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/App"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "backend": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Backend"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "build": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Build"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "bundle": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Bundle"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "hooks": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Hooks"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "runtime": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Runtime"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "signing": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Signing"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Packager": {
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "copyright": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "deb-depends": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "deb-desktop-template": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "dmg-background": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "license-file": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "long-description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "macos-entitlements": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "macos-frameworks": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "macos-info-plist": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "nsis-header-image": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "nsis-installer-icon": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "nsis-sidebar-image": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "publisher": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Policy": {
+      "enum": [
+        "off",
+        "required"
+      ],
+      "type": "string"
+    },
+    "Protocol": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "schemes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "schemes"
+      ],
+      "type": "object"
+    },
+    "Resource": {
+      "additionalProperties": false,
+      "properties": {
+        "destination": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "destination"
+      ],
+      "type": "object"
+    },
+    "ResourceContract": {
+      "enum": [
+        "application-managed-v1",
+        "guic-native-v1"
+      ],
+      "type": "string"
+    },
+    "Runtime": {
+      "additionalProperties": false,
+      "description": "Explicit runtime policy; never inferred solely from dependency names.",
+      "properties": {
+        "dynamic-libraries": {
+          "default": [],
+          "description": "Explicit dynamically loaded libraries not visible in the executable import table.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "glibc-max": {
+          "description": "Maximum required GLIBC symbol version allowed in a Linux executable.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pkg-config": {
+          "default": [],
+          "description": "Additional pkg-config build requirements.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "webview": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "Signing": {
+      "additionalProperties": false,
+      "properties": {
+        "code-signing": {
+          "$ref": "#/$defs/Policy",
+          "default": "off"
+        },
+        "macos-identity": {
+          "description": "Public signing identity, never a key or certificate payload.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "macos-keychain-profile": {
+          "description": "Reference to credentials already stored with notarytool store-credentials.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "notarization": {
+          "$ref": "#/$defs/Policy",
+          "default": "off"
+        },
+        "windows-thumbprint": {
+          "description": "Certificate selector in the Windows certificate store.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "windows-timestamp-url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "WindowsResources": {
+      "additionalProperties": false,
+      "description": "Windows executable branding, separate from installer artwork.",
+      "properties": {
+        "company-name": {
+          "description": "Version resource company name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "copyright": {
+          "description": "Version resource copyright statement.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "icon": {
+          "description": "ICO file linked into the selected executable.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "manifest": {
+          "description": "Application manifest XML; omitted to use the standard-user, DPI-aware default.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "app": {
+      "$ref": "#/$defs/App"
+    },
+    "backend": {
+      "$ref": "#/$defs/Backend",
+      "default": {
+        "cargo-packager": {
+          "category": null,
+          "copyright": null,
+          "deb-depends": [],
+          "deb-desktop-template": null,
+          "dmg-background": null,
+          "license-file": null,
+          "long-description": null,
+          "macos-entitlements": null,
+          "macos-frameworks": [],
+          "macos-info-plist": null,
+          "nsis-header-image": null,
+          "nsis-installer-icon": null,
+          "nsis-sidebar-image": null,
+          "publisher": null
+        }
+      }
+    },
+    "build": {
+      "$ref": "#/$defs/Build",
+      "default": {
+        "bin": null,
+        "default-features": null,
+        "deployment-target": null,
+        "features": null,
+        "inputs": [],
+        "package": null,
+        "profile": null,
+        "target": null,
+        "windows-resources": null
+      }
+    },
+    "bundle": {
+      "$ref": "#/$defs/Bundle",
+      "default": {
+        "file-associations": [],
+        "formats": {
+          "linux": [],
+          "macos": [],
+          "windows": []
+        },
+        "icons": [],
+        "protocols": [],
+        "resource-contract": null,
+        "resources": []
+      }
+    },
+    "hooks": {
+      "$ref": "#/$defs/Hooks",
+      "default": {
+        "before-build": null,
+        "before-bundle": null
+      }
+    },
+    "platform": {
+      "additionalProperties": {
+        "$ref": "#/$defs/Override"
+      },
+      "default": {},
+      "type": "object"
+    },
+    "runtime": {
+      "$ref": "#/$defs/Runtime",
+      "default": {
+        "dynamic-libraries": [],
+        "glibc-max": null,
+        "pkg-config": [],
+        "webview": false
+      }
+    },
+    "schema-version": {
+      "format": "uint32",
+      "maximum": 1,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "signing": {
+      "$ref": "#/$defs/Signing",
+      "default": {
+        "code-signing": "off",
+        "macos-identity": null,
+        "macos-keychain-profile": null,
+        "notarization": "off",
+        "windows-thumbprint": null,
+        "windows-timestamp-url": null
+      }
+    }
+  },
+  "required": [
+    "schema-version",
+    "app"
+  ],
+  "title": "Config",
+  "type": "object"
+}

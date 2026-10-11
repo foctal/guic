@@ -51,3 +51,15 @@ allow = [
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+
+# Reviewed certificate data introduced by cargo-packager's rustls backend.
+# The full agreement is shipped in crates/cargo-guic/THIRD-PARTY-LICENSES.txt.
+[[licenses.exceptions]]
+name = "webpki-roots"
+version = "=0.26.11"
+allow = ["CDLA-Permissive-2.0"]
+
+[[licenses.exceptions]]
+name = "webpki-roots"
+version = "=1.0.9"
+allow = ["CDLA-Permissive-2.0"]

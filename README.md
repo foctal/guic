@@ -86,6 +86,7 @@ includes the core component, icon, asset, and native APIs.
 
 ## Documentation
 
+- [cargo-guic: application development and packaging](docs/cargo-guic.md)
 - [Component behavior and host integration](docs/component-behavior.md)
 
 Start with [Getting Started](https://github.com/foctal/guic/blob/main/docs/getting-started.md),

@@ -95,3 +95,23 @@ validation follows the [platform smoke checklist](platform-smoke.md).
 choices do not define GUIC's policy. The license of an application crate does
 not replace the licenses of its transitive dependencies; GUIC reviews the
 resolved `guic-gpui` graph directly.
+
+## cargo-guic Backend
+
+The unpublished `cargo-guic` CLI pins `cargo-packager = 0.11.8`, disables its CLI
+feature, and selects rustls for backend HTTPS tool downloads. The backend is
+isolated from the GUIC/GPUI application dependency graph. See [cargo-guic](cargo-guic.md) for supported workflows and restrictions.
+
+The `webpki-roots` 0.26.11 and 1.0.9 certificate-data dependencies use
+`CDLA-Permissive-2.0`. The source agreement was reviewed: sharing the data requires
+including the agreement text. Exact-version license exceptions in `deny.toml`
+cover these two packages only, and the full agreement is retained in
+`crates/cargo-guic/THIRD-PARTY-LICENSES.txt`. Include that file with any future
+CLI binary distribution and re-review the exception on upgrades. Advisory exceptions remain separately scoped in `deny.toml`.
+
+The unpublished `guic-build` helper uses `embed-resource` only on Windows hosts
+for native MSVC resource compilation. The resolved version is recorded in
+Cargo.lock; the helper does not depend on GUIC, GPUI or cargo-packager. Its
+serde/schemars request types are shared with the CLI so configuration
+and build-script inputs stay aligned. Runtime resource lookup in guic-assets
+uses only the standard library and adds no packaging dependency.

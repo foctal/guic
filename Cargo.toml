@@ -1,5 +1,7 @@
 [workspace]
 members = [
+    "crates/cargo-guic",
+    "crates/guic-build",
     "crates/guic",
     "crates/guic-core",
     "crates/guic-tokens",
