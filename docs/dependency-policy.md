@@ -115,3 +115,13 @@ Cargo.lock; the helper does not depend on GUIC, GPUI or cargo-packager. Its
 serde/schemars request types are shared with the CLI so configuration
 and build-script inputs stay aligned. Runtime resource lookup in guic-assets
 uses only the standard library and adds no packaging dependency.
+
+## Optional application updater
+
+The `guic/updater` feature pins `cargo-packager-updater = 0.2.3` and adds its
+blocking HTTPS client and Minisign verification support only when enabled. It
+uses the cargo-packager update format; CLI preparation signs copies of completed
+artifacts and never publishes them. Review the updater's download, signature
+verification and platform installation paths when upgrading. Native installation
+and restart acceptance remain application-specific. File watching uses `ignore`
+for Git ignore rules and excludes Cargo build outputs.

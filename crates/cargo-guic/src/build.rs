@@ -48,78 +48,24 @@ pub(crate) fn compile(plan: &BuildPlan) -> Result<BuildRecord> {
         "before-build hook did not generate all declared build.inputs"
     );
     let plan = &refreshed;
-    let mut command = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
-    command
-        .current_dir(&plan.invocation_directory)
-        .args(["build", "--message-format=json-render-diagnostics"])
-        .arg("--manifest-path")
-        .arg(&plan.project.manifest)
-        .args([
-            "--package",
-            &plan.project.package,
-            "--bin",
-            &plan.project.bin,
-            "--target",
-            &plan.target,
-            "--profile",
-            &plan.profile,
-        ]);
-    if plan.locked {
-        command.arg("--locked");
-    }
-    if !plan.features.is_empty() {
-        command.arg("--features").arg(plan.features.join(","));
-    }
-    if !plan.default_features {
-        command.arg("--no-default-features");
-    }
-    if let Some(target) = &plan.deployment_target {
-        command.env("MACOSX_DEPLOYMENT_TARGET", target);
-    }
-    eprintln!(
-        "Building {}:{} ({}, {})",
-        plan.project.package, plan.project.bin, plan.target, plan.profile
-    );
-    let handshake = if plan.os == "windows" {
-        plan.config
-            .build
-            .windows_resources
-            .as_ref()
-            .map(|windows| -> Result<String> {
-                let request = guic_build::Request {
-                    schema_version: 1,
-                    package: plan.project.package.clone(),
-                    bin: plan.project.bin.clone(),
-                    product_name: plan.product_name.clone(),
-                    version: plan.project.version.clone(),
-                    windows: windows.clone(),
-                };
-                // Include content hashes so resource changes invalidate Cargo's build script cache.
-                let hash = report::hash_json(&(&request, &plan.build_input_hashes))?;
-                command
-                    .env("GUIC_BUILD_REQUEST", serde_json::to_string(&request)?)
-                    .env("GUIC_BUILD_REQUEST_HASH", &hash);
-                Ok(hash)
-            })
-            .transpose()?
+    let universal_directory = if plan.target == "universal-apple-darwin" {
+        Some(
+            tempfile::Builder::new()
+                .prefix("universal-")
+                .tempdir_in(&root)?,
+        )
     } else {
         None
     };
-    if handshake.is_none() {
-        command
-            .env_remove("GUIC_BUILD_REQUEST")
-            .env_remove("GUIC_BUILD_REQUEST_HASH");
-    }
-    let output = process::capture(&mut command)?;
-    if let Some(hash) = handshake {
-        verify_handshake(&output, &plan.project.package_id, &hash)?;
-    }
-    let executable = artifact(&output, &plan.project.package_id, &plan.project.bin)?;
-    ensure!(
-        executable.is_file(),
-        "Cargo executable is missing: {}",
-        executable.display()
-    );
+    let executable = if let Some(directory) = &universal_directory {
+        let arm = cargo_executable(plan, "aarch64-apple-darwin")?;
+        let intel = cargo_executable(plan, "x86_64-apple-darwin")?;
+        let output = directory.path().join(&plan.project.bin);
+        merge_universal(&arm, &intel, &output)?;
+        output
+    } else {
+        cargo_executable(plan, &plan.target)?
+    };
     let snapshots = root.join("snapshots");
     std::fs::create_dir_all(&snapshots)?;
     let directory = tempfile::Builder::new()
@@ -187,7 +133,105 @@ pub(crate) fn compile(plan: &BuildPlan) -> Result<BuildRecord> {
     report::atomic_new(&root.join("records").join(format!("{id}.json")), &record)?;
     let _ = input_directory.keep();
     let _ = directory.keep();
+    if let Some(directory) = universal_directory {
+        let _ = directory.keep();
+    }
     Ok(record)
+}
+
+fn cargo_executable(plan: &BuildPlan, target: &str) -> Result<PathBuf> {
+    let mut command = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
+    command
+        .current_dir(&plan.invocation_directory)
+        .args(["build", "--message-format=json-render-diagnostics"])
+        .arg("--manifest-path")
+        .arg(&plan.project.manifest)
+        .args([
+            "--package",
+            &plan.project.package,
+            "--bin",
+            &plan.project.bin,
+            "--target",
+            target,
+            "--profile",
+            &plan.profile,
+        ]);
+    if plan.locked {
+        command.arg("--locked");
+    }
+    if !plan.features.is_empty() {
+        command.arg("--features").arg(plan.features.join(","));
+    }
+    if !plan.default_features {
+        command.arg("--no-default-features");
+    }
+    if let Some(target) = &plan.deployment_target {
+        command.env("MACOSX_DEPLOYMENT_TARGET", target);
+    }
+    eprintln!(
+        "Building {}:{} ({}, {})",
+        plan.project.package, plan.project.bin, target, plan.profile
+    );
+    let handshake = if plan.os == "windows" {
+        plan.config
+            .build
+            .windows_resources
+            .as_ref()
+            .map(|windows| -> Result<String> {
+                let request = guic_build::Request {
+                    schema_version: 1,
+                    package: plan.project.package.clone(),
+                    bin: plan.project.bin.clone(),
+                    product_name: plan.product_name.clone(),
+                    version: plan.project.version.clone(),
+                    windows: windows.clone(),
+                };
+                // Include content hashes so resource changes invalidate Cargo's build script cache.
+                let hash = report::hash_json(&(&request, &plan.build_input_hashes))?;
+                command
+                    .env("GUIC_BUILD_REQUEST", serde_json::to_string(&request)?)
+                    .env("GUIC_BUILD_REQUEST_HASH", &hash);
+                Ok(hash)
+            })
+            .transpose()?
+    } else {
+        None
+    };
+    if handshake.is_none() {
+        command
+            .env_remove("GUIC_BUILD_REQUEST")
+            .env_remove("GUIC_BUILD_REQUEST_HASH");
+    }
+    let output = process::capture(&mut command)?;
+    if let Some(hash) = handshake {
+        verify_handshake(&output, &plan.project.package_id, &hash)?;
+    }
+    let executable = artifact(&output, &plan.project.package_id, &plan.project.bin)?;
+    ensure!(
+        executable.is_file(),
+        "Cargo executable is missing: {}",
+        executable.display()
+    );
+    Ok(executable)
+}
+
+fn merge_universal(arm: &Path, intel: &Path, output: &Path) -> Result<()> {
+    let lipo =
+        crate::platform::find("lipo").context("Universal Binary requires Apple's lipo tool")?;
+    process::status(
+        Command::new(&lipo)
+            .arg("-create")
+            .arg(arm)
+            .arg(intel)
+            .arg("-output")
+            .arg(output),
+    )?;
+    process::status(
+        Command::new(lipo)
+            .arg(output)
+            .args(["-verify_arch", "arm64", "x86_64"]),
+    )
+    .context("Universal Binary must contain both arm64 and x86_64")
 }
 
 pub(crate) fn artifact(output: &[u8], package_id: &str, bin: &str) -> Result<PathBuf> {

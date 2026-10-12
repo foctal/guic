@@ -12,6 +12,10 @@ and notarization through explicit `--execute-signing`. `package-trial` uses the
 same pipeline for candidate artifacts. Publication remains a separate manual
 operation.
 
+`dev --watch` rebuilds and restarts on edits. macOS builds can target
+`universal-apple-darwin`. `updater keygen` and `updater prepare` generate signed
+update feeds for applications using the optional `guic::updater` API.
+
 ```sh
 cargo run -p cargo-guic -- --help
 cargo test -p cargo-guic --locked

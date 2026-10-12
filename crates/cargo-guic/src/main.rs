@@ -2,6 +2,7 @@ mod backend;
 mod build;
 mod cli;
 mod config;
+mod dev;
 mod doctor;
 mod plan;
 mod platform;
@@ -12,13 +13,15 @@ mod resources;
 mod runtime;
 mod signing;
 mod staging;
+mod updater;
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result};
 use clap::Parser;
 use cli::{Cli, Command};
 
 fn run(cli: &Cli) -> Result<serde_json::Value> {
     match &cli.command {
+        Command::Updater { command } => return updater::run(command),
         Command::Schema => return Ok(serde_json::to_value(schemars::schema_for!(config::Config))?),
         Command::Worker { request, response } => {
             backend::worker(request, response)?;
@@ -92,44 +95,13 @@ fn run(cli: &Cli) -> Result<serde_json::Value> {
                     .context(report::stage("packaging", Some(&plan)))?,
             )?)
         }
-        Command::Dev { args, .. } => {
-            let record = build::compile(&plan).context(report::stage("build", Some(&plan)))?;
-            let resources = resources::collect(&plan.config.bundle.resources)?;
-            let development_resources = tempfile::tempdir_in(plan.root())?;
-            resources::stage(&resources, development_resources.path())?;
-            let development_binary = tempfile::tempdir_in(plan.root())?;
-            let executable_root = if plan.os == "windows" {
-                development_resources.path()
-            } else {
-                development_binary.path()
-            };
-            let executable = executable_root.join(
-                record
-                    .snapshot_path
-                    .file_name()
-                    .context("snapshot filename")?,
-            );
-            ensure!(
-                !executable.exists(),
-                "development resource collides with executable"
-            );
-            std::fs::copy(&record.snapshot_path, &executable)?;
-            ensure!(
-                report::hash_file(&executable)? == record.executable_hash,
-                "development executable copy changed"
-            );
-            let mut command = std::process::Command::new(executable);
-            command.args(args).current_dir(&plan.project.directory);
-
-            if !resources.is_empty() || plan.config.bundle.resource_contract.is_some() {
-                command.env(
-                    "GUIC_RESOURCE_DIR",
-                    development_resources.path().canonicalize()?,
-                );
-            }
-            process::status(&mut command).context("development application failed")?;
-            Ok(serde_json::to_value(record)?)
-        }
+        Command::Dev {
+            args,
+            watch,
+            watch_path,
+            watch_ignore,
+            ..
+        } => dev::run(&plan, args, *watch, watch_path, watch_ignore),
         _ => unreachable!(),
     }
 }

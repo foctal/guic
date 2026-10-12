@@ -81,7 +81,7 @@ cargo run -p guic-sample-component-gallery
 - `guic-icons`, `guic-assets`, and `guic-macros`: supporting APIs
 
 Subsystems are opt-in through the `charts`, `editor`, `webview`,
-`data-table`, `tree`, `dock`, and `markdown` features. The default feature set
+`data-table`, `tree`, `dock`, `markdown`, and `updater` features. The default feature set
 includes the core component, icon, asset, and native APIs.
 
 ## Documentation

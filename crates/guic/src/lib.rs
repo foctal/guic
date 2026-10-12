@@ -29,6 +29,14 @@
 
 pub mod prelude;
 
+/// Signed in-app updates for macOS app bundles, Windows NSIS, and Linux AppImage.
+///
+/// Enable the `updater` feature. Run blocking network and installation operations
+/// on a background thread, outside the GUI event loop. Configure HTTPS endpoints
+/// and the public key used by `cargo guic updater prepare`.
+#[cfg(feature = "updater")]
+pub use cargo_packager_updater as updater;
+
 pub use guic_core as core;
 pub use guic_macros::{shared_format, shared_string, theme_name};
 pub use guic_tokens as tokens;

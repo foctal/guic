@@ -14,8 +14,8 @@ External resources support the common installed-resource resolver or an
 application-defined resolver. Signing and notarization require configured
 `required` policies and explicit `--execute-signing` on `build`, `bundle`, or
 `package-trial`. Installation testing and publication remain application-owner
-responsibilities. Cross-compilation and universal binaries are outside this
-version's scope.
+responsibilities. macOS Universal Binary builds are supported; other
+cross-compilation workflows remain outside this version's scope.
 
 ## Install from source
 
@@ -52,8 +52,8 @@ Cargo commands use `--locked` by default. Ensure the application has an up-to-da
 Cargo.lock, or pass `--unlocked` to allow Cargo to resolve and update dependencies.
 `dev` builds with the dev profile and runs a copy of the executable once, with
 the application directory as its working directory. Forward application arguments
-with `cargo guic dev -p myapp -- --application-argument`. File watching is not
-implemented. `build --no-bundle` defaults to the release profile.
+with `cargo guic dev -p myapp -- --application-argument`. Add `--watch` to rebuild
+and restart automatically. `build --no-bundle` defaults to the release profile.
 
 ## Create a native package
 
@@ -107,7 +107,9 @@ cargo guic package-trial -p myapp --build-record /absolute/path/to/record.json
 | `init` | Create an application's Guic.toml. |
 | `inspect` | Show resolved settings and their provenance without running hooks. |
 | `doctor` | Check tools and runtime prerequisites; inspect a saved build with `--build-record`. |
-| `dev` | Build and run the application once. |
+| `dev` | Build and run once; `--watch` enables automatic rebuild and restart. |
+| `updater keygen` | Generate a local update-signing key pair. |
+| `updater prepare` | Prepare signed update payloads and a feed without uploading. |
 | `build` | Build and generate configured native packages. |
 | `bundle` | Package a compatible saved executable without compiling. |
 | `build --no-bundle` | Build and save an executable snapshot and build record. |
@@ -327,8 +329,8 @@ Windows signing uses `windows-thumbprint` (40 hexadecimal characters) and
 `windows-timestamp-url` (an HTTPS RFC 3161 endpoint) with `code-signing =
 "required"`. The backend signs staged inputs and the NSIS output; the worker
 independently runs `signtool verify /pa /all`. Verify credential access and
-installer/uninstaller behavior on the target system. Linux OS code signing and
-updater signatures are outside this CLI's scope.
+installer/uninstaller behavior on the target system. Linux OS code signing is
+outside this CLI's scope. Updater signatures are separate and supported through `updater prepare`.
 
 An off policy never imports signing fields into the backend or runs signing
 tools, even if ambient signing environment variables exist. An enabled policy
@@ -468,3 +470,114 @@ redistributing the CLI.
 
 Windows integration references: Microsoft's [VERSIONINFO resource specification](https://learn.microsoft.com/en-us/windows/win32/menurc/versioninfo-resource)
 and [WebView2 Runtime distribution and detection guidance](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution).
+
+## File watching and automatic restart
+
+```sh
+cargo guic dev -p myapp --watch
+cargo guic dev -p myapp --watch --watch-path ../shared --watch-ignore generated
+```
+
+Watching is opt-in; `--no-watch` explicitly selects the default one-shot behavior.
+The watcher polls workspace files, the configuration, declared build inputs and
+resource paths, plus additional `--watch-path` entries. Git ignore rules, `.git`,
+`target`, Cargo's resolved output directory, and `--watch-ignore` entries are
+excluded. External path dependencies can be added with `--watch-path`.
+
+Changes stop the running application and its owned child processes before a
+fresh build and resource staging. Build failures keep the watcher alive so the
+next edit can recover. An application that exits waits for another edit.
+Ctrl-C stops the watcher and its running child processes. Generated files and
+application-written logs should be ignored to avoid rebuild loops. Arguments
+following `--` are forwarded on each restart. Progress goes to stderr; a watch
+session does not emit a successful one-shot build report on every restart.
+
+## macOS Universal Binary
+
+Install both macOS Rust standard libraries and the Xcode command line tools:
+
+```sh
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+cargo guic build -p myapp --target universal-apple-darwin
+```
+
+The before-build hook runs once. Cargo builds both architectures with the same
+profile, feature policy, inputs and deployment target. `lipo` combines the two
+executables and verifies both slices before saving the immutable build record.
+The record retains `universal-apple-darwin`; use that target again for `bundle`.
+App/DMG packaging and optional signing operate on the combined executable.
+
+This mode requires macOS. Native dependencies must build for both architectures;
+any supplied frameworks and dynamic libraries must also contain the appropriate
+slices. Universal mode does not convert third-party libraries automatically.
+
+## Signed application updates
+
+Update preparation is separate from OS code signing and publication. Supported
+update payloads are macOS `.app.tar.gz`, Windows NSIS `.exe`, and Linux `.AppImage`.
+A report containing only DMG or deb cannot produce an in-app update; include
+`app` or `appimage` in the corresponding package formats. Native signatures and
+notarization, when configured, finish before update archives are created.
+
+Generate a key pair once and keep the private key outside the repository:
+
+```sh
+cargo guic updater keygen --output /secure/location/updater.key
+```
+
+The public key is written to `/secure/location/updater.key.pub`. Existing files
+are never overwritten. `GUIC_UPDATER_PASSWORD` supplies the key password; if
+absent, an empty password is used without an interactive prompt. Use
+`--password-env NAME` to select another environment variable. Embed only the
+public key in the application.
+
+After packaging, pass the completed `artifacts/attempt-*/report.json` files:
+
+```sh
+cargo guic updater prepare \
+  --artifact-report /build/macos/report.json \
+  --artifact-report /build/windows/report.json \
+  --artifact-report /build/linux/report.json \
+  --private-key /secure/location/updater.key \
+  --public-key /secure/location/updater.key.pub \
+  --base-url https://updates.example.com/releases/1.2.3/ \
+  --output ./updates-1.2.3
+```
+
+Reports must describe the same application identifier and version. Preparation
+checks artifact hashes, copies them to an isolated directory, creates any app
+archive, signs every payload and verifies signatures against the public key.
+It writes `latest.json` and the payloads/signatures into a new output directory.
+Universal app payloads are listed for both `macos-aarch64` and `macos-x86_64`.
+Overlapping platform entries are rejected. The CLI does not upload anything;
+host the generated directory at the specified HTTPS location manually.
+
+Enable `guic`'s `updater` feature in an application using this checkout. The
+`guic::updater` module exposes `cargo-packager-updater` 0.2.3:
+
+```rust,no_run
+fn check_for_updates() -> Result<(), Box<dyn std::error::Error>> {
+    let config = guic::updater::Config {
+        endpoints: vec!["https://updates.example.com/latest.json".parse()?],
+        pubkey: include_str!("../updater.key.pub").trim().to_owned(),
+        ..Default::default()
+    };
+    if let Some(update) = guic::updater::check_update(env!("CARGO_PKG_VERSION").parse()?, config)? {
+        update.download_and_install()?;
+    }
+    Ok(())
+}
+```
+
+Run this blocking operation on an application-owned background thread at startup
+or on the application's chosen schedule. `UpdaterBuilder` provides timeouts,
+headers, target overrides and Windows installation options; download callbacks
+can drive a progress UI. The application controls when to install and restart.
+Windows installation may terminate the running application. Linux in-app updates
+require an AppImage installation; deb upgrades remain package-manager operations.
+
+The feed protocol uses `version`, `platforms`, `url`, `signature`, and `format`.
+It is the cargo-packager-updater protocol, not a promise of Tauri plugin wire
+compatibility. Signatures verify downloaded payloads before installation; serve
+both the feed and payloads over HTTPS and retain trusted control of release
+metadata. OS signing and update-signing keys are independent.

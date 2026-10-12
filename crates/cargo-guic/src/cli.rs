@@ -19,10 +19,22 @@ pub(crate) struct Cli {
 pub(crate) enum Command {
     /// Create Guic.toml without replacing existing files.
     Init(Init),
-    /// Build and run once (no file watching).
+    /// Build and run; optionally watch files and restart on changes.
     Dev {
         #[command(flatten)]
         selectors: Selectors,
+        /// Rebuild and restart after source or resource changes.
+        #[arg(long, conflicts_with = "no_watch")]
+        watch: bool,
+        /// Run once (the default).
+        #[arg(long)]
+        no_watch: bool,
+        /// Additional files or directories to watch, including external dependencies.
+        #[arg(long, requires = "watch")]
+        watch_path: Vec<PathBuf>,
+        /// Files or directories excluded from watching.
+        #[arg(long, requires = "watch")]
+        watch_ignore: Vec<PathBuf>,
         #[arg(last = true)]
         args: Vec<String>,
     },
@@ -68,6 +80,11 @@ pub(crate) enum Command {
     },
     /// Print the versioned Guic.toml JSON Schema.
     Schema,
+    /// Generate update signing keys or prepare signed update feeds locally.
+    Updater {
+        #[command(subcommand)]
+        command: crate::updater::Command,
+    },
     #[command(name = "__worker", hide = true)]
     Worker { request: PathBuf, response: PathBuf },
 }

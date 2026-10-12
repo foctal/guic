@@ -52,6 +52,28 @@ pub(crate) fn capture(command: &mut Command) -> Result<Vec<u8>> {
 }
 
 fn wait(command: &mut Command) -> Result<ExitStatus> {
+    wait_until(command, || Ok(false))?.context("unexpected process restart")
+}
+
+pub(crate) fn status_until(
+    command: &mut Command,
+    changed: impl FnMut() -> Result<bool>,
+) -> Result<bool> {
+    command
+        .stdout(std::io::stderr())
+        .stderr(Stdio::inherit())
+        .stdin(Stdio::inherit());
+    match wait_until(command, changed)? {
+        None => Ok(true),
+        Some(status) if status.success() => Ok(false),
+        Some(status) => bail!("child process exited with {status}"),
+    }
+}
+
+fn wait_until(
+    command: &mut Command,
+    mut changed: impl FnMut() -> Result<bool>,
+) -> Result<Option<ExitStatus>> {
     check_cancelled()?;
     #[cfg(unix)]
     {
@@ -60,7 +82,8 @@ fn wait(command: &mut Command) -> Result<ExitStatus> {
     }
     let mut child = command.spawn().context("could not start child process")?;
     loop {
-        if CANCELLED.load(Ordering::SeqCst) {
+        let change = changed();
+        if CANCELLED.load(Ordering::SeqCst) || !matches!(change, Ok(false)) {
             #[cfg(unix)]
             unsafe {
                 // The child owns this process group, including tool descendants.
@@ -76,13 +99,15 @@ fn wait(command: &mut Command) -> Result<ExitStatus> {
             }
             let _ = child.kill();
             let _ = child.wait();
-            bail!("operation cancelled");
+            check_cancelled()?;
+            change?;
+            return Ok(None);
         }
         if let Some(status) = child.try_wait()? {
             check_cancelled()?;
-            return Ok(status);
+            return Ok(Some(status));
         }
-        std::thread::sleep(Duration::from_millis(40));
+        std::thread::sleep(Duration::from_millis(200));
     }
 }
 

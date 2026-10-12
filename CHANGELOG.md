@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Add opt-in cargo-guic file watching with automatic rebuild, restart, and recovery
+  after build failures.
+- Support macOS Universal Binary builds and packaging through
+  `--target universal-apple-darwin`.
+- Add local update key generation and signed update feed preparation, plus the
+  optional `guic/updater` feature for in-app update checks and installation.
+
 ## 0.3.0 - 2026-10-10
 
 - Upgrade the guic-gpui runtime family to 0.4.0.

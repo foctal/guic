@@ -5,7 +5,8 @@ pub(crate) fn native_format(target: &str, format: &str) -> Result<()> {
     let os = crate::plan::target_os(target)?;
     let arch = target.split('-').next().unwrap_or("");
     ensure!(
-        os == std::env::consts::OS && arch == std::env::consts::ARCH,
+        os == std::env::consts::OS
+            && (arch == std::env::consts::ARCH || (os == "macos" && arch == "universal")),
         "packaging requires the native target OS and architecture"
     );
     ensure!(

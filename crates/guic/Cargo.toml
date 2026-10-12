@@ -18,6 +18,7 @@ components = ["dep:guic-components"]
 charts = ["dep:guic-charts"]
 editor = ["dep:guic-editor"]
 webview = ["dep:guic-webview"]
+updater = ["dep:cargo-packager-updater"]
 icons = ["dep:guic-icons"]
 assets = ["dep:guic-assets"]
 # Optional component subsystems. These are convenience re-exports of the
@@ -29,6 +30,7 @@ dock = ["components", "guic-components/dock"]
 markdown = ["components", "guic-components/markdown"]
 
 [dependencies]
+cargo-packager-updater = { version = "=0.2.3", optional = true }
 gpui.workspace = true
 guic-assets = { version = "0.3.0", path = "../guic-assets", optional = true }
 guic-components = { version = "0.3.0", path = "../guic-components", optional = true }

@@ -16,6 +16,12 @@ pub(crate) fn validate(plan: &BuildPlan, execute_signing: bool) -> Result<()> {
         !plan.formats.is_empty(),
         "no package formats configured; configure bundle.formats, pass --formats, or use build --no-bundle"
     );
+    if plan.target == "universal-apple-darwin" {
+        ensure!(
+            crate::platform::find("lipo").is_some(),
+            "Universal Binary requires Apple's lipo tool"
+        );
+    }
     for format in &plan.formats {
         crate::platform::native_format(&plan.target, format)?;
     }

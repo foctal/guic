@@ -1060,3 +1060,141 @@ fn doctor_checks_native_packaging_without_running_hooks() -> Result<()> {
     assert!(!dir.path().join("output with spaces/guic").exists());
     Ok(())
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "Requires both macOS Rust targets and Xcode command line tools"]
+fn universal_binary_contains_both_architectures() -> Result<()> {
+    let dir = fixture()?;
+    let result = success(invoke(
+        dir.path(),
+        &[
+            "build",
+            "-p",
+            "app",
+            "--no-bundle",
+            "--target",
+            "universal-apple-darwin",
+        ],
+    )?)?;
+    assert_eq!(result["target"], "universal-apple-darwin");
+    let snapshot = result["snapshot_path"].as_str().context("snapshot")?;
+    let verification = Command::new("lipo")
+        .arg(snapshot)
+        .args(["-verify_arch", "arm64", "x86_64"])
+        .output()?;
+    assert!(
+        verification.status.success(),
+        "{}",
+        String::from_utf8_lossy(&verification.stderr)
+    );
+    // Record selection must preserve the combined target identity.
+    failure(
+        invoke(
+            dir.path(),
+            &["bundle", "-p", "app", "--target", "universal-apple-darwin"],
+        )?,
+        "no package formats",
+    )?;
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn watch_restarts_and_recovers_after_a_build_failure() -> Result<()> {
+    use std::time::{Duration, Instant};
+    struct Running(std::process::Child);
+    impl Drop for Running {
+        fn drop(&mut self) {
+            unsafe {
+                libc::kill(self.0.id() as i32, libc::SIGINT);
+            }
+            for _ in 0..100 {
+                if self.0.try_wait().ok().flatten().is_some() {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    fn wait_for(mut condition: impl FnMut() -> bool) -> Result<()> {
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_secs(30) {
+            if condition() {
+                return Ok(());
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        anyhow::bail!("watcher did not reach expected state");
+    }
+    fn source(version: &str) -> String {
+        format!(
+            r#"fn main() {{
+            std::fs::write("run.log", format!("{version}:{{}}", std::process::id())).unwrap();
+            std::thread::sleep(std::time::Duration::from_secs(60));
+        }}"#
+        )
+    }
+    let dir = fixture()?;
+    let src = dir.path().join("app/src/main.rs");
+    let marker = dir.path().join("app/run.log");
+    let logs = tempfile::tempfile()?;
+    fs::write(&src, source("one"))?;
+    let mut running = Running(
+        Command::new(env!("CARGO_BIN_EXE_cargo-guic"))
+            .current_dir(dir.path())
+            .args([
+                "--json",
+                "dev",
+                "-p",
+                "app",
+                "--watch",
+                "--watch-ignore",
+                "app/run.log",
+            ])
+            .env_remove("CARGO_TARGET_DIR")
+            .env_remove("CARGO_BUILD_TARGET")
+            .stdout(std::process::Stdio::null())
+            .stderr(logs.try_clone()?)
+            .spawn()?,
+    );
+    wait_for(|| fs::read_to_string(&marker).is_ok_and(|s| s.starts_with("one:")))?;
+    let first: i32 = fs::read_to_string(&marker)?
+        .split(':')
+        .nth(1)
+        .context("pid")?
+        .parse()?;
+    fs::write(&src, source("two"))?;
+    wait_for(|| fs::read_to_string(&marker).is_ok_and(|s| s.starts_with("two:")))?;
+    assert_eq!(
+        unsafe { libc::kill(first, 0) },
+        -1,
+        "old app survived restart"
+    );
+    fs::write(&src, "compile_error!(\"watch failure fixture\");")?;
+    wait_for(|| {
+        use std::io::{Read, Seek};
+        let mut file = logs.try_clone().expect("log clone");
+        file.rewind().expect("rewind");
+        let mut text = String::new();
+        file.read_to_string(&mut text).expect("logs");
+        text.contains("watching for changes")
+    })?;
+    assert!(running.0.try_wait()?.is_none());
+    fs::write(&src, source("three"))?;
+    wait_for(|| fs::read_to_string(&marker).is_ok_and(|s| s.starts_with("three:")))?;
+    let last: i32 = fs::read_to_string(&marker)?
+        .split(':')
+        .nth(1)
+        .context("pid")?
+        .parse()?;
+    drop(running);
+    assert_eq!(
+        unsafe { libc::kill(last, 0) },
+        -1,
+        "app survived watcher shutdown"
+    );
+    Ok(())
+}

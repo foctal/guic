@@ -122,7 +122,7 @@ pub(crate) fn resolve(selectors: &Selectors, dev: bool) -> Result<BuildPlan> {
     }
     let config = loaded.config;
     ensure!(
-        target == host,
+        target == host || (target == "universal-apple-darwin" && host.ends_with("-apple-darwin")),
         "target {target} is not the native host {host}; cross-compilation is not yet validated"
     );
     if final_os == "windows" {
