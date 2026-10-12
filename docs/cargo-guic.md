@@ -232,6 +232,8 @@ Installer artwork is separate from Windows EXE resources. Configure the latter:
 ```toml
 [platform.windows.build.windows-resources]
 icon = "packaging/app.ico"
+# Enable when GPUI already links its windows-manifest resource.
+use-dependency-manifest = true
 # manifest = "packaging/app.manifest"
 company-name = "Example Organization"
 copyright = "Copyright Example Organization"
@@ -261,6 +263,13 @@ requests standard-user privileges, common controls, PerMonitorV2 DPI awareness
 and long paths. A custom manifest replaces that default. Numeric Windows version
 components must fit u16; the full Cargo version including prerelease text remains
 in the string version resource. The helper does not affect installer artwork.
+
+GPUI 0.4.0 enables its own Windows manifest, including through
+`guic-gpui-platform`. Set `use-dependency-manifest = true` for these applications
+to embed only branding resources and keep GPUI's manifest. Otherwise MSVC reports
+duplicate MANIFEST resources. This option defaults to false and cannot be
+combined with `manifest`; the dependency's manifest determines DPI, privileges
+and other runtime settings, including whether long paths are enabled.
 
 Native input content hashes participate in build compatibility. The CLI checks
 the selected package's Cargo build-script acknowledgement, so omitting the helper

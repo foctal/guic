@@ -599,6 +599,11 @@
             "string",
             "null"
           ]
+        },
+        "use-dependency-manifest": {
+          "default": false,
+          "description": "Use a manifest linked by a dependency, such as GPUI, instead of embedding one.",
+          "type": "boolean"
         }
       },
       "type": "object"

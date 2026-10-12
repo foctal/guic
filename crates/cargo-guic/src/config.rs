@@ -355,6 +355,10 @@ pub(crate) fn load(path: &Path, os: &str) -> Result<Loaded> {
             .map_err(|_| anyhow::anyhow!("invalid backend category"))?;
     }
     if let Some(windows) = &mut config.build.windows_resources {
+        ensure!(
+            !windows.use_dependency_manifest || windows.manifest.is_none(),
+            "use-dependency-manifest cannot be combined with a custom manifest"
+        );
         for path in [&mut windows.icon, &mut windows.manifest]
             .into_iter()
             .flatten()

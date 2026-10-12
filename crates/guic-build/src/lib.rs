@@ -18,6 +18,9 @@ pub struct WindowsResources {
     pub icon: Option<PathBuf>,
     /// Application manifest XML; omitted to use the standard-user, DPI-aware default.
     pub manifest: Option<PathBuf>,
+    /// Use a manifest linked by a dependency, such as GPUI, instead of embedding one.
+    #[serde(default)]
+    pub use_dependency_manifest: bool,
     /// Version resource company name.
     pub company_name: Option<String>,
     /// Version resource copyright statement.
@@ -232,6 +235,10 @@ fn quoted(value: &str) -> Result<String> {
 
 /// Generates deterministic Windows RC source; also usable for build-time inspection.
 pub fn resource_script(request: &Request, manifest: &Path) -> Result<String> {
+    ensure!(
+        !request.windows.use_dependency_manifest || request.windows.manifest.is_none(),
+        "use-dependency-manifest cannot be combined with a custom manifest"
+    );
     let numeric = request
         .version
         .split(['-', '+'])
@@ -245,10 +252,13 @@ pub fn resource_script(request: &Request, manifest: &Path) -> Result<String> {
         "Windows version requires three u16 components"
     );
     let version = format!("{},{},{},0", numeric[0], numeric[1], numeric[2]);
-    let mut rc = format!(
-        "#pragma code_page(65001)\n1 24 {}\n",
-        quoted(manifest.to_str().context("manifest path must be UTF-8")?)?
-    );
+    let mut rc = String::from("#pragma code_page(65001)\n");
+    if !request.windows.use_dependency_manifest {
+        rc.push_str(&format!(
+            "1 24 {}\n",
+            quoted(manifest.to_str().context("manifest path must be UTF-8")?)?
+        ));
+    }
     if let Some(icon) = &request.windows.icon {
         rc.push_str(&format!(
             "1 ICON {}\n",
@@ -297,7 +307,7 @@ fn compile(request: &Request) -> Result<()> {
     embed_resource::compile_for(&script, [&request.bin], embed_resource::NONE)
         .manifest_required()
         .map_err(|e| anyhow::anyhow!("native resource compilation failed: {e:?}"))?;
-    // The supplied manifest is the sole executable manifest, including on MSVC.
+    // Use the resource manifest (ours or a dependency's), not a linker-generated one.
     println!("cargo:rustc-link-arg-bin={}=/MANIFEST:NO", request.bin);
     Ok(())
 }
@@ -321,7 +331,15 @@ mod tests {
         };
         let text = resource_script(&request, Path::new("C:/path with spaces/app.manifest"))?;
         assert!(text.contains("FILEVERSION 1,2,3,0"));
+        assert!(text.contains("1 24 "));
         assert!(text.contains("App \\\"Example\\\""));
+        request.windows.use_dependency_manifest = true;
+        let text = resource_script(&request, Path::new("manifest"))?;
+        assert!(!text.contains("1 24 "));
+        assert!(text.contains("FILEVERSION 1,2,3,0"));
+        request.windows.manifest = Some("custom.manifest".into());
+        assert!(resource_script(&request, Path::new("manifest")).is_err());
+        request.windows.manifest = None;
         request.version = "65536.0.0".into();
         assert!(resource_script(&request, Path::new("manifest")).is_err());
         assert!(quoted("bad\nvalue").is_err());

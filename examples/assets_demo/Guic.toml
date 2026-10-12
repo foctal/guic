@@ -10,6 +10,7 @@ bin = "guic-example-assets-demo"
 features = ["packaged-resources"]
 
 [platform.windows.build.windows-resources]
+use-dependency-manifest = true
 icon = "packaging/icon.ico"
 company-name = "GUIC Fixture"
 copyright = "Apache-2.0"
