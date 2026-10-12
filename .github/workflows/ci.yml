@@ -52,6 +52,9 @@ jobs:
       - name: Windows tests
         if: runner.os == 'Windows'
         run: cargo test --workspace --all-features --lib
+      - name: Windows packaging example executables
+        if: runner.os == 'Windows'
+        run: cargo build -p guic-example-assets-demo -p guic-example-webview --all-features --locked
       - name: macOS library tests
         if: runner.os == 'macOS'
         run: cargo test --workspace --all-features --lib

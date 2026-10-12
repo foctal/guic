@@ -82,6 +82,39 @@ on a clean system. Test required signatures and notarization separately with
 explicit `--execute-signing` and credentials provisioned through OS tooling.
 Package creation does not upload or publish artifacts.
 
+## Windows development environment
+
+Run `doctor` from an x64 Native Tools Command Prompt for Visual Studio, or
+initialize the corresponding developer environment before invoking it. Rust can
+locate MSVC automatically while `doctor` requires `link.exe` and `dumpbin.exe`
+on `PATH`. Windows SDK tools such as `rc.exe` and `fxc.exe` are also discovered
+from installed SDK directories.
+
+For examples that configure NSIS, `doctor` still reports `ready: false` because
+normal distribution is disabled. Check the individual tool, runtime and
+`unsigned-candidate-prerequisites` results separately. A successful build or
+prerequisite report does not certify an installer.
+
+### Local verification on 2026-10-12
+
+Verified on Windows 11 Home 10.0.26200, x86_64 MSVC, Rust/Cargo 1.95.0,
+MSVC 14.44.35207 and Windows SDK 10.0.26100.0:
+
+- The automated test command above passed 48 tests; the manual native backend
+  acceptance test remained ignored.
+- Clippy with warnings denied, formatting, and both examples' all-feature checks
+  passed. `cargo deny check` passed with dependency-policy warnings.
+- `cargo-guic build --no-bundle --profile dev` succeeded for both example
+  applications. The assets example preserved GPUI's manifest and embedded
+  version `0.1.0`, product `GUIC Resources Fixture`, and company `GUIC Fixture`.
+- Assets snapshot import inspection passed in the Visual Studio developer
+  environment. WebView2 runtime detection found version `154.0.4258.62`.
+
+This verifies development builds and CLI behavior, including paths with spaces
+and Japanese characters. Release-profile example builds, interactive GUI
+behavior, NSIS generation, installation, upgrade, uninstall and signing were
+not exercised. Packaging and release acceptance remain manual maintainer work.
+
 ## Updating the configuration schema
 
 After changing configuration types, regenerate the checked-in schema:
