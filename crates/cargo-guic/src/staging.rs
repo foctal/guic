@@ -235,7 +235,9 @@ pub(crate) fn reserve(destinations: &mut BTreeSet<String>, destination: &Path) -
         .replace('\\', "/")
         .to_lowercase();
     ensure!(
-        !normalized.contains(':')
+        !normalized
+            .chars()
+            .any(|c| c.is_control() || r#":<>"|?*"#.contains(c))
             && !normalized.split('/').any(|p| {
                 let stem = p.split('.').next().unwrap_or("");
                 p == "."
@@ -438,6 +440,12 @@ mod tests {
             "NUL",
             "a/COM1.txt",
             "a/trailing.",
+            "a/bad?.txt",
+            "a/bad*.txt",
+            "a/bad<name>.txt",
+            "a/bad|name.txt",
+            "a/bad\"name.txt",
+            "a/bad\nname.txt",
         ] {
             assert!(
                 reserve(&mut paths, Path::new(invalid)).is_err(),
