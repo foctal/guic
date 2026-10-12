@@ -343,6 +343,20 @@ fn dev_forwards_arguments_without_polluting_json() -> Result<()> {
 }
 
 #[test]
+fn dev_reports_application_failure_without_success_report() -> Result<()> {
+    let dir = fixture()?;
+    fs::write(
+        dir.path().join("app/src/main.rs"),
+        "fn main() { std::process::exit(17); }\n",
+    )?;
+    failure(
+        invoke(dir.path(), &["dev", "-p", "app"])?,
+        "child process exited",
+    )?;
+    Ok(())
+}
+
+#[test]
 fn record_ambiguity_and_schema_migration_are_explicit() -> Result<()> {
     let dir = fixture()?;
     let first = success(invoke(dir.path(), &["build", "-p", "app", "--no-bundle"])?)?;
@@ -431,30 +445,56 @@ fn nonzero_hooks_never_create_records() -> Result<()> {
 #[cfg(unix)]
 #[test]
 fn cancellation_terminates_owned_hook_processes_without_success() -> Result<()> {
+    assert_cancellation_terminates_child(false)
+}
+
+#[cfg(unix)]
+#[test]
+fn cancellation_terminates_owned_dev_application_without_success() -> Result<()> {
+    assert_cancellation_terminates_child(true)
+}
+
+#[cfg(unix)]
+fn assert_cancellation_terminates_child(dev: bool) -> Result<()> {
     use std::time::{Duration, Instant};
     let dir = fixture()?;
-    let path = dir.path().join("app/Guic.toml");
-    let text = fs::read_to_string(&path)?
-        + "\n[hooks.before-build]\nprogram = 'sh'\nargs = ['-c', 'echo $$ > hook.pid; exec sleep 60']\ncwd = '.'\n";
-    fs::write(path, text)?;
+    if dev {
+        fs::write(
+            dir.path().join("app/src/main.rs"),
+            r#"fn main() {
+                std::fs::write("child.pid", std::process::id().to_string()).unwrap();
+                std::thread::sleep(std::time::Duration::from_secs(60));
+            }"#,
+        )?;
+    } else {
+        let path = dir.path().join("app/Guic.toml");
+        let text = fs::read_to_string(&path)?
+            + "\n[hooks.before-build]\nprogram = 'sh'\nargs = ['-c', 'echo $$ > child.pid; exec sleep 60']\ncwd = '.'\n";
+        fs::write(path, text)?;
+    }
+    let args = if dev {
+        vec!["--json", "dev", "-p", "app"]
+    } else {
+        vec!["--json", "build", "-p", "app", "--no-bundle"]
+    };
     let mut child = Command::new(env!("CARGO_BIN_EXE_cargo-guic"))
         .current_dir(dir.path())
-        .args(["--json", "build", "-p", "app", "--no-bundle"])
+        .args(args)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()?;
     let started = Instant::now();
-    let pid_file = dir.path().join("app/hook.pid");
+    let pid_file = dir.path().join("app/child.pid");
     while !pid_file.is_file() && started.elapsed() < Duration::from_secs(10) {
         std::thread::sleep(Duration::from_millis(20));
     }
     if !pid_file.is_file() {
         child.kill()?;
         child.wait()?;
-        anyhow::bail!("hook did not start before timeout");
+        anyhow::bail!("child did not start before timeout");
     }
-    let hook_pid: i32 = fs::read_to_string(pid_file)?.trim().parse()?;
-    // Send an interrupt to the CLI, which owns the separate hook process group.
+    let owned_pid: i32 = fs::read_to_string(pid_file)?.trim().parse()?;
+    // Send an interrupt to the CLI, which owns the separate child process group.
     unsafe {
         libc::kill(child.id() as i32, libc::SIGINT);
     }
@@ -464,16 +504,16 @@ fn cancellation_terminates_owned_hook_processes_without_success() -> Result<()> 
     if child.try_wait()?.is_none() {
         child.kill()?;
         unsafe {
-            libc::kill(hook_pid, libc::SIGKILL);
+            libc::kill(owned_pid, libc::SIGKILL);
         }
         child.wait()?;
         anyhow::bail!("cancellation did not stop the CLI");
     }
     failure(child.wait_with_output()?, "cancelled")?;
     assert_eq!(
-        unsafe { libc::kill(hook_pid, 0) },
+        unsafe { libc::kill(owned_pid, 0) },
         -1,
-        "hook process survived cancellation"
+        "owned process survived cancellation"
     );
     Ok(())
 }
@@ -584,6 +624,7 @@ fn external_resources_use_explicit_contract_and_dev_root() -> Result<()> {
 fn main() {
     let root = std::path::PathBuf::from(std::env::var_os("GUIC_RESOURCE_DIR").expect("resource root"));
     assert!(root.is_absolute());
+    assert_eq!(std::env::current_dir().unwrap().canonicalize().unwrap(), std::path::Path::new(env!("CARGO_MANIFEST_DIR")).canonicalize().unwrap());
     println!("RESOURCE:{}", std::fs::read_to_string(root.join("data/nested/value.txt")).expect("resource"));
 }
 "#,
@@ -597,6 +638,15 @@ fn main() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("RESOURCE:resource fixture"));
     let record = success(output)?;
     assert_eq!(record["resource_layout"], "application-managed-v1");
+    // Absolute selectors must work from an unrelated directory, including when
+    // the project and staged resource paths contain spaces and Japanese text.
+    let outside = tempfile::tempdir()?;
+    let output = invoke(
+        outside.path(),
+        &["dev", "--config", path.to_str().context("config path")?],
+    )?;
+    assert!(String::from_utf8_lossy(&output.stderr).contains("RESOURCE:resource fixture"));
+    success(output)?;
     Ok(())
 }
 
@@ -736,6 +786,14 @@ fn native_resource_contract_and_runtime_policy_are_inspectable() -> Result<()> {
 #[test]
 fn doctor_inspects_verified_snapshot_without_running_it() -> Result<()> {
     let dir = fixture()?;
+    #[cfg(target_os = "linux")]
+    {
+        let config = dir.path().join("app/Guic.toml");
+        fs::write(
+            &config,
+            fs::read_to_string(&config)? + "\n[runtime]\nglibc-max = '2.0'\n",
+        )?;
+    }
     fs::write(
         dir.path().join("app/src/main.rs"),
         "fn main() { panic!(\"must not execute during diagnostics\"); }",
@@ -761,6 +819,25 @@ fn doctor_inspects_verified_snapshot_without_running_it() -> Result<()> {
             .iter()
             .any(|c| c["name"] == "binary-import-inspection")
     );
+    #[cfg(target_os = "linux")]
+    {
+        let checks = value["checks"].as_array().context("checks")?;
+        assert!(
+            checks
+                .iter()
+                .any(|c| { c["name"] == "binary-import-inspection" && c["passed"] == true })
+        );
+        assert!(
+            checks
+                .iter()
+                .any(|c| { c["name"] == "runtime-library:libc.so.6" && c["passed"] == true })
+        );
+        assert!(checks.iter().any(|c| {
+            c["name"] == "glibc-baseline" && c["required"] == true && c["passed"] == false
+        }));
+        assert!(!report.status.success());
+        assert_eq!(value["ready"], false);
+    }
     fs::write(
         record["snapshot_path"].as_str().context("snapshot")?,
         "modified",
