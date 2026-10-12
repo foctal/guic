@@ -27,7 +27,7 @@ pub(crate) fn lock(path: &Path) -> Result<File> {
         process::check_cancelled()?;
         match file.try_lock_exclusive() {
             Ok(()) => return Ok(file),
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+            Err(e) if e.raw_os_error() == fs2::lock_contended_error().raw_os_error() => {
                 std::thread::sleep(Duration::from_millis(50))
             }
             Err(e) => return Err(e.into()),
@@ -364,6 +364,27 @@ pub(crate) fn hash_directory(path: &Path) -> Result<(u64, String)> {
 mod tests {
     use super::*;
     #[test]
+    fn contended_lock_waits_until_the_owner_releases_it() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("application.lock");
+        let owner = lock(&path)?;
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let waiter = std::thread::spawn(move || {
+            let result = lock(&path);
+            sender.send(result).expect("lock result receiver");
+        });
+        let pending = receiver.recv_timeout(Duration::from_millis(100));
+        drop(owner);
+        waiter.join().expect("lock waiter");
+        assert!(matches!(
+            pending,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ));
+        let _acquired = receiver.recv()??;
+        Ok(())
+    }
+
+    #[test]
     fn partial_failure_keeps_earlier_outputs_and_never_modifies_snapshot() -> Result<()> {
         let (_temporary, plan, record) = build::fixture()?;
         let original_hash = report::hash_file(&record.snapshot_path)?;
@@ -385,7 +406,8 @@ mod tests {
                 }],
             })
         });
-        assert!(result.is_err());
+        let error = result.expect_err("second format must fail");
+        assert!(format!("{error:#}").contains("simulated tool failure"));
         assert_eq!(report::hash_file(&record.snapshot_path)?, original_hash);
         let attempt = std::fs::read_dir(plan.root().join("artifacts"))?
             .next()
