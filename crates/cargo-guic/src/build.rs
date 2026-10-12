@@ -162,12 +162,16 @@ pub(crate) fn compile(plan: &BuildPlan) -> Result<BuildRecord> {
         tool_versions: plan.tool_versions.clone(),
         cli_executable_hash: Some(report::hash_file(&std::env::current_exe()?)?),
     };
+    // Allocate a separate namespace so input copies cannot replace the executable.
+    let input_directory = tempfile::Builder::new()
+        .prefix("inputs-")
+        .tempdir_in(directory.path())?;
     for (index, (path, hash)) in plan.build_input_hashes.iter().enumerate() {
         ensure!(
             hash.as_ref() == Some(&report::hash_file(path)?),
             "build input changed during compilation"
         );
-        let input = directory.path().join(format!("input-{index}"));
+        let input = input_directory.path().join(index.to_string());
         std::fs::copy(path, &input)?;
         ensure!(
             hash.as_ref() == Some(&report::hash_file(&input)?),
@@ -181,6 +185,7 @@ pub(crate) fn compile(plan: &BuildPlan) -> Result<BuildRecord> {
         .sync_all()?;
     process::check_cancelled()?;
     report::atomic_new(&root.join("records").join(format!("{id}.json")), &record)?;
+    let _ = input_directory.keep();
     let _ = directory.keep();
     Ok(record)
 }

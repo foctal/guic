@@ -906,3 +906,32 @@ fn windows_resources_require_handshake_and_embed_version() -> Result<()> {
     assert_eq!(version["CompanyName"], "Fixture Company");
     Ok(())
 }
+
+#[cfg(unix)]
+#[test]
+fn build_input_names_cannot_overwrite_the_executable_snapshot() -> Result<()> {
+    let dir = fixture()?;
+    let manifest = dir.path().join("app/Cargo.toml");
+    fs::write(
+        &manifest,
+        fs::read_to_string(&manifest)? + "\n[[bin]]\nname = 'input-0'\npath = 'src/main.rs'\n",
+    )?;
+    let config = dir.path().join("app/Guic.toml");
+    fs::write(
+        &config,
+        fs::read_to_string(&config)? + "bin = 'input-0'\ninputs = ['data.txt']\n",
+    )?;
+    fs::write(
+        dir.path().join("app/data.txt"),
+        b"build input, not an executable",
+    )?;
+    let record = success(invoke(dir.path(), &["build", "-p", "app", "--no-bundle"])?)?;
+    let snapshot = record["snapshot_path"].as_str().context("snapshot")?;
+    let executable = record["executable_path"].as_str().context("executable")?;
+    assert!(
+        fs::read(snapshot)? == fs::read(executable)?,
+        "snapshot must preserve executable bytes"
+    );
+    success(invoke(dir.path(), &["dev", "-p", "app"])?)?;
+    Ok(())
+}

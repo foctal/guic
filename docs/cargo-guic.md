@@ -181,7 +181,8 @@ source = "assets/data/**/*.json"
 destination = "data"
 ```
 
-An exact file maps to the exact destination. A directory maps its descendant
+An existing source path is treated literally, including names containing glob
+metacharacters. An exact file maps to the exact destination. A directory maps its descendant
 files beneath the destination. A glob preserves paths relative to the static
 prefix before its first wildcard. Empty matches fail; expansion is sorted and
 collisions, path traversal, reserved Windows names and symlinks are rejected.
@@ -407,7 +408,7 @@ guic/<package-id-hash>/
   application.lock
   records/build-<unique-id>.json
   snapshots/build-<unique-id>/<executable>
-  snapshots/build-<unique-id>/input-<index>
+  snapshots/build-<unique-id>/inputs-<unique-id>/<index>
   artifacts/attempt-<unique-id>/
 ```
 
