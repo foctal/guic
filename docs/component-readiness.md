@@ -79,6 +79,7 @@ complete platform accessibility behavior has not been physically audited.
 ## Stable-release gate
 
 No row graduates beyond `Preview` until the relevant macOS, Windows, and Linux
-cells in `docs/platform-smoke.md` are recorded. Rows marked `Host/pointer` or
+checks in the [platform smoke checklist](platform-smoke.md) are completed and
+recorded in the release record. Rows marked `Host/pointer` or
 `Partial` require additional built-in keyboard behavior or an explicit host
 contract and physical accessibility verification before stable support.

@@ -5,7 +5,6 @@ It resolves Cargo projects, runs development builds, and packages recorded
 executables through cargo-packager. The CLI has no GUIC or GPUI runtime
 dependency and does not add packaging dependencies to applications.
 
-The [architecture](cargo-guic-design.md) describes the implementation boundaries.
 **Normal distribution formats are disabled in this version**: `build` without
 `--no-bundle` and `bundle` reject packaging. Use `package-trial` to generate native
 packages explicitly. Its reports label outputs as candidates; package generation
@@ -80,7 +79,7 @@ replaces the configured list; omit it to use all formats configured for the host
 and runs the before-bundle hook once. It creates separate copies for each format
 and reports `trial: true` and `acceptance: "not-verified"`. These fields describe
 the package generation workflow, not the result of your application's tests.
-See the [testing guide](cargo-guic-testing.md) for installation checks.
+See the [packaging guide](packaging.md) for platform distribution requirements.
 
 `build` without `--no-bundle` and `bundle` are reserved for normal distribution
 and reject packaging in this version. `bundle` checks its selected record before
@@ -389,6 +388,16 @@ record located tool paths, queried tool versions, and relevant lockfile package
 versions under `lockfile:` keys (these are lockfile candidates, not proof that a
 particular feature used them). No dependencies are installed automatically.
 
+On Windows, run `doctor` from an x64 Native Tools Command Prompt for Visual
+Studio, or initialize the corresponding developer environment first. Rust can
+locate MSVC automatically, but `doctor` requires `link.exe` and `dumpbin.exe` on
+`PATH`. Windows SDK tools such as `rc.exe` and `fxc.exe` are also discovered from
+installed SDK directories.
+
+For configured distribution formats, `doctor` reports `ready: false` while normal
+distribution is disabled. Inspect the individual tool, runtime and
+`unsigned-candidate-prerequisites` results when using `package-trial`.
+
 ## Build records and backend boundary
 
 Data lives in Cargo's resolved target directory:
@@ -423,8 +432,7 @@ The adapter uses **cargo-packager 0.11.8**, with its CLI feature disabled. Packa
 runs in an isolated worker with copied inputs, a controlled environment and
 serial access to the shared backend cache. Missing or invalid outputs fail the
 operation. If a later format fails, earlier outputs remain available with an
-incomplete report. See the [architecture](cargo-guic-design.md) for record,
-worker and checksum details.
+incomplete report.
 
 The backend may download external tools over HTTPS and caches them under the OS
 cache directory in `.cargo-packager`. The CLI's lock coordinates cargo-guic
@@ -433,11 +441,7 @@ does not guarantee offline operation or byte-for-byte reproducibility. Include
 [THIRD-PARTY-LICENSES.txt](../crates/cargo-guic/THIRD-PARTY-LICENSES.txt) when
 redistributing the CLI.
 
-## Testing
-
-See the [testing guide](cargo-guic-testing.md) for automated commands, example
-applications, and native installation checks. The CLI and build helper are
-unpublished workspace crates (`publish = false`).
+## References
 
 Windows integration references: Microsoft's [VERSIONINFO resource specification](https://learn.microsoft.com/en-us/windows/win32/menurc/versioninfo-resource)
 and [WebView2 Runtime distribution and detection guidance](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution).

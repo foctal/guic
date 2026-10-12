@@ -1,8 +1,8 @@
 # cargo-guic
 
 Application development and packaging tooling for GUIC. See the
-[usage guide](../../docs/cargo-guic.md), [configuration schema](../../docs/cargo-guic.schema.json),
-[architecture](../../docs/cargo-guic-design.md), and [testing guide](../../docs/cargo-guic-testing.md).
+[usage guide](../../docs/cargo-guic.md) and
+[configuration schema](../../docs/cargo-guic.schema.json).
 
 The CLI supports project discovery, configuration inspection, prerequisite checks,
 development execution and immutable build records. Native packaging is available
