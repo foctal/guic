@@ -174,7 +174,11 @@ pub(crate) fn compile(plan: &BuildPlan) -> Result<BuildRecord> {
             "build input changed during snapshot creation"
         );
     }
-    std::fs::File::open(&record.snapshot_path)?.sync_all()?;
+    // Windows FlushFileBuffers requires a handle opened for writing.
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&record.snapshot_path)?
+        .sync_all()?;
     process::check_cancelled()?;
     report::atomic_new(&root.join("records").join(format!("{id}.json")), &record)?;
     let _ = directory.keep();
