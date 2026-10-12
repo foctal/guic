@@ -28,7 +28,8 @@ pub(crate) fn collect(resources: &[Resource]) -> Result<Vec<Input>> {
             Component::Normal(name) => name.to_string_lossy().contains(['*', '?', '[']),
             _ => false,
         };
-        let wildcard = source.components().any(wildcard_component);
+        // Existing paths are literal, including names containing glob metacharacters.
+        let wildcard = !source.exists() && source.components().any(wildcard_component);
         let (base, files) = if wildcard {
             let mut base = PathBuf::new();
             for component in source.components() {
@@ -270,6 +271,20 @@ mod tests {
         assert!(stage(&inputs, &root.join("stage")).is_err());
         Ok(())
     }
+    #[test]
+    fn literal_resource_names_with_glob_characters_are_preserved() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let root = dir.path().canonicalize()?;
+        std::fs::write(root.join("data[1].txt"), "literal resource")?;
+        let inputs = collect(&[Resource {
+            source: root.join("data[1].txt").to_string_lossy().into_owned(),
+            destination: "data.txt".into(),
+        }])?;
+        assert_eq!(inputs.len(), 1);
+        assert_eq!(std::fs::read(&inputs[0].source)?, b"literal resource");
+        Ok(())
+    }
+
     #[cfg(unix)]
     #[test]
     fn framework_links_are_preserved_but_escaping_links_are_rejected() -> Result<()> {
