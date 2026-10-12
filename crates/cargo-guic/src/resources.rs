@@ -23,15 +23,16 @@ pub(crate) fn collect(resources: &[Resource]) -> Result<Vec<Input>> {
     for resource in resources {
         staging::reserve(&mut BTreeSet::new(), &resource.destination)?;
         let source = Path::new(&resource.source);
-        let wildcard = resource.source.contains(['*', '?', '[']);
+        // Windows verbatim prefixes contain a literal question mark.
+        let wildcard_component = |component: Component<'_>| match component {
+            Component::Normal(name) => name.to_string_lossy().contains(['*', '?', '[']),
+            _ => false,
+        };
+        let wildcard = source.components().any(wildcard_component);
         let (base, files) = if wildcard {
             let mut base = PathBuf::new();
             for component in source.components() {
-                if component
-                    .as_os_str()
-                    .to_string_lossy()
-                    .contains(['*', '?', '['])
-                {
+                if wildcard_component(component) {
                     break;
                 }
                 base.push(component);
