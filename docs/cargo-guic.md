@@ -5,15 +5,17 @@ It resolves Cargo projects, runs development builds, and packages recorded
 executables through cargo-packager. The CLI has no GUIC or GPUI runtime
 dependency and does not add packaging dependencies to applications.
 
-**Normal distribution formats are disabled in this version**: `build` without
-`--no-bundle` and `bundle` reject packaging. Use `package-trial` to generate native
-packages explicitly. Its reports label outputs as candidates; package generation
-does not establish an application's distribution readiness.
+`build` compiles the application and generates its configured native packages.
+`build --no-bundle` saves an executable snapshot without packaging; `bundle`
+packages a compatible saved snapshot without rebuilding. `package-trial` uses
+the same pipeline and marks its outputs as trial candidates.
 
 External resources support the common installed-resource resolver or an
 application-defined resolver. Signing and notarization require configured
-`required` policies and explicit `--execute-signing` on `package-trial`.
-Cross-compilation and universal binaries are outside this version's scope.
+`required` policies and explicit `--execute-signing` on `build`, `bundle`, or
+`package-trial`. Installation testing and publication remain application-owner
+responsibilities. Cross-compilation and universal binaries are outside this
+version's scope.
 
 ## Install from source
 
@@ -43,7 +45,8 @@ cargo guic build -p myapp --no-bundle
 
 `init` writes Guic.toml next to the application's Cargo.toml without replacing
 existing files. It requires an explicit identifier and accepts only project
-selectors; configure build settings in Guic.toml afterward.
+selectors. It initializes app/DMG, NSIS, and deb/AppImage formats for their
+native hosts; configure icons and other build settings in Guic.toml afterward.
 
 Cargo commands use `--locked` by default. Ensure the application has an up-to-date
 Cargo.lock, or pass `--unlocked` to allow Cargo to resolve and update dependencies.
@@ -54,16 +57,23 @@ implemented. `build --no-bundle` defaults to the release profile.
 
 ## Create a native package
 
-Configure icons and formats in Guic.toml, then build with `--no-bundle`. The build
-report includes an `id`; its saved record is under Cargo's resolved target
-directory at `guic/<package-id-hash>/records/<id>.json`.
-
-On macOS, for example:
+Configure icons and formats in Guic.toml, then compile and package in one step:
 
 ```sh
-cargo guic package-trial -p myapp --formats app \
-  --build-record /absolute/path/to/record.json
+cargo guic build -p myapp
 ```
+
+To package a previously built executable without recompiling:
+
+```sh
+cargo guic build -p myapp --no-bundle
+cargo guic bundle -p myapp --build-record /absolute/path/to/record.json
+```
+
+The build report includes an `id`; its saved record is under Cargo's resolved
+`target_directory/guic/<package-id-hash>/records/<id>.json`. `bundle` can omit
+`--build-record` when exactly one compatible record exists. It never guesses
+between multiple compatible builds.
 
 Use the same target, profile and feature selectors as the recorded build. A
 custom `--profile ship` requires a corresponding Cargo profile. `--formats`
@@ -75,15 +85,20 @@ replaces the configured list; omit it to use all formats configured for the host
 | Windows with MSVC | `nsis` |
 | Linux | `deb`, `appimage` |
 
-`package-trial` requires an explicit record, never compiles the application,
-and runs the before-bundle hook once. It creates separate copies for each format
-and reports `trial: true` and `acceptance: "not-verified"`. These fields describe
-the package generation workflow, not the result of your application's tests.
-See the [packaging guide](packaging.md) for platform distribution requirements.
+Each packaging operation runs the before-bundle hook once and creates separate
+copies for each format. Successful reports have `complete: true`; normal
+`build` and `bundle` reports have `trial: false`. The `acceptance: "not-verified"`
+field refers to application-specific installation testing, not package generation
+or signature verification. See the [packaging guide](packaging.md) for platform
+distribution requirements.
 
-`build` without `--no-bundle` and `bundle` are reserved for normal distribution
-and reject packaging in this version. `bundle` checks its selected record before
-reporting that restriction. Use `package-trial` for package generation.
+`package-trial` remains available for explicit candidate generation. It requires
+`--build-record`, never compiles, and reports `trial: true` while using the same
+resource, signing, and output checks as `bundle`:
+
+```sh
+cargo guic package-trial -p myapp --build-record /absolute/path/to/record.json
+```
 
 ## Commands
 
@@ -93,6 +108,8 @@ reporting that restriction. Use `package-trial` for package generation.
 | `inspect` | Show resolved settings and their provenance without running hooks. |
 | `doctor` | Check tools and runtime prerequisites; inspect a saved build with `--build-record`. |
 | `dev` | Build and run the application once. |
+| `build` | Build and generate configured native packages. |
+| `bundle` | Package a compatible saved executable without compiling. |
 | `build --no-bundle` | Build and save an executable snapshot and build record. |
 | `package-trial` | Generate native packages from an explicit build record. |
 | `schema` | Print the Guic.toml JSON Schema. |
@@ -124,7 +141,7 @@ bin = "myapp"
 [bundle]
 icons = ["assets/app.png"]
 
-# Formats used by package-trial on each native host.
+# Native package formats for build, bundle, and package-trial.
 [bundle.formats]
 macos = ["app", "dmg"]
 windows = ["nsis"]
@@ -295,13 +312,16 @@ macos-keychain-profile = "example-notary-profile"
 ```
 
 Store credentials separately using the OS tooling, then explicitly run
-`package-trial --execute-signing` with the usual project/record/format selectors.
+`build --execute-signing` or `bundle --execute-signing` with the usual
+project/record/format selectors. `package-trial --execute-signing` is also supported.
+`build --no-bundle` cannot be combined with `--execute-signing`.
 The profile is a credential reference, not a password. The backend signs nested
 macOS code; the worker checks the signature against the requested identity.
 DMGs are also signed. Required notarization submits an app ZIP or DMG, requires
 an `Accepted` result, staples and validates the ticket, then re-verifies the
 signature. These commands contact Apple's service only when explicitly executed
-with `--execute-signing`; inspection and ordinary builds never submit anything.
+with `--execute-signing`; inspection, diagnostics, and `build --no-bundle`
+never submit anything.
 
 Windows signing uses `windows-thumbprint` (40 hexadecimal characters) and
 `windows-timestamp-url` (an HTTPS RFC 3161 endpoint) with `code-signing =
@@ -395,9 +415,11 @@ locate MSVC automatically, but `doctor` requires `link.exe` and `dumpbin.exe` on
 `PATH`. Windows SDK tools such as `rc.exe` and `fxc.exe` are also discovered from
 installed SDK directories.
 
-For configured distribution formats, `doctor` reports `ready: false` while normal
-distribution is disabled. Inspect the individual tool, runtime and
-`unsigned-candidate-prerequisites` results when using `package-trial`.
+For configured formats, `doctor` includes a `packaging-prerequisites` check for
+native format support, required tools, resources, and signing configuration.
+Diagnostics validate signing policy without executing it or requiring
+`--execute-signing`. `ready: true` means all required checks passed; it does not
+certify installed application behavior or credential access.
 
 ## Build records and backend boundary
 

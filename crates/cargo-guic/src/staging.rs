@@ -35,9 +35,13 @@ pub(crate) fn lock(path: &Path) -> Result<File> {
     }
 }
 
-pub(crate) fn bundle(plan: &BuildPlan, record: &BuildRecord) -> Result<ArtifactReport> {
-    backend::validate(plan)?;
-    bundle_with(plan, record, false, false, backend::execute)
+pub(crate) fn bundle(
+    plan: &BuildPlan,
+    record: &BuildRecord,
+    execute_signing: bool,
+) -> Result<ArtifactReport> {
+    backend::validate(plan, execute_signing)?;
+    bundle_with(plan, record, false, execute_signing, backend::execute)
 }
 
 pub(crate) fn trial(
@@ -45,7 +49,7 @@ pub(crate) fn trial(
     record: &BuildRecord,
     execute_signing: bool,
 ) -> Result<ArtifactReport> {
-    backend::validate_trial(plan, execute_signing)?;
+    backend::validate(plan, execute_signing)?;
     bundle_with(plan, record, true, execute_signing, backend::execute)
 }
 
@@ -365,6 +369,93 @@ pub(crate) fn hash_directory(path: &Path) -> Result<(u64, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn normal_packaging_stages_every_format_and_reports_verified_signing() -> Result<()> {
+        for (os, formats) in [
+            ("macos", vec!["app", "dmg"]),
+            ("windows", vec!["nsis"]),
+            ("linux", vec!["deb", "appimage"]),
+        ] {
+            let (_temporary, mut plan, record) = build::fixture()?;
+            plan.os = os.into();
+            plan.formats = formats.iter().map(|f| (*f).into()).collect();
+            if os != "linux" {
+                plan.config.signing.code_signing = config::Policy::Required;
+            }
+            if os == "macos" {
+                plan.config.signing.notarization = config::Policy::Required;
+            }
+            let report = bundle_with(&plan, &record, false, os != "linux", |request, _| {
+                assert!(!request.trial);
+                assert_eq!(request.execute_signing, os != "linux");
+                assert!(
+                    std::fs::read(&request.executable)? == std::fs::read(&record.snapshot_path)?
+                );
+                let extension = match request.format.as_str() {
+                    "nsis" => "exe",
+                    "appimage" => "AppImage",
+                    other => other,
+                };
+                let path = request
+                    .output_directory
+                    .join(format!("Fixture.{extension}"));
+                if request.format == "app" {
+                    std::fs::create_dir_all(path.join("Contents/MacOS"))?;
+                    std::fs::copy(&request.executable, path.join("Contents/MacOS/fixture"))?;
+                } else {
+                    std::fs::write(&path, b"package fixture")?;
+                }
+                Ok(Response {
+                    schema_version: 1,
+                    error: None,
+                    outputs: vec![backend::Output {
+                        format: request.format.clone(),
+                        paths: vec![path],
+                        verification: crate::signing::Verification {
+                            code_signing: if os != "linux" {
+                                crate::signing::Outcome::Verified
+                            } else {
+                                crate::signing::Outcome::Disabled
+                            },
+                            notarization: if os == "macos" {
+                                crate::signing::Outcome::Verified
+                            } else {
+                                crate::signing::Outcome::Disabled
+                            },
+                            stapling: if os == "macos" {
+                                crate::signing::Outcome::Verified
+                            } else {
+                                crate::signing::Outcome::Disabled
+                            },
+                        },
+                    }],
+                })
+            })?;
+            assert!(report.complete);
+            assert!(!report.trial);
+            assert_eq!(report.acceptance, "not-verified");
+            assert_eq!(report.outputs.len(), formats.len());
+            assert_eq!(
+                report.code_signing,
+                if os != "linux" {
+                    "verified"
+                } else {
+                    "disabled"
+                }
+            );
+            assert_eq!(
+                report.notarization,
+                if os == "macos" {
+                    "verified"
+                } else {
+                    "disabled"
+                }
+            );
+            build::verify(&plan, &record)?;
+        }
+        Ok(())
+    }
+
     #[test]
     fn contended_lock_waits_until_the_owner_releases_it() -> Result<()> {
         let directory = tempfile::tempdir()?;

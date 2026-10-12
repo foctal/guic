@@ -72,9 +72,10 @@ pub(crate) fn diagnose(plan: &BuildPlan, executable: Option<&std::path::Path>) -
         || plan.config.signing.code_signing == crate::config::Policy::Required
         || plan.config.signing.notarization == crate::config::Policy::Required
     {
-        let result = backend::validate(plan);
+        // Validate configured policies without executing signing or requiring command consent.
+        let result = backend::validate(plan, true);
         checks.push(Check {
-            name: "packaging-acceptance".into(),
+            name: "packaging-prerequisites".into(),
             passed: Some(result.is_ok()),
             required: true,
             detail: result
@@ -82,11 +83,6 @@ pub(crate) fn diagnose(plan: &BuildPlan, executable: Option<&std::path::Path>) -
                 .map(|e| e.to_string())
                 .unwrap_or_else(|| "Validated".into()),
         });
-    }
-    if !plan.formats.is_empty() {
-        let trial = backend::validate_trial(plan, false);
-        checks.push(Check { name: "unsigned-candidate-prerequisites".into(), passed: Some(trial.is_ok()), required: false,
-            detail: trial.err().map(|e| e.to_string()).unwrap_or_else(|| "package-trial can exercise the native backend; normal distribution is disabled in this version".into()) });
     }
     if let Ok(text) = std::fs::read_to_string(plan.project.workspace_root.join("Cargo.lock"))
         && let Ok(lock) = toml::from_str::<toml::Value>(&text)

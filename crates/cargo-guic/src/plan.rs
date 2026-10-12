@@ -62,7 +62,7 @@ impl BuildPlan {
                 "before_bundle": self.config.hooks.before_bundle.is_some(),
                 "arguments": "omitted from inspection"
             },
-            "packaging_acceptance": "normal distribution disabled; use package-trial for explicit native packaging",
+            "packaging_acceptance": "native packaging supported; installation acceptance remains application-specific",
             "build_record_scope": "Known build conditions, not proof of current source or reproducibility"
         })
     }

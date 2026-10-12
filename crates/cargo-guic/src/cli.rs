@@ -32,6 +32,9 @@ pub(crate) enum Command {
         selectors: Selectors,
         #[arg(long)]
         no_bundle: bool,
+        /// Explicitly execute the configured signing and notarization policies.
+        #[arg(long, conflicts_with = "no_bundle")]
+        execute_signing: bool,
     },
     /// Package a verified immutable build snapshot without compiling.
     Bundle {
@@ -39,6 +42,9 @@ pub(crate) enum Command {
         selectors: Selectors,
         #[arg(long)]
         build_record: Option<PathBuf>,
+        /// Explicitly execute the configured signing and notarization policies.
+        #[arg(long)]
+        execute_signing: bool,
     },
     /// Generate candidate packages for manual acceptance; never certifies distribution support.
     PackageTrial {

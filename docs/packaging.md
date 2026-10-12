@@ -5,10 +5,11 @@ Application owners control those operations through their packaging workflow.
 
 The [cargo-guic CLI](cargo-guic.md) provides project planning, development builds,
 immutable build records, native packaging, resource staging and explicit signing
-operations through a cargo-packager library adapter. In this version, native
-packaging uses `package-trial`; normal `build`/`bundle` distribution formats are
-disabled. See the CLI guide for commands and restrictions. Release execution
-and approval remain application-owner responsibilities.
+operations through a cargo-packager library adapter. `build` compiles and packages;
+`bundle` packages a saved executable without recompiling. `package-trial` uses
+the same pipeline for candidate artifacts. Signing and notarization require
+explicit `--execute-signing`. See the CLI guide for commands and configuration.
+Release execution and approval remain application-owner responsibilities.
 
 ## Current Distribution Boundary
 
@@ -19,8 +20,8 @@ still pass a package dry run and metadata review before the maintainer publishes
 it.
 
 The platform checklists below cover application distribution in general.
-cargo-guic currently exposes app/DMG, NSIS and deb/AppImage through
-`package-trial`; other formats require separate tooling.
+cargo-guic supports app/DMG, NSIS and deb/AppImage on their native hosts;
+other formats require separate tooling.
 
 ## macOS
 

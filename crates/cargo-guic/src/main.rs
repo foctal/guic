@@ -43,9 +43,14 @@ fn run(cli: &Cli) -> Result<serde_json::Value> {
                 doctor::diagnose(&plan, record.as_ref().map(|r| r.snapshot_path.as_path()));
             Ok(serde_json::to_value(diagnosis)?)
         }
-        Command::Build { no_bundle, .. } => {
+        Command::Build {
+            no_bundle,
+            execute_signing,
+            ..
+        } => {
             if !no_bundle {
-                backend::validate(&plan).context(report::stage("prerequisites", Some(&plan)))?;
+                backend::validate(&plan, *execute_signing)
+                    .context(report::stage("prerequisites", Some(&plan)))?;
             }
             let record = build::compile(&plan).context(report::stage("build", Some(&plan)))?;
             if *no_bundle {
@@ -54,17 +59,23 @@ fn run(cli: &Cli) -> Result<serde_json::Value> {
                 let plan = plan::resolve(selectors, false)
                     .context(report::stage("configuration", Some(&plan)))?;
                 Ok(serde_json::to_value(
-                    staging::bundle(&plan, &record)
+                    staging::bundle(&plan, &record, *execute_signing)
                         .context(report::stage("packaging", Some(&plan)))?,
                 )?)
             }
         }
-        Command::Bundle { build_record, .. } => {
+        Command::Bundle {
+            build_record,
+            execute_signing,
+            ..
+        } => {
             let record = build::select_record(&plan, build_record.as_deref())
                 .context(report::stage("verification", Some(&plan)))?;
-            backend::validate(&plan).context(report::stage("prerequisites", Some(&plan)))?;
+            backend::validate(&plan, *execute_signing)
+                .context(report::stage("prerequisites", Some(&plan)))?;
             Ok(serde_json::to_value(
-                staging::bundle(&plan, &record).context(report::stage("packaging", Some(&plan)))?,
+                staging::bundle(&plan, &record, *execute_signing)
+                    .context(report::stage("packaging", Some(&plan)))?,
             )?)
         }
         Command::PackageTrial {
@@ -72,7 +83,7 @@ fn run(cli: &Cli) -> Result<serde_json::Value> {
             execute_signing,
             ..
         } => {
-            backend::validate_trial(&plan, *execute_signing)
+            backend::validate(&plan, *execute_signing)
                 .context(report::stage("prerequisites", Some(&plan)))?;
             let record = build::select_record(&plan, Some(build_record))
                 .context(report::stage("verification", Some(&plan)))?;

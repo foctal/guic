@@ -34,7 +34,7 @@ pub(crate) fn validate(config: &Signing, os: &str, execute: bool) -> Result<()> 
     }
     ensure!(
         execute,
-        "required signing needs explicit --execute-signing on package-trial"
+        "required signing needs explicit --execute-signing on build, bundle, or package-trial"
     );
     match os {
         "macos" => {

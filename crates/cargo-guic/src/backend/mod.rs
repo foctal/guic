@@ -1,7 +1,7 @@
 mod cargo_packager;
 
-use crate::{config::Policy, plan::BuildPlan, process, report};
-use anyhow::{Context, Result, bail, ensure};
+use crate::{plan::BuildPlan, process, report};
+use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
@@ -10,28 +10,12 @@ use std::{
 
 pub(crate) const VERSION: &str = "0.11.8";
 
-pub(crate) fn validate(plan: &BuildPlan) -> Result<()> {
-    ensure!(
-        plan.config.signing.code_signing == Policy::Off
-            && plan.config.signing.notarization == Policy::Off,
-        "signing stage: required signing/notarization requires package-trial --execute-signing; no credentials will be used"
-    );
-    ensure!(
-        !plan.formats.is_empty(),
-        "no package formats configured; configure bundle.formats or use build --no-bundle"
-    );
-    for format in &plan.formats {
-        accepted(&plan.target, format)?;
-    }
-    Ok(())
-}
-
-pub(crate) fn validate_trial(plan: &BuildPlan, execute_signing: bool) -> Result<()> {
-    ensure!(
-        !plan.formats.is_empty(),
-        "package-trial requires at least one format"
-    );
+pub(crate) fn validate(plan: &BuildPlan, execute_signing: bool) -> Result<()> {
     crate::signing::validate(&plan.config.signing, &plan.os, execute_signing)?;
+    ensure!(
+        !plan.formats.is_empty(),
+        "no package formats configured; configure bundle.formats, pass --formats, or use build --no-bundle"
+    );
     for format in &plan.formats {
         crate::platform::native_format(&plan.target, format)?;
     }
@@ -43,13 +27,6 @@ pub(crate) fn validate_trial(plan: &BuildPlan, execute_signing: bool) -> Result<
     }
     crate::resources::collect(&plan.config.bundle.resources)?;
     Ok(())
-}
-
-fn accepted(target: &str, format: &str) -> Result<()> {
-    // Enable normal distribution only for explicitly supported target/format combinations.
-    bail!(
-        "normal distribution is disabled for target {target}, format {format}; use package-trial with an explicit build record, or build --no-bundle"
-    )
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -154,9 +131,6 @@ pub(crate) fn execute(request: &Request, directory: &Path) -> Result<Response> {
 pub(crate) fn worker(request: &Path, response: &Path) -> Result<()> {
     let request: Request = report::read(request)?;
     crate::platform::native_format(&request.target, &request.format)?;
-    if !request.trial {
-        accepted(&request.target, &request.format)?;
-    }
     crate::signing::validate(
         &request.signing,
         crate::plan::target_os(&request.target)?,
@@ -224,13 +198,28 @@ mod tests {
         Ok(())
     }
     #[test]
-    fn all_unvalidated_cells_fail_closed() {
-        for (target, format) in [
-            ("aarch64-apple-darwin", "app"),
-            ("x86_64-pc-windows-msvc", "nsis"),
-            ("x86_64-unknown-linux-gnu", "deb"),
-        ] {
-            assert!(accepted(target, format).is_err());
-        }
+    fn native_packaging_accepts_supported_formats_and_rejects_other_platforms() -> Result<()> {
+        let (_temporary, mut plan, _) = crate::build::fixture()?;
+        let (target, format) = match std::env::consts::OS {
+            "macos" => (format!("{}-apple-darwin", std::env::consts::ARCH), "app"),
+            "windows" => (
+                format!("{}-pc-windows-msvc", std::env::consts::ARCH),
+                "nsis",
+            ),
+            _ => (
+                format!("{}-unknown-linux-gnu", std::env::consts::ARCH),
+                "deb",
+            ),
+        };
+        plan.target = target;
+        plan.os = std::env::consts::OS.into();
+        plan.formats = vec![format.into()];
+        validate(&plan, false)?;
+        plan.formats = vec!["unsupported".into()];
+        assert!(validate(&plan, false).is_err());
+        plan.formats.clear();
+        assert!(validate(&plan, false).is_err());
+        assert!(crate::platform::native_format("wasm32-unknown-unknown", "app").is_err());
+        Ok(())
     }
 }

@@ -145,7 +145,14 @@ pub(crate) fn init(args: &Init) -> Result<serde_json::Value> {
             bin: Some(project.bin),
             ..Default::default()
         },
-        bundle: Default::default(),
+        bundle: config::Bundle {
+            formats: config::Formats {
+                macos: vec!["app".into(), "dmg".into()],
+                windows: vec!["nsis".into()],
+                linux: vec!["deb".into(), "appimage".into()],
+            },
+            ..Default::default()
+        },
         hooks: Default::default(),
         signing: Default::default(),
         runtime: Default::default(),

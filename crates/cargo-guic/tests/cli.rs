@@ -239,12 +239,18 @@ fn init_does_not_overwrite_and_requires_explicit_identity() -> Result<()> {
         "never overwritten",
     )?;
     assert_eq!(fs::read(path)?, first);
-    success(invoke(dir.path(), &["inspect", "-p", "other"])?)?;
+    let inspection = success(invoke(dir.path(), &["inspect", "-p", "other"])?)?;
+    let expected = match std::env::consts::OS {
+        "macos" => serde_json::json!(["app", "dmg"]),
+        "windows" => serde_json::json!(["nsis"]),
+        _ => serde_json::json!(["deb", "appimage"]),
+    };
+    assert_eq!(inspection["plan"]["formats"], expected);
     Ok(())
 }
 
 #[test]
-fn hooks_fail_builds_and_unvalidated_packaging_fails_before_hooks() -> Result<()> {
+fn configured_packaging_reaches_build_hooks() -> Result<()> {
     let dir = fixture()?;
     let path = dir.path().join("app/Guic.toml");
     let mut config = fs::read_to_string(&path)?;
@@ -255,10 +261,7 @@ fn hooks_fail_builds_and_unvalidated_packaging_fails_before_hooks() -> Result<()
     };
     config.push_str(&format!("\n[bundle.formats]\n{os} = ['{format}']\n[hooks.before-build]\nprogram = 'missing-fixture-command'\nargs = []\ncwd = '.'\n"));
     fs::write(path, config)?;
-    failure(
-        invoke(dir.path(), &["build", "-p", "app"])?,
-        "normal distribution is disabled",
-    )?;
+    failure(invoke(dir.path(), &["build", "-p", "app"])?, "hook failed")?;
     failure(
         invoke(dir.path(), &["build", "-p", "app", "--no-bundle"])?,
         "hook failed",
@@ -550,16 +553,23 @@ fn resource_contract_signing_and_doctor_are_explicit() -> Result<()> {
     )?;
     failure(
         invoke(directory.path(), &["build", "-p", "app"])?,
-        "package-trial --execute-signing",
+        "--execute-signing",
     )?;
     let diagnosis = invoke(directory.path(), &["doctor", "-p", "app"])?;
     assert!(!diagnosis.status.success());
     let report: Value = serde_json::from_slice(&diagnosis.stdout)?;
     assert_eq!(report["ready"], false);
     assert!(
-        report
+        report["checks"]
+            .as_array()
+            .context("checks")?
+            .iter()
+            .any(|check| check["name"] == "packaging-prerequisites" && check["passed"] == false)
+    );
+    assert!(
+        !report
             .to_string()
-            .contains("package-trial --execute-signing")
+            .contains("needs explicit --execute-signing")
     );
     fs::write(
         &path,
@@ -728,7 +738,30 @@ fn manual_native_backend_candidate() -> Result<()> {
         )
         .exists()
     );
-    eprintln!("Candidate evidence preserved in {}", dir.keep().display());
+    let packaged = success(invoke(
+        dir.path(),
+        &[
+            "bundle",
+            "-p",
+            "app",
+            "--formats",
+            format,
+            "--build-record",
+            record_path.to_str().context("record path")?,
+        ],
+    )?)?;
+    assert_eq!(packaged["trial"], false);
+    assert_eq!(packaged["complete"], true);
+    let built = success(invoke(
+        dir.path(),
+        &["build", "-p", "app", "--formats", format],
+    )?)?;
+    assert_eq!(built["trial"], false);
+    assert_eq!(built["complete"], true);
+    for report in [&packaged, &built] {
+        assert!(Path::new(report["outputs"][0]["path"].as_str().context("artifact")?).exists());
+    }
+    eprintln!("Packaging evidence preserved in {}", dir.keep().display());
     eprintln!("{}", serde_json::to_string_pretty(&candidate)?);
     Ok(())
 }
@@ -933,5 +966,97 @@ fn build_input_names_cannot_overwrite_the_executable_snapshot() -> Result<()> {
         "snapshot must preserve executable bytes"
     );
     success(invoke(dir.path(), &["dev", "-p", "app"])?)?;
+    Ok(())
+}
+
+#[test]
+fn normal_bundle_reaches_packaging_hooks_without_rebuilding() -> Result<()> {
+    let dir = fixture()?;
+    success(invoke(dir.path(), &["build", "-p", "app", "--no-bundle"])?)?;
+    let path = dir.path().join("app/Guic.toml");
+    let (os, format) = match std::env::consts::OS {
+        "macos" => ("macos", "app"),
+        "windows" => ("windows", "nsis"),
+        _ => ("linux", "deb"),
+    };
+    fs::write(
+        &path,
+        fs::read_to_string(&path)?
+            + &format!(
+                "\n[bundle.formats]\n{os} = ['{format}']\n[hooks.before-bundle]\nprogram = 'missing-bundle-fixture-command'\ncwd = '.'\n"
+            ),
+    )?;
+    // Packaging must use the recorded executable even when current sources cannot compile.
+    fs::write(
+        dir.path().join("app/src/main.rs"),
+        "compile_error!(\"must not rebuild\");",
+    )?;
+    failure(invoke(dir.path(), &["bundle", "-p", "app"])?, "hook failed")?;
+    fs::write(dir.path().join("app/src/main.rs"), "fn main() {}")?;
+    // The combined build path must also reach packaging after recording the binary.
+    failure(invoke(dir.path(), &["build", "-p", "app"])?, "hook failed")?;
+    Ok(())
+}
+
+#[test]
+fn normal_commands_require_explicit_signing_execution() -> Result<()> {
+    let dir = fixture()?;
+    let path = dir.path().join("app/Guic.toml");
+    fs::write(
+        &path,
+        fs::read_to_string(&path)? + "\n[signing]\ncode-signing = 'required'\n",
+    )?;
+    success(invoke(dir.path(), &["build", "-p", "app", "--no-bundle"])?)?;
+    for command in ["build", "bundle"] {
+        failure(
+            invoke(dir.path(), &[command, "-p", "app"])?,
+            "--execute-signing",
+        )?;
+        let output = invoke(dir.path(), &[command, "-p", "app", "--execute-signing"])?;
+        assert!(!output.status.success());
+        let error: Value = serde_json::from_slice(&output.stdout)?;
+        let expected = match std::env::consts::OS {
+            "macos" => "signing.macos-identity",
+            "windows" => "signing.windows-thumbprint",
+            _ => "not defined for Linux",
+        };
+        assert!(error.to_string().contains(expected), "{error}");
+    }
+    failure(
+        invoke(
+            dir.path(),
+            &["build", "-p", "app", "--no-bundle", "--execute-signing"],
+        )?,
+        "cannot be used with",
+    )?;
+    Ok(())
+}
+
+#[test]
+fn doctor_checks_native_packaging_without_running_hooks() -> Result<()> {
+    let dir = fixture()?;
+    let path = dir.path().join("app/Guic.toml");
+    let (os, format) = match std::env::consts::OS {
+        "macos" => ("macos", "app"),
+        "windows" => ("windows", "nsis"),
+        _ => ("linux", "deb"),
+    };
+    fs::write(
+        &path,
+        fs::read_to_string(&path)?
+            + &format!(
+                "\n[bundle.formats]\n{os} = ['{format}']\n[hooks.before-bundle]\nprogram = 'missing-bundle-fixture-command'\ncwd = '.'\n"
+            ),
+    )?;
+    let output = invoke(dir.path(), &["doctor", "-p", "app"])?;
+    let report: Value = serde_json::from_slice(&output.stdout)?;
+    assert!(
+        report["checks"]
+            .as_array()
+            .context("checks")?
+            .iter()
+            .any(|check| check["name"] == "packaging-prerequisites" && check["passed"] == true)
+    );
+    assert!(!dir.path().join("output with spaces/guic").exists());
     Ok(())
 }
