@@ -283,7 +283,13 @@ impl ChartAxis {
     }
 
     fn normalize(self, value: f64) -> f64 {
-        ((value - self.min) / (self.max - self.min)).clamp(0.0, 1.0)
+        let span = self.max - self.min;
+        let normalized = if span.is_infinite() {
+            (value / 2.0 - self.min / 2.0) / (self.max / 2.0 - self.min / 2.0)
+        } else {
+            (value - self.min) / span
+        };
+        normalized.clamp(0.0, 1.0)
     }
 
     /// Returns the axis span.
@@ -3492,6 +3498,14 @@ fn svg_palette(index: usize) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn extreme_finite_axis_preserves_endpoints_and_midpoint() {
+        let axis = super::ChartAxis::new(-f64::MAX, f64::MAX);
+        assert_eq!(axis.normalize(-f64::MAX), 0.0);
+        assert_eq!(axis.normalize(0.0), 0.5);
+        assert_eq!(axis.normalize(f64::MAX), 1.0);
+    }
+
     use super::{
         BubbleChart, ChartAxis, ChartAxisSide, ChartDataset, ChartDomainFormatter,
         ChartDomainValue, ChartEasing, ChartHit, ChartInteractionCommand, ChartInteractionState,
