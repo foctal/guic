@@ -135,49 +135,56 @@ impl JsonStore {
 
     /// Serializes and replaces the stored value while preserving one backup.
     pub fn save<T: Serialize>(&self, value: &T) -> Result<(), PersistenceError> {
-        let parent = self.path.parent().unwrap_or_else(|| Path::new("."));
+        let parent = self
+            .path
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
         fs::create_dir_all(parent)
             .map_err(|source| io_error("create directory", parent, source))?;
 
         let temporary = temporary_path(&self.path);
-        let result = self.write_temporary(&temporary, value);
-        if let Err(error) = result {
-            let _ = fs::remove_file(&temporary);
-            return Err(error);
-        }
+        let file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temporary)
+            .map_err(|source| io_error("create temporary file", &temporary, source))?;
+        // Only clean up a temporary file that this save successfully created.
+        let result = (|| {
+            self.write_temporary(file, &temporary, value)?;
 
-        let backup = self.backup_path();
-        if self.path.exists() {
-            if backup.exists() {
-                fs::remove_file(&backup)
-                    .map_err(|source| io_error("remove old backup", &backup, source))?;
+            let backup = self.backup_path();
+            if self.path.exists() {
+                if backup.exists() {
+                    fs::remove_file(&backup)
+                        .map_err(|source| io_error("remove old backup", &backup, source))?;
+                }
+                fs::rename(&self.path, &backup)
+                    .map_err(|source| io_error("create backup", &self.path, source))?;
             }
-            fs::rename(&self.path, &backup)
-                .map_err(|source| io_error("create backup", &self.path, source))?;
-        }
 
-        if let Err(source) = fs::rename(&temporary, &self.path) {
-            if backup.exists() && !self.path.exists() {
-                let _ = fs::rename(&backup, &self.path);
+            if let Err(source) = fs::rename(&temporary, &self.path) {
+                if backup.exists() && !self.path.exists() {
+                    let _ = fs::rename(&backup, &self.path);
+                }
+                return Err(io_error("replace", &self.path, source));
             }
-            let _ = fs::remove_file(&temporary);
-            return Err(io_error("replace", &self.path, source));
-        }
 
-        sync_directory(parent);
-        Ok(())
+            sync_directory(parent);
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(&temporary);
+        }
+        result
     }
 
     fn write_temporary<T: Serialize>(
         &self,
+        file: File,
         temporary: &Path,
         value: &T,
     ) -> Result<(), PersistenceError> {
-        let file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(temporary)
-            .map_err(|source| io_error("create temporary file", temporary, source))?;
         let mut writer = BufWriter::new(file);
         serde_json::to_writer_pretty(&mut writer, value).map_err(|source| {
             PersistenceError::Serialize {
@@ -358,5 +365,24 @@ mod tests {
             store.load_recovering::<Settings>(),
             Err(PersistenceError::Recovery { .. })
         ));
+    }
+
+    #[test]
+    fn failed_backup_does_not_leak_temporary_files() {
+        let directory = tempdir().expect("temporary directory");
+        let store = JsonStore::new(directory.path().join("settings.json"));
+        store.save(&Settings::default()).expect("initial save");
+        std::fs::create_dir(store.backup_path()).expect("block backup replacement");
+        assert!(store.save(&Settings::default()).is_err());
+        assert_eq!(
+            std::fs::read_dir(directory.path())
+                .expect("entries")
+                .count(),
+            2
+        );
+        assert_eq!(
+            store.load::<Settings>().expect("original survives"),
+            Some(Settings::default())
+        );
     }
 }
