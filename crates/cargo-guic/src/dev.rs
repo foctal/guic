@@ -130,12 +130,17 @@ fn fingerprint(
     excluded: &[PathBuf],
 ) -> Result<BTreeMap<PathBuf, (u64, std::time::SystemTime)>> {
     let mut result = BTreeMap::new();
+    let excluded = excluded
+        .iter()
+        .map(|path| normalize_watch_path(path))
+        .collect::<Vec<_>>();
     for root in roots {
+        let root = normalize_watch_path(root);
         if !root.exists() {
             continue;
         }
         let excluded = excluded.to_vec();
-        let walker = ignore::WalkBuilder::new(root)
+        let walker = ignore::WalkBuilder::new(&root)
             .hidden(false)
             .require_git(false)
             .filter_entry(move |entry| {
@@ -175,6 +180,25 @@ fn fingerprint(
     Ok(result)
 }
 
+fn normalize_watch_path(path: &std::path::Path) -> PathBuf {
+    // Resolve existing prefixes as well, so missing outputs below a symlinked
+    // directory use the same spelling as the canonical workspace root.
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            component => normalized.push(component.as_os_str()),
+        }
+        if let Ok(canonical) = normalized.canonicalize() {
+            normalized = canonical;
+        }
+    }
+    normalized
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -193,6 +217,35 @@ mod tests {
         std::fs::write(dir.path().join("main.rs"), "source")?;
         assert_ne!(fingerprint(&roots, &excluded)?, before);
         std::fs::remove_file(dir.path().join("main.rs"))?;
+        assert_eq!(fingerprint(&roots, &excluded)?, before);
+        Ok(())
+    }
+
+    #[test]
+    fn watcher_exclusions_accept_parent_components() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let root = dir.path().canonicalize()?;
+        std::fs::create_dir(root.join("source"))?;
+        std::fs::create_dir(root.join("generated"))?;
+        let roots = vec![root.clone()];
+        let excluded = vec![root.join("source/../generated")];
+        let before = fingerprint(&roots, &excluded)?;
+        std::fs::write(root.join("generated/output"), "generated")?;
+        assert_eq!(fingerprint(&roots, &excluded)?, before);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn watcher_excludes_future_files_below_symlinked_directories() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let root = dir.path().canonicalize()?;
+        std::fs::create_dir(root.join("generated"))?;
+        std::os::unix::fs::symlink(root.join("generated"), root.join("alias"))?;
+        let roots = vec![root.clone()];
+        let excluded = vec![root.join("alias/output")];
+        let before = fingerprint(&roots, &excluded)?;
+        std::fs::write(root.join("generated/output"), "generated")?;
         assert_eq!(fingerprint(&roots, &excluded)?, before);
         Ok(())
     }
