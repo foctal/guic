@@ -5,14 +5,14 @@
 //! # Example
 //!
 //! ```no_run
-//! use gpui::{AppContext as _};
+//! use gpui::{AppContext as _, ParentElement as _, div};
 //! use guic::prelude::*;
 //!
 //! struct ExampleView;
 //!
 //! impl Render for ExampleView {
 //!     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-//!         Label::new(format!("Theme: {}", cx.theme().name))
+//!         div().child(format!("Theme: {}", cx.theme().name))
 //!     }
 //! }
 //!
@@ -38,8 +38,21 @@ pub mod prelude;
 pub use cargo_packager_updater as updater;
 
 pub use guic_core as core;
-pub use guic_macros::{shared_format, shared_string, theme_name};
+pub use guic_macros::{shared_format, shared_string};
 pub use guic_tokens as tokens;
+
+/// Creates a theme name without requiring a direct `guic-tokens` dependency.
+///
+/// ```
+/// let name = guic::theme_name!("Example");
+/// assert_eq!(name.to_string(), "Example");
+/// ```
+#[macro_export]
+macro_rules! theme_name {
+    ($name:literal) => {
+        $crate::tokens::ThemeName::from($name)
+    };
+}
 
 #[cfg(feature = "assets")]
 pub use guic_assets as assets;

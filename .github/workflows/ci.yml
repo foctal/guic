@@ -64,6 +64,9 @@ jobs:
       - name: Docs
         if: runner.os == 'Linux'
         run: cargo doc --workspace --all-features --no-deps
+      - name: Minimal feature documentation examples
+        if: runner.os == 'Linux'
+        run: cargo test -p guic --no-default-features --doc
       - name: Theme schema
         if: runner.os == 'Linux'
         run: cargo run -p xtask -- schema --check
