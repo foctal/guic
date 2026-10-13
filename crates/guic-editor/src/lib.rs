@@ -372,7 +372,10 @@ impl EditorBuffer {
         self.replace_range(position..position, text);
     }
 
-    /// Searches for plain text and returns line-aware matches.
+    /// Searches for plain text within each line and returns line-aware matches.
+    ///
+    /// Match ranges cover whole graphemes, including when the query matches
+    /// only part of a combining sequence or emoji.
     #[must_use]
     pub fn search(&self, query: &str) -> Vec<EditorSearchMatch> {
         if query.is_empty() {
@@ -384,7 +387,11 @@ impl EditorBuffer {
             while let Some(offset) = line.as_ref()[byte_start..].find(query) {
                 let start_byte = byte_start + offset;
                 let end_byte = start_byte + query.len();
-                let start = byte_to_grapheme(line, start_byte);
+                let start = line
+                    .grapheme_indices(true)
+                    .take_while(|(index, _)| *index <= start_byte)
+                    .count()
+                    .saturating_sub(1);
                 let end = byte_to_grapheme(line, end_byte);
                 matches.push(EditorSearchMatch {
                     range: EditorPosition::new(line_index, start)
@@ -397,14 +404,31 @@ impl EditorBuffer {
         matches
     }
 
-    /// Replaces every non-overlapping plain-text match and returns the count.
+    /// Replaces every non-overlapping plain-text match within each line.
+    ///
+    /// Returns the number of matches. Only the matched text is replaced, even
+    /// when it is part of a grapheme; unmatched combining marks are preserved.
     pub fn replace_all(&mut self, query: &str, replacement: &str) -> usize {
-        let mut matches = self.search(query);
-        let count = matches.len();
-        matches.sort_by_key(|matched| std::cmp::Reverse(matched.range.start));
-        for matched in matches {
-            self.replace_range(matched.range, replacement);
+        if query.is_empty() {
+            return 0;
         }
+        let mut count = 0;
+        let mut lines = Vec::new();
+        for line in &self.lines {
+            let matches = line.matches(query).count();
+            if matches == 0 {
+                lines.push(line.clone());
+                continue;
+            }
+            count += matches;
+            let replaced = line.replace(query, replacement);
+            lines.extend(
+                replaced
+                    .split('\n')
+                    .map(|line| SharedString::from(line.to_owned())),
+            );
+        }
+        self.lines = lines;
         count
     }
 
@@ -770,8 +794,11 @@ impl CodeEditor {
 impl RenderOnce for CodeEditor {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = Theme::global(cx);
-        let end =
-            (self.options.first_line + self.options.visible_lines).min(self.buffer.line_count());
+        let end = self
+            .options
+            .first_line
+            .saturating_add(self.options.visible_lines)
+            .min(self.buffer.line_count());
         let mut root = div()
             .id(self.id)
             .w_full()
@@ -1477,6 +1504,30 @@ fn severity_color(severity: DiagnosticSeverity, theme: &Theme) -> gpui::Hsla {
 
 #[cfg(test)]
 mod tests {
+    #[gpui::test]
+    fn extreme_visible_line_count_renders_without_overflow(cx: &mut gpui::TestAppContext) {
+        struct Harness;
+        impl gpui::Render for Harness {
+            fn render(
+                &mut self,
+                _: &mut gpui::Window,
+                _: &mut gpui::Context<Self>,
+            ) -> impl gpui::IntoElement {
+                super::CodeEditor::new("editor", super::EditorBuffer::from_text("first\nlast"))
+                    .options(
+                        super::CodeEditorOptions::default()
+                            .first_line(1)
+                            .visible_lines(usize::MAX),
+                    )
+            }
+        }
+        cx.update(|cx| {
+            guic_core::init(cx);
+            guic_tokens::init(cx);
+        });
+        cx.add_window_view(|_, _| Harness);
+    }
+
     use super::{
         EditorBuffer, EditorPosition, EditorSelection, EditorSession, SyntaxTokenKind,
         edit_deleting, edit_indenting_lines, edit_replacing_selections, move_selections,
@@ -1501,6 +1552,40 @@ mod tests {
 
         assert_eq!(matches.len(), 2);
         assert_eq!(matches[1].range.start, EditorPosition::new(1, 5));
+    }
+
+    #[test]
+    fn replacement_preserves_unmatched_parts_of_graphemes() {
+        let mut buffer = EditorBuffer::from_text("e\u{301} x");
+        assert_eq!(buffer.replace_all("\u{301}", ""), 1);
+        assert_eq!(buffer.text(), "e x");
+
+        let mut buffer = EditorBuffer::from_text("e\u{301} x");
+        assert_eq!(buffer.replace_all("e", "a"), 1);
+        assert_eq!(buffer.text(), "a\u{301} x");
+    }
+
+    #[test]
+    fn partial_grapheme_search_covers_the_matched_character() {
+        let buffer = EditorBuffer::from_text("e\u{301} x");
+        let matches = buffer.search("\u{301}");
+        assert_eq!(matches.len(), 1);
+        assert_eq!(buffer.text_in_range(matches[0].range.clone()), "e\u{301}");
+    }
+
+    #[test]
+    fn replacement_handles_emoji_sequences_and_inserted_newlines() {
+        let mut buffer =
+            EditorBuffer::from_text("\u{1f469}\u{200d}\u{1f4bb} \u{1f469}\u{200d}\u{1f4bb}");
+        assert_eq!(buffer.replace_all("\u{1f4bb}", "\u{1f52c}"), 2);
+        assert_eq!(
+            buffer.text(),
+            "\u{1f469}\u{200d}\u{1f52c} \u{1f469}\u{200d}\u{1f52c}"
+        );
+        let mut buffer = EditorBuffer::from_text("aa aa\nuntouched");
+        assert_eq!(buffer.replace_all("aa", "x\ny"), 2);
+        assert_eq!(buffer.text(), "x\ny x\ny\nuntouched");
+        assert_eq!(buffer.line_count(), 4);
     }
 
     #[test]
