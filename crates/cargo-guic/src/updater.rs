@@ -13,7 +13,7 @@ use std::{
 pub(crate) enum Command {
     /// Generate a key pair without replacing existing files. Never uploads keys.
     Keygen {
-        /// Private key destination; the public key is written to <output>.pub.
+        /// Private key destination; the public key is written to `<output>.pub`.
         #[arg(long)]
         output: PathBuf,
         /// Environment variable holding the password; absent means an empty password.

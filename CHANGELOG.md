@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Preserve unmatched combining marks during editor search-and-replace, cover
+  partial grapheme matches in search selections, and bound visible-line arithmetic.
+- Clean up JSON save temporaries after backup failures without removing files
+  that the save did not create.
+- Normalize file watcher roots and exclusions, including parent components and
+  symlinked directory prefixes.
+- Keep chart coordinates finite for axis ranges spanning extreme finite values.
+- Make umbrella-crate examples compile without default features and allow
+  `guic::theme_name!` without a direct `guic-tokens` dependency.
 - Add opt-in cargo-guic file watching with automatic rebuild, restart, and recovery
   after build failures.
 - Support macOS Universal Binary builds and packaging through
