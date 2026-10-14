@@ -1,6 +1,6 @@
 use gpui::{
-    App, AppContext as _, Context, Global, IntoElement, ParentElement as _, Render, Styled as _,
-    Window, div,
+    App, AppContext as _, Context, Global, InteractiveElement as _, IntoElement,
+    ParentElement as _, Render, Styled as _, Window, div,
 };
 use guic::{
     native::{
@@ -20,12 +20,16 @@ struct Owner {
     menu: DesktopMenuHandle,
     status: Rc<RefCell<String>>,
     dirty: Rc<Cell<bool>>,
+    router: Rc<RefCell<CommandRouter>>,
+    checked: bool,
+    command_count: usize,
     _activation: ActivationOwner,
     _quit: gpui::Subscription,
     tasks: Vec<gpui::Task<()>>,
 }
 impl Global for Owner {}
 struct Shell {
+    focus: gpui::FocusHandle,
     state: State,
     menu: DesktopMenuHandle,
     status: Rc<RefCell<String>>,
@@ -40,6 +44,15 @@ impl Render for Shell {
         let lifecycle = state.borrow().lifecycle.clone();
         let menu = self.menu.clone();
         div()
+            .track_focus(&self.focus)
+            .on_key_down(|event, _, cx| {
+                let command = cx.global::<Owner>().router.borrow()
+                    .resolve(&event.keystroke, &[]).cloned();
+                if let Some(command) = command {
+                    run_command(&command, cx);
+                    cx.stop_propagation();
+                }
+            })
             .size_full()
             .flex()
             .flex_col()
@@ -66,6 +79,10 @@ impl Render for Shell {
             )
             .child(Label::new("GUIC desktop integration"))
             .child(Label::new(status))
+            .child(Label::new(format!(
+                "Checked example: {}; command executions: {}. Ctrl+Shift+T toggles; Ctrl+Shift+D is disabled.",
+                cx.global::<Owner>().checked, cx.global::<Owner>().command_count
+            )))
             .child(Label::new(format!(
                 "Lifecycle: {:?}; unsaved changes: {}",
                 lifecycle.state(),
@@ -115,12 +132,17 @@ fn open_main(cx: &mut App) -> anyhow::Result<()> {
     let handle = cx.open_window(options, |window, cx| {
         let tracking = state.borrow().track_window("main", window, cx);
         cx.global_mut::<Owner>().tasks.push(tracking);
-        let view = cx.new(|_| Shell {
-            state,
-            menu,
-            status,
-            dirty,
-            open: None,
+        let view = cx.new(|cx| {
+            let focus = cx.focus_handle();
+            window.focus(&focus, cx);
+            Shell {
+                focus,
+                state,
+                menu,
+                status,
+                dirty,
+                open: None,
+            }
         });
         cx.new(|cx| Root::new(view, window, cx))
     })?;
@@ -141,7 +163,70 @@ fn command(id: &str, label: &str) -> NativeMenuItem {
         checked: None,
     })
 }
+fn application_menu(checked: bool) -> Vec<NativeMenuItem> {
+    vec![NativeMenuItem::Submenu {
+        label: "Application".into(),
+        items: vec![
+            command("show", "Show window"),
+            NativeMenuItem::Command(NativeCommand {
+                id: "toggle".into(),
+                label: "Checked example (Ctrl+Shift+T)".into(),
+                enabled: true,
+                checked: Some(checked),
+            }),
+            NativeMenuItem::Command(NativeCommand {
+                id: "disabled".into(),
+                label: "Disabled example (Ctrl+Shift+D)".into(),
+                enabled: false,
+                checked: None,
+            }),
+            NativeMenuItem::Separator,
+            command("restart", "Restart"),
+            command("quit", "Quit"),
+        ],
+    }]
+}
+fn run_command(command: &CommandSpec, cx: &mut App) {
+    let lifecycle = cx.global::<Owner>().state.borrow().lifecycle.clone();
+    match command.id.as_ref() {
+        "show" => {
+            if let Err(error) = open_main(cx) {
+                eprintln!("Open failed: {error}");
+            }
+        }
+        "quit" => lifecycle.request(ShutdownReason::Quit, cx),
+        "restart" => lifecycle.request(ShutdownReason::Restart, cx),
+        "toggle" => {
+            let owner = cx.global_mut::<Owner>();
+            owner.checked = !owner.checked;
+            owner.command_count += 1;
+            let items = application_menu(owner.checked);
+            let menu = owner.menu.clone();
+            cx.spawn(async move |_| {
+                if let Err(error) = menu.set_menu(items).await {
+                    eprintln!("Could not update menu: {error}");
+                }
+            })
+            .detach();
+            cx.refresh_windows();
+        }
+        "disabled" => {
+            // A visible sentinel makes accidental dispatch observable during smoke tests.
+            *cx.global::<Owner>().status.borrow_mut() = "ERROR: disabled command executed".into();
+            cx.refresh_windows();
+        }
+        _ => {}
+    }
+}
 fn main() -> anyhow::Result<()> {
+    // GPUI 0.4's DirectComposition windows do not provide the GDI surface used
+    // by native Win32 menubars. Select its supported swap-chain fallback before
+    // initializing the platform, while respecting an explicit user override.
+    #[cfg(target_os = "windows")]
+    if std::env::var_os("GPUI_DISABLE_DIRECT_COMPOSITION").is_none() {
+        // SAFETY: this runs at startup before this program creates any threads.
+        unsafe { std::env::set_var("GPUI_DISABLE_DIRECT_COMPOSITION", "1") };
+    }
     let state = DesktopState::open(guic::native::application_identity!()?)?;
     let Instance::Primary(activation) =
         Instance::acquire(&state.paths, ActivationRequest::current()?)?
@@ -180,9 +265,11 @@ fn main() -> anyhow::Result<()> {
                     })
                     .ok()
             });
+            let dirty = guard_dirty.clone();
             Box::pin(async move {
                 Ok(if let Some(prompt) = prompt {
                     if prompt.await.unwrap_or(0) == 1 {
+                        dirty.set(false);
                         ShutdownDecision::Proceed
                     } else {
                         ShutdownDecision::Cancel
@@ -194,17 +281,7 @@ fn main() -> anyhow::Result<()> {
         });
         let mut menus = DesktopMenus::new().expect("desktop menu owner");
         menus
-            .set_menu(
-                vec![NativeMenuItem::Submenu {
-                    label: "Application".into(),
-                    items: vec![
-                        command("show", "Show window"),
-                        command("restart", "Restart"),
-                        command("quit", "Quit"),
-                    ],
-                }],
-                cx,
-            )
+            .set_menu(application_menu(false), cx)
             .expect("application menu");
         // This existing repository image is also used by the packaging example.
         if let Err(error) = menus.set_tray(TrayDefinition {
@@ -214,8 +291,24 @@ fn main() -> anyhow::Result<()> {
             menu: vec![command("show", "Show window"), command("quit", "Quit")],
         }) {
             eprintln!("Tray unavailable in this desktop session: {error}");
+        } else {
+            // Windows and Linux otherwise quit when the last window closes.
+            // Keep the process alive only when a tray can reopen its window.
+            cx.set_quit_mode(gpui::QuitMode::Explicit);
         }
         let menu = menus.handle();
+        let tray = menu.clone();
+        let tray_clicks = cx.spawn(async move |cx| {
+            while let Ok(Some(click)) = tray.next_tray_click().await {
+                if click.button == guic::native::TrayMouseButton::Left {
+                    cx.update(|cx| {
+                        if let Err(error) = open_main(cx) {
+                            eprintln!("Open from tray failed: {error}");
+                        }
+                    });
+                }
+            }
+        });
         let mut router = CommandRouter::new();
         for (id, label) in [
             ("show", "Show window"),
@@ -226,22 +319,21 @@ fn main() -> anyhow::Result<()> {
                 .register(CommandSpec::new(id, label))
                 .expect("register command");
         }
-        let lifecycle = state.borrow().lifecycle.clone();
-        let dispatch = menu.dispatch(
-            cx,
-            Rc::new(RefCell::new(router)),
-            |_| vec![],
-            move |command, cx| match command.id.as_ref() {
-                "show" => {
-                    if let Err(error) = open_main(cx) {
-                        eprintln!("Open failed: {error}");
-                    }
-                }
-                "quit" => lifecycle.request(ShutdownReason::Quit, cx),
-                "restart" => lifecycle.request(ShutdownReason::Restart, cx),
-                _ => {}
-            },
-        );
+        router
+            .register(
+                CommandSpec::new("toggle", "Checked example")
+                    .shortcut(gpui::Keystroke::parse("ctrl-shift-t").expect("toggle shortcut")),
+            )
+            .expect("register toggle");
+        router
+            .register(
+                CommandSpec::new("disabled", "Disabled example")
+                    .shortcut(gpui::Keystroke::parse("ctrl-shift-d").expect("disabled shortcut"))
+                    .enabled(false),
+            )
+            .expect("register disabled");
+        let router = Rc::new(RefCell::new(router));
+        let dispatch = menu.dispatch(cx, router.clone(), |_| vec![], run_command);
         let activation_status = status.clone();
         let delivery = activation.dispatch(cx, move |request, cx| {
             *activation_status.borrow_mut() = format!(
@@ -257,13 +349,16 @@ fn main() -> anyhow::Result<()> {
         });
         let native_task = menus.run(cx);
         cx.set_global(Owner {
+            router,
+            checked: false,
+            command_count: 0,
             state,
             menu,
             status,
             dirty,
             _activation: activation,
             _quit: quit,
-            tasks: vec![native_task, dispatch, delivery],
+            tasks: vec![native_task, dispatch, delivery, tray_clicks],
         });
         open_main(cx).expect("main window");
     });
