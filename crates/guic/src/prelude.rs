@@ -27,6 +27,7 @@ pub use guic_core::{
     TrayService, UpdateInfo, UpdateService,
 };
 pub use guic_tokens::{Theme, ThemeContextExt, ThemeRegistry};
+pub use guic_tokens::{ThemeController, ThemePreference};
 
 #[cfg(feature = "icons")]
 pub use guic_icons::{Icon, IconName};
