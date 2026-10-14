@@ -138,7 +138,21 @@ fn configuration(request: &Request) -> Result<Config> {
 }
 
 pub(super) fn package(request: &Request) -> Result<Vec<Output>> {
-    Ok(cargo_packager::package(&configuration(request)?)?
+    let mut config = configuration(request)?;
+    // The pinned backend's default NSIS template evaluates protocol ownership
+    // at compile time, leaving dead registrations behind after uninstall.
+    // Retain our corrected template file until the backend finishes reading it.
+    let _template = if request.format == "nsis" {
+        use std::io::Write;
+        let mut template = tempfile::NamedTempFile::new_in(&request.output_directory)?;
+        template.write_all(include_bytes!("../../templates/installer.nsi"))?;
+        template.flush()?;
+        config.nsis.as_mut().expect("configured NSIS").template = Some(template.path().to_owned());
+        Some(template)
+    } else {
+        None
+    };
+    Ok(cargo_packager::package(&config)?
         .into_iter()
         .map(|output| Output {
             format: output.format.short_name().into(),
@@ -151,6 +165,25 @@ pub(super) fn package(request: &Request) -> Result<Vec<Output>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn nsis_protocol_cleanup_uses_runtime_ownership_guard() {
+        let template = include_str!("../../templates/installer.nsi");
+        let cleanup = template
+            .split("; Delete deep links")
+            .nth(1)
+            .expect("protocol cleanup")
+            .split("; Delete uninstaller")
+            .next()
+            .expect("cleanup boundary");
+        assert!(cleanup.contains("ReadRegStr $R7"));
+        assert!(cleanup.contains("${If} $R7 =="));
+        assert!(cleanup.contains("${EndIf}"));
+        assert!(!cleanup.contains("!if"));
+        assert!(!cleanup.contains("!endif"));
+        assert!(cleanup.find("${If}") < cleanup.find("DeleteRegKey"));
+        assert!(cleanup.find("DeleteRegKey") < cleanup.find("${EndIf}"));
+    }
+
     #[test]
     fn adapter_disables_hooks_and_signing() -> Result<()> {
         let request = Request {
