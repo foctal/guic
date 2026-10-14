@@ -10,6 +10,7 @@ fn configuration(request: &Request) -> Result<Config> {
         "app" => PackageFormat::App,
         "dmg" => PackageFormat::Dmg,
         "nsis" => PackageFormat::Nsis,
+        "msi" => PackageFormat::Wix,
         "deb" => PackageFormat::Deb,
         "appimage" => PackageFormat::AppImage,
         _ => bail!("unsupported backend format"),
@@ -134,6 +135,22 @@ fn configuration(request: &Request) -> Result<Config> {
         config.macos = Some(macos);
     }
     // No backend hooks, private credentials or automatic notarization are imported.
+    if request.format == "msi" {
+        // The pinned WiX template disables Handlebars escaping. These values
+        // are XML attributes, not filesystem paths.
+        config.product_name = super::xml(&request.product_name)?;
+        config.publisher = Some(super::xml(&config.publisher())?);
+        if let Some(associations) = &mut config.file_associations {
+            for association in associations {
+                association.name = association.name.as_deref().map(super::xml).transpose()?;
+                association.description = association
+                    .description
+                    .as_deref()
+                    .map(super::xml)
+                    .transpose()?;
+            }
+        }
+    }
     Ok(config)
 }
 
@@ -155,7 +172,12 @@ pub(super) fn package(request: &Request) -> Result<Vec<Output>> {
     Ok(cargo_packager::package(&config)?
         .into_iter()
         .map(|output| Output {
-            format: output.format.short_name().into(),
+            format: if output.format == PackageFormat::Wix {
+                "msi"
+            } else {
+                output.format.short_name()
+            }
+            .into(),
             paths: output.paths,
             verification: Default::default(),
         })
@@ -219,6 +241,15 @@ mod tests {
             )
         );
         assert_eq!(config.binaries[0].path, request.executable);
+        let mut request = request;
+        request.target = "x86_64-pc-windows-msvc".into();
+        request.format = "msi".into();
+        request.executable = "/stage/fixture.exe".into();
+        request.product_name = "Fixture & Tools".into();
+        let config = configuration(&request)?;
+        assert_eq!(config.formats, Some(vec![PackageFormat::Wix]));
+        assert_eq!(config.product_name, "Fixture &amp; Tools");
+        assert!(config.windows.is_none());
         Ok(())
     }
 }

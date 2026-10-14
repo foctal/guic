@@ -938,6 +938,7 @@ dependencies = [
  "glob",
  "guic-build",
  "ignore",
+ "image",
  "libc",
  "minisign",
  "plist",

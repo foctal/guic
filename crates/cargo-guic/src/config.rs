@@ -226,6 +226,10 @@ pub(crate) struct Packager {
     pub nsis_installer_icon: Option<PathBuf>,
     pub nsis_header_image: Option<PathBuf>,
     pub nsis_sidebar_image: Option<PathBuf>,
+    /// MSIX certificate subject, for example CN=Example. Must match the signing certificate.
+    pub msix_publisher: Option<String>,
+    /// Optional four-part MSIX version; required for Cargo prerelease versions.
+    pub msix_version: Option<String>,
 }
 
 pub(crate) struct Loaded {

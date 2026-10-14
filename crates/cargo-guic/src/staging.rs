@@ -391,7 +391,7 @@ mod tests {
     fn normal_packaging_stages_every_format_and_reports_verified_signing() -> Result<()> {
         for (os, formats) in [
             ("macos", vec!["app", "dmg"]),
-            ("windows", vec!["nsis"]),
+            ("windows", vec!["nsis", "msi", "msix"]),
             ("linux", vec!["deb", "appimage"]),
         ] {
             let (_temporary, mut plan, record) = build::fixture()?;

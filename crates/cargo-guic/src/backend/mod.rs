@@ -1,4 +1,5 @@
 mod cargo_packager;
+mod msix;
 
 use crate::{plan::BuildPlan, process, report};
 use anyhow::{Context, Result, ensure};
@@ -9,6 +10,21 @@ use std::{
 };
 
 pub(crate) const VERSION: &str = "0.11.8";
+
+fn xml(value: &str) -> Result<String> {
+    ensure!(
+        !value
+            .chars()
+            .any(|c| c.is_control() || c == '\u{fffe}' || c == '\u{ffff}'),
+        "installer XML values must not contain control characters"
+    );
+    Ok(value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;"))
+}
 
 pub(crate) fn validate(plan: &BuildPlan, execute_signing: bool) -> Result<()> {
     crate::signing::validate(&plan.config.signing, &plan.os, execute_signing)?;
@@ -24,6 +40,17 @@ pub(crate) fn validate(plan: &BuildPlan, execute_signing: bool) -> Result<()> {
     }
     for format in &plan.formats {
         crate::platform::native_format(&plan.target, format)?;
+        if format == "msix" {
+            msix::validate(
+                &plan.identifier,
+                &plan.project.version,
+                &plan.config.backend.cargo_packager,
+            )?;
+            ensure!(
+                !plan.config.bundle.icons.is_empty(),
+                "MSIX requires a PNG or ICO bundle icon"
+            );
+        }
     }
     for tool in crate::platform::required_tools(&plan.os, &plan.formats, &plan.config.signing) {
         ensure!(
@@ -174,7 +201,12 @@ fn package_and_verify(request: &Request) -> Result<Vec<Output>> {
         &mut crate::signing::Native,
     )
     .context("sidecar signing")?;
-    let mut outputs = cargo_packager::package(request).context("backend package generation")?;
+    let mut outputs = if request.format == "msix" {
+        msix::package(request)
+    } else {
+        cargo_packager::package(request)
+    }
+    .context("backend package generation")?;
     for output in &mut outputs {
         for path in &output.paths {
             ensure!(

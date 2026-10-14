@@ -108,7 +108,7 @@ fn args(values: &[&str], path: &Path) -> Vec<OsString> {
         .collect()
 }
 
-// cargo-packager signs the NSIS main binary and installer, but not extra binaries.
+// cargo-packager signs NSIS/MSI main binaries and installers, but not extra binaries.
 // Sign only per-format staged helper copies, after explicit signing authorization.
 pub(crate) fn sidecars(
     config: &Signing,
@@ -166,7 +166,7 @@ pub(crate) fn finish(
     }
     validate(config, os, true)?;
     if os == "windows" {
-        // The backend signs both the staged executable and NSIS installer using
+        // The backend signs both the staged executable and Windows package using
         // the selected certificate. Verification is independent of its success.
         runner.run(
             "signtool.exe",

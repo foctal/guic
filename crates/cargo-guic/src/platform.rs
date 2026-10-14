@@ -4,6 +4,7 @@ use std::path::PathBuf;
 pub(crate) fn native_format(target: &str, format: &str) -> Result<()> {
     let os = crate::plan::target_os(target)?;
     let arch = target.split('-').next().unwrap_or("");
+    let arch = if arch == "i686" { "x86" } else { arch };
     ensure!(
         os == std::env::consts::OS
             && (arch == std::env::consts::ARCH || (os == "macos" && arch == "universal")),
@@ -12,11 +13,15 @@ pub(crate) fn native_format(target: &str, format: &str) -> Result<()> {
     ensure!(
         match os {
             "macos" => ["app", "dmg"].contains(&format),
-            "windows" => target.ends_with("-msvc") && format == "nsis",
+            "windows" => target.ends_with("-msvc") && ["nsis", "msi", "msix"].contains(&format),
             "linux" => ["deb", "appimage"].contains(&format),
             _ => false,
         },
         "unsupported native packaging format: {format}"
+    );
+    ensure!(
+        format != "msi" || ["x86", "x86_64"].contains(&arch),
+        "the pinned WiX backend supports MSI only on x86 and x86_64"
     );
     Ok(())
 }
@@ -43,6 +48,9 @@ pub(crate) fn required_tools(
     signing: &crate::config::Signing,
 ) -> Vec<&'static str> {
     let mut tools = Vec::new();
+    if os == "windows" && formats.iter().any(|f| f == "msix") {
+        tools.push("makeappx.exe");
+    }
     if os == "macos" {
         if formats.iter().any(|f| f == "dmg") {
             tools.extend(["hdiutil", "osascript"]);

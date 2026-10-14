@@ -79,6 +79,45 @@ fn invoke(directory: &Path, args: &[&str]) -> Result<Output> {
         .env_remove("MACOSX_DEPLOYMENT_TARGET")
         .output()?)
 }
+
+#[test]
+fn windows_installer_formats_are_selectable() -> Result<()> {
+    let directory = fixture()?;
+    let plan = success(invoke(
+        directory.path(),
+        &[
+            "inspect",
+            "--manifest-path",
+            "app/Cargo.toml",
+            "--package",
+            "app",
+            "--target",
+            "x86_64-pc-windows-msvc",
+            "--formats",
+            "nsis,msi,msix",
+        ],
+    )?)?;
+    assert_eq!(
+        plan["plan"]["formats"],
+        serde_json::json!(["nsis", "msi", "msix"])
+    );
+    let invalid = invoke(
+        directory.path(),
+        &[
+            "inspect",
+            "--manifest-path",
+            "app/Cargo.toml",
+            "--package",
+            "app",
+            "--target",
+            "x86_64-unknown-linux-gnu",
+            "--formats",
+            "msix",
+        ],
+    )?;
+    assert!(!invalid.status.success());
+    Ok(())
+}
 fn success(output: Output) -> Result<Value> {
     assert!(
         output.status.success(),

@@ -34,6 +34,8 @@
             "macos-entitlements": null,
             "macos-frameworks": [],
             "macos-info-plist": null,
+            "msix-publisher": null,
+            "msix-version": null,
             "nsis-header-image": null,
             "nsis-installer-icon": null,
             "nsis-sidebar-image": null,
@@ -423,6 +425,20 @@
             "null"
           ]
         },
+        "msix-publisher": {
+          "description": "MSIX certificate subject, for example CN=Example. Must match the signing certificate.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "msix-version": {
+          "description": "Optional four-part MSIX version; required for Cargo prerelease versions.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "nsis-header-image": {
           "type": [
             "string",
@@ -655,6 +671,8 @@
           "macos-entitlements": null,
           "macos-frameworks": [],
           "macos-info-plist": null,
+          "msix-publisher": null,
+          "msix-version": null,
           "nsis-header-image": null,
           "nsis-installer-icon": null,
           "nsis-sidebar-image": null,

@@ -182,7 +182,7 @@ pub(crate) fn resolve(selectors: &Selectors, dev: bool) -> Result<BuildPlan> {
         ensure!(
             match final_os {
                 "macos" => ["app", "dmg"].contains(&format.as_str()),
-                "windows" => format == "nsis",
+                "windows" => ["nsis", "msi", "msix"].contains(&format.as_str()),
                 _ => ["deb", "appimage"].contains(&format.as_str()),
             },
             "format {format} is unsupported on {final_os}"

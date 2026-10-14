@@ -82,7 +82,7 @@ replaces the configured list; omit it to use all formats configured for the host
 | Native host | Formats |
 | --- | --- |
 | macOS | `app`, `dmg` |
-| Windows with MSVC | `nsis` |
+| Windows with MSVC | `nsis`, `msi`, `msix` |
 | Linux | `deb`, `appimage` |
 
 Each packaging operation runs the before-bundle hook once and creates separate
@@ -238,11 +238,58 @@ requires native acceptance.
 The backend allowlist includes `publisher`, `copyright`, `long-description`,
 `category`, `license-file`, `macos-info-plist`, `macos-entitlements`,
 `macos-frameworks`, `dmg-background`, `deb-depends`, `deb-desktop-template`,
-`nsis-installer-icon`, `nsis-header-image` and `nsis-sidebar-image`. Paths are
+`nsis-installer-icon`, `nsis-header-image`, `nsis-sidebar-image`,
+`msix-publisher` and `msix-version`. Paths are
 relative to Guic.toml and are copied into isolated staging. macOS Info.plist
 extensions may add usage descriptions but cannot override CLI-owned identity,
 version, executable, product name or deployment target. Frameworks preserve
 relative internal symlinks only; escaping, absolute or dangling links fail.
+
+## Windows installers
+
+NSIS remains the default. Select MSI or MSIX with `--formats msi,msix`, or
+configure `bundle.formats.windows = ["nsis", "msi", "msix"]`. Packaging requires
+a native Windows MSVC target. MSI uses cargo-packager's WiX backend, which
+downloads its pinned WiX tools when needed; reports use the format name `msi`.
+The pinned WiX template supports x86 and x64 MSI packages. MSIX also supports ARM64.
+
+MSIX uses `makeappx.exe` from the Windows SDK, discovered on PATH or in the SDK
+installation. SDK validation remains enabled. Configure a square PNG or ICO
+in `bundle.icons`; cargo-guic generates the required logo sizes. For example:
+
+```toml
+[bundle]
+icons = ["packaging/app.ico"]
+
+[bundle.formats]
+windows = ["msi", "msix"]
+
+[backend.cargo-packager]
+publisher = "Example Company"
+msix-publisher = "CN=Example Company"
+# Optional four-part override, required for Cargo prerelease/build versions:
+# msix-version = "1.2.3.0"
+```
+
+The MSIX identity uses `app.identifier` (3–50 ASCII letters, digits, periods or
+hyphens). Stable Cargo versions map from `major.minor.patch` to
+`major.minor.patch.0`; all four components must fit in 16 bits. The publisher
+must match the signing certificate subject. See Microsoft's
+[MSIX packaging instructions](https://learn.microsoft.com/en-us/windows/msix/desktop/desktop-to-uwp-manual-conversion).
+
+MSIX packages target Windows 10 version 1809 or later and declare a full-trust
+desktop application. Sidecars and resources retain their paths beside the main
+executable. File extensions and protocol schemes become manifest registrations.
+`AppxManifest.xml`, `AppxBlockMap.xml`, `AppxSignature.p7x`, `[Content_Types].xml`,
+`AppxMetadata` and `GuicAssets` are reserved package destinations.
+
+With signing off, MSIX output is unsigned and intended for inspection or later
+manual signing. Installing it normally requires a trusted signature. Existing
+`signing.windows-thumbprint`, `signing.windows-timestamp-url`,
+`code-signing = "required"` and `--execute-signing` sign and verify the binaries
+and package. Creating a package does not install it or verify installed launch.
+The built-in updater feed still selects NSIS on Windows; MSI/MSIX are not
+substitutes for its NSIS update artifacts.
 
 ## Windows executable resources
 
