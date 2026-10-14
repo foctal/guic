@@ -360,6 +360,82 @@ impl Drop for ActivationOwner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(windows)]
+    #[test]
+    fn windows_native_encoding_survives_forwarding() -> Result<()> {
+        use std::os::windows::ffi::OsStringExt;
+        let directory = tempfile::tempdir()?;
+        let paths = AppPaths::under(
+            directory.path(),
+            &crate::AppIdentity::new("org.example.windows", "Windows", "1")?,
+        )?;
+        let request = ActivationRequest {
+            arguments: vec![
+                OsString::from_wide(&[0xD800, 0x20, 0x65E5]),
+                "quote\" and spaces\\".into(),
+            ],
+            working_directory: PathBuf::from(OsString::from_wide(&[0x43, 0x3A, 0x5C, 0xDFFF])),
+            urls: vec!["guic-example://open/path?q=hello%20world".into()],
+            reopen: true,
+        };
+        let Instance::Primary(owner) = Instance::acquire(&paths, request.clone())? else {
+            anyhow::bail!("expected primary")
+        };
+        assert!(matches!(
+            Instance::acquire(&paths, request.clone())?,
+            Instance::Forwarded
+        ));
+        assert_eq!(owner.receiver.try_recv()?, request);
+        assert_eq!(owner.receiver.try_recv()?, request);
+        Ok(())
+    }
+
+    #[test]
+    fn simultaneous_launches_elect_one_owner_and_recover_stale_endpoint() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let paths = AppPaths::under(
+            directory.path(),
+            &crate::AppIdentity::new("org.example.race", "Race", "1")?,
+        )?;
+        let endpoint = paths.local_data.join("instance/endpoint.json");
+        std::fs::create_dir_all(endpoint.parent().expect("endpoint directory"))?;
+        std::fs::write(&endpoint, "interrupted endpoint")?;
+        let barrier = Arc::new(std::sync::Barrier::new(8));
+        let workers: Vec<_> = (0..8)
+            .map(|index| {
+                let paths = paths.clone();
+                let barrier = barrier.clone();
+                let cwd = directory.path().to_owned();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    Instance::acquire(
+                        &paths,
+                        ActivationRequest {
+                            arguments: vec![index.to_string().into()],
+                            working_directory: cwd,
+                            urls: vec![],
+                            reopen: true,
+                        },
+                    )
+                })
+            })
+            .collect();
+        let mut owners = Vec::new();
+        for worker in workers {
+            if let Instance::Primary(owner) = worker.join().expect("launch worker")? {
+                owners.push(owner);
+            }
+        }
+        assert_eq!(owners.len(), 1);
+        let mut delivered = std::collections::BTreeSet::new();
+        while let Ok(request) = owners[0].receiver.try_recv() {
+            delivered.insert(request.arguments);
+        }
+        assert_eq!(delivered.len(), 8);
+        drop(owners);
+        assert!(!endpoint.exists());
+        Ok(())
+    }
     #[cfg(unix)]
     #[test]
     fn native_paths_round_trip_without_unicode_conversion() -> Result<()> {
