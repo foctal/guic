@@ -58,6 +58,12 @@ commands, confirmation before close/quit/restart, and OS theme tracking.
 Its state is stored under `org.guic.desktop-shell` in platform user directories.
 Run it a second time with file arguments to exercise activation forwarding.
 Protocol registration takes effect when an installer registers `guic-example`.
+The Application menu includes a checked example and a disabled example.
+`Ctrl+Shift+T` toggles the checked example through the same `CommandRouter` and
+handler used by menu clicks; `Ctrl+Shift+D` is registered but disabled. The
+window displays the checked value and execution count, making duplicate or
+missing dispatch visible. These are window-focused shortcuts, not system-wide
+hotkeys or native menu accelerators. The label hints do not install accelerators.
 
 The startup sequence is:
 
@@ -79,6 +85,8 @@ The startup sequence is:
 read-only application resources. `AppPaths::under` supports portable roots and
 isolated tests. `DesktopState::set_theme` persists a preference before applying
 it, so a write failure does not silently change the saved setting.
+On Windows, disposable cache files use the `cache` subdirectory of local data;
+clearing that directory must not remove persistent files, logs, or instance locks.
 
 ## Activation
 
@@ -96,6 +104,9 @@ The callback receives argv, the sender's cwd, OS URLs, and reopen intent.
 `files` converts OS file URLs. Applications parse their own command-line grammar
 and route other schemes. Dispatch raises the active or first window after the
 callback, allowing a tray-resident application to create a window first.
+Passing a URL on the command line preserves it in `arguments`; it does not
+automatically populate `urls`. OS protocol registration is an installer concern,
+separate from forwarding URL strings to an existing process.
 The owner installs GPUI's single URL/reopen callback slots; do not replace them
 later. `SingleInstanceAdapter` implements the original service trait when
 injection is preferable to synchronous pre-event-loop acquisition.
@@ -117,12 +128,27 @@ invoke commands removed from a menu.
 | Windows | Native menu attached with `attach_window` | Notification-area icon; PNG/ICO required |
 | Linux | `Menubar::native(&handle.menu())` in the GPUI window | StatusNotifierItem over D-Bus; PNG/ICO required |
 
+With GPUI 0.4.0 on Windows, native menubars need its non-DirectComposition
+rendering path: set `GPUI_DISABLE_DIRECT_COMPOSITION=1` before constructing the
+GPUI application. Its default `WS_EX_NOREDIRECTIONBITMAP` windows can display
+a transparent menubar even though menu commands remain accessible. The desktop
+shell sample selects this fallback at startup unless the environment already
+contains an explicit override. `guic-native` does not change process environment
+or replace the application's renderer. Applications retaining DirectComposition
+should use the in-window menu instead. Menu attachment retains ownership and
+detaches before window destruction, so closing one window does not destroy the
+shared menu used by other or subsequently reopened windows.
+
 Top-level application entries must be submenus. In-window activations call
 `handle.invoke(id)` to use the same command stream. Menubar open state remains
 host-controlled. Tray clicks are available through `next_tray_click`; tray menu
 commands are the portable interaction across desktop environments. Linux needs
 a StatusNotifier host (some environments require an extension). Installation
 errors propagate; do not advertise tray availability solely from the OS name.
+For tray residency after the last window closes, select `gpui::QuitMode::Explicit`
+after successfully installing the tray. GPUI defaults to quitting on the last
+window on Windows and Linux. The desktop-shell example keeps this default when
+tray installation fails, and reopens its window on a left tray click.
 Only one `DesktopMenus` owner may run in a process; do not install competing
 muda/tray-icon global event handlers or consume their receivers separately.
 

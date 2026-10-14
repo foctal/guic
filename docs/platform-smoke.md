@@ -51,6 +51,10 @@ from this checklist, together with:
   Approve them and verify save completion, process cleanup, and window behavior.
 - Close all windows while retaining a tray, then reopen via a tray command or
   another launch. Verify disabled and scoped commands cannot execute.
+- In desktop-shell, press `Ctrl+Shift+T`, inspect the native checked item, then
+  click it to toggle back. Each action must increment the visible execution
+  count exactly once. Click the disabled item and press `Ctrl+Shift+D`; neither
+  may execute. Repeat after focusing a button and reopening the window.
 - Switch System/Light/Dark and change OS appearance while System is selected;
   restart and verify the saved preference. Explicit preferences must remain fixed.
 - Restore normal, maximized, and fullscreen windows after disconnecting a monitor
@@ -69,3 +73,7 @@ checked. This was not installer/signing acceptance. Windows job-object code was
 cross-compiled independently; the full Windows cross-check was blocked by the
 missing MinGW C compiler. Windows and Linux native desktop interactions still
 require the physical-platform checks above.
+
+The subsequent [Windows validation record](windows-validation.md) distinguishes
+native MSVC builds, automated process tests, local installation checks, direct
+GUI observations, and any remaining manual acceptance work.
