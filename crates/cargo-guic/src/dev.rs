@@ -58,6 +58,13 @@ fn watch_roots(plan: &BuildPlan, paths: &[PathBuf]) -> Vec<PathBuf> {
     let mut roots = vec![plan.project.workspace_root.clone()];
     roots.push(plan.config_path.clone());
     roots.extend(plan.config.build.inputs.iter().cloned());
+    roots.extend(
+        plan.config
+            .bundle
+            .sidecars
+            .iter()
+            .map(|s| PathBuf::from(s.source.replace("{target}", &plan.target))),
+    );
     for resource in &plan.config.bundle.resources {
         let source = PathBuf::from(&resource.source);
         if source.exists() {
@@ -112,6 +119,7 @@ fn launch(
         report::hash_file(&executable)? == record.executable_hash,
         "development executable copy changed"
     );
+    crate::sidecars::stage(&record.sidecars, executable_root)?;
     let mut command = std::process::Command::new(executable);
     command.args(args).current_dir(&plan.project.directory);
 

@@ -11,6 +11,7 @@ mod project;
 mod report;
 mod resources;
 mod runtime;
+mod sidecars;
 mod signing;
 mod staging;
 mod updater;

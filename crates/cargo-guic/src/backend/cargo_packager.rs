@@ -23,6 +23,13 @@ fn configuration(request: &Request) -> Result<Config> {
         executable.set_extension("");
     }
     config.binaries = vec![Binary::new(executable).main(true)];
+    for path in &request.sidecars {
+        let mut path = path.clone();
+        if request.target.contains("-windows-") {
+            path.set_extension("");
+        }
+        config.binaries.push(Binary::new(path).main(false));
+    }
     config.target_triple = Some(request.target.clone());
     config.out_dir = request.output_directory.clone();
     config.formats = Some(vec![format]);
@@ -155,6 +162,7 @@ mod tests {
             version: "1.0.0".into(),
             bin: "fixture".into(),
             executable: "/stage/fixture".into(),
+            sidecars: vec![],
             output_directory: "/output".into(),
             icons: Vec::new(),
             deployment_target: Some("12.0".into()),

@@ -98,6 +98,16 @@ fn bundle_with(
         acceptance: "not-verified".into(),
         cli_executable_hash: Some(report::hash_file(&std::env::current_exe()?)?),
     };
+    for sidecar in &record.sidecars {
+        ensure!(
+            report::hash_file(&sidecar.source)? == sidecar.sha256,
+            "sidecar snapshot changed"
+        );
+        report.resource_hashes.insert(
+            PathBuf::from("sidecars").join(&sidecar.destination),
+            sidecar.sha256.clone(),
+        );
+    }
     let mut staged_icons = Vec::new();
     let mut destinations = BTreeSet::new();
     for icon in &plan.config.bundle.icons {
@@ -155,6 +165,10 @@ fn bundle_with(
             for (destination, source) in &staged_icons {
                 icons.push(copy_input(source, &input.join(destination))?);
             }
+            let sidecar_input = tempfile::Builder::new()
+                .prefix("sidecars-")
+                .tempdir_in(&directory)?
+                .keep();
             let request = Request {
                 schema_version: 1,
                 target: record.target.clone(),
@@ -164,6 +178,10 @@ fn bundle_with(
                 version: plan.project.version.clone(),
                 bin: record.bin.clone(),
                 executable,
+                sidecars: crate::sidecars::stage(&record.sidecars, &sidecar_input)?
+                    .into_iter()
+                    .map(|input| input.source)
+                    .collect(),
                 output_directory: output.clone(),
                 icons,
                 deployment_target: plan.deployment_target.clone(),

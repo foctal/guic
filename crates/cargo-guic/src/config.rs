@@ -72,6 +72,9 @@ pub(crate) struct Bundle {
     pub formats: Formats,
     #[serde(default)]
     pub resources: Vec<Resource>,
+    /// Target-specific executables installed beside the main application.
+    #[serde(default)]
+    pub sidecars: Vec<Sidecar>,
     /// Versioned installed resource layout implemented by the application.
     pub resource_contract: Option<ResourceContract>,
     #[serde(default)]
@@ -100,6 +103,15 @@ pub(crate) struct Protocol {
 pub(crate) struct Resource {
     pub source: String,
     pub destination: PathBuf,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub(crate) struct Sidecar {
+    /// Plain installed name, without the Windows .exe extension.
+    pub name: String,
+    /// Source path relative to Guic.toml; {target} expands to the selected triple.
+    pub source: String,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
@@ -294,6 +306,24 @@ pub(crate) fn load(path: &Path, os: &str) -> Result<Loaded> {
         config.bundle.resources.is_empty() || config.bundle.resource_contract.is_some(),
         "external resources require bundle.resource-contract = 'application-managed-v1'; or guic-native-v1 with guic_assets::ResourceRoot"
     );
+    let mut sidecar_names = std::collections::BTreeSet::new();
+    for sidecar in &mut config.bundle.sidecars {
+        ensure!(
+            !sidecar.name.is_empty()
+                && sidecar
+                    .name
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"-_".contains(&b)),
+            "sidecar names must contain only ASCII letters, digits, hyphens or underscores"
+        );
+        crate::staging::reserve(&mut sidecar_names, Path::new(&sidecar.name))?;
+        sidecar.source = base
+            .canonicalize()?
+            .join(&sidecar.source)
+            .to_str()
+            .context("sidecar source must be UTF-8")?
+            .into();
+    }
     for resource in &mut config.bundle.resources {
         let source = base.canonicalize()?.join(&resource.source);
         resource.source = source

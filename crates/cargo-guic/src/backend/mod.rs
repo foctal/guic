@@ -46,6 +46,8 @@ pub(crate) struct Request {
     pub version: String,
     pub bin: String,
     pub executable: PathBuf,
+    #[serde(default)]
+    pub sidecars: Vec<PathBuf>,
     pub output_directory: PathBuf,
     pub icons: Vec<PathBuf>,
     pub deployment_target: Option<String>,
@@ -164,6 +166,14 @@ pub(crate) fn worker(request: &Path, response: &Path) -> Result<()> {
 }
 
 fn package_and_verify(request: &Request) -> Result<Vec<Output>> {
+    crate::signing::sidecars(
+        &request.signing,
+        crate::plan::target_os(&request.target)?,
+        request.execute_signing,
+        &request.sidecars,
+        &mut crate::signing::Native,
+    )
+    .context("sidecar signing")?;
     let mut outputs = cargo_packager::package(request).context("backend package generation")?;
     for output in &mut outputs {
         for path in &output.paths {

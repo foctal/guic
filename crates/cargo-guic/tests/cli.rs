@@ -1198,3 +1198,77 @@ fn watch_restarts_and_recovers_after_a_build_failure() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn sidecar_snapshot_is_used_in_dev_and_source_changes_invalidate_records() -> Result<()> {
+    let directory = fixture()?;
+    let app = directory.path().join("app");
+    let helper_source = app.join("helper.rs");
+    fs::write(
+        &helper_source,
+        "fn main() { println!(\"sidecar fixture ready\"); }",
+    )?;
+    let helper = app.join(if cfg!(windows) {
+        "built-helper.exe"
+    } else {
+        "built-helper"
+    });
+    let status = Command::new("rustc")
+        .arg("--crate-name")
+        .arg("fixture_helper")
+        .arg(&helper_source)
+        .arg("-o")
+        .arg(&helper)
+        .status()?;
+    assert!(status.success());
+    let mut config = fs::read_to_string(app.join("Guic.toml"))?;
+    config.push_str(&format!(
+        "\n[[bundle.sidecars]]\nname='fixture-helper'\nsource='{}'\n",
+        helper
+            .file_name()
+            .context("helper filename")?
+            .to_string_lossy()
+    ));
+    fs::write(app.join("Guic.toml"), config)?;
+    fs::write(
+        app.join("src/main.rs"),
+        r#"
+fn main() {
+    let executable = std::env::current_exe().expect("executable");
+    let helper = executable.parent().expect("parent").join(if cfg!(windows) { "fixture-helper.exe" } else { "fixture-helper" });
+    assert!(std::process::Command::new(helper).status().expect("sidecar launch").success());
+}
+"#,
+    )?;
+    let output = invoke(&app, &["dev", "--package", "app"])?;
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("sidecar fixture ready"),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let record = success(output)?;
+    let sidecars = record["sidecars"].as_array().context("sidecar record")?;
+    assert_eq!(sidecars.len(), 1);
+    let snapshot = Path::new(sidecars[0]["source"].as_str().context("sidecar snapshot")?);
+    assert_eq!(fs::read(snapshot)?, fs::read(&helper)?);
+    fs::write(&helper, b"changed after build")?;
+    let record_path = app.join("sidecar-record.json");
+    fs::write(&record_path, serde_json::to_vec(&record)?)?;
+    let result = invoke(
+        &app,
+        &[
+            "bundle",
+            "--package",
+            "app",
+            "--profile",
+            "dev",
+            "--build-record",
+            record_path.to_str().context("record path")?,
+        ],
+    )?;
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stdout).contains("incompatible"));
+    assert!(snapshot.is_file());
+    Ok(())
+}

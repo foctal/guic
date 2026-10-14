@@ -581,3 +581,46 @@ It is the cargo-packager-updater protocol, not a promise of Tauri plugin wire
 compatibility. Signatures verify downloaded payloads before installation; serve
 both the feed and payloads over HTTPS and retain trusted control of release
 metadata. OS signing and update-signing keys are independent.
+
+## Sidecar executables
+
+Declare prebuilt helpers with a stable installed name and a source relative to
+`Guic.toml`. `{target}` expands to the selected Rust target triple, including
+`universal-apple-darwin` when building a Universal Binary.
+
+```toml
+[[bundle.sidecars]]
+name = "example-worker"
+source = "helpers/example-worker-{target}"
+```
+
+Use platform overrides for sources with different extensions. Names contain
+ASCII letters, digits, hyphens, and underscores, without an `.exe` suffix;
+Windows adds that suffix to the installed name. Use application-specific names
+because Linux packages install binaries under `usr/bin`. The source must be a
+regular file, executable on Unix, with no symlink components. Supply the matching
+architecture (a universal helper for a universal macOS app). A before-build hook
+may generate a missing source; the refreshed plan hashes it after the hook.
+
+Sidecar content and definitions affect the build record. Build snapshots retain
+private copies with hashes. Unix staged helpers use mode 0755 so installation
+under a different owner does not make them unexecutable. Bundle/trial validates snapshots and creates separate
+copies per format so signing cannot mutate the original build. Helpers use the
+backend binary list, including normal executable signing, rather than the asset
+resource list. Names may not collide with the main executable or Windows
+resources. `dev` copies the same snapshots beside its temporary application
+executable. Changes are included in development watch inputs.
+
+The installed layout is `Contents/MacOS` on macOS, the installation directory
+on Windows, and `usr/bin` on Linux/AppImage. `guic::native::Sidecars` implements
+that lookup contract. Helpers are not downloaded or compiled implicitly.
+
+## Shared runtime identity
+
+Call `guic_build::build()` in the application's build script on every platform.
+It emits `GUIC_APP_IDENTIFIER` and `GUIC_APP_NAME` from the resolved CLI plan or,
+for ordinary Cargo builds, the target platform overlay in `Guic.toml`.
+`guic::native::application_identity!()` combines those values with the calling
+package's version. Identity changes invalidate the CLI build record. The CLI
+passes identity only to the selected package; build scripts in dependencies do
+not receive that application's identity as their own.

@@ -108,6 +108,51 @@ fn args(values: &[&str], path: &Path) -> Vec<OsString> {
         .collect()
 }
 
+// cargo-packager signs the NSIS main binary and installer, but not extra binaries.
+// Sign only per-format staged helper copies, after explicit signing authorization.
+pub(crate) fn sidecars(
+    config: &Signing,
+    os: &str,
+    execute: bool,
+    paths: &[std::path::PathBuf],
+    runner: &mut impl Runner,
+) -> Result<()> {
+    validate(config, os, execute)?;
+    if os != "windows" || config.code_signing == Policy::Off {
+        return Ok(());
+    }
+    for path in paths {
+        runner.run(
+            "signtool.exe",
+            &args(
+                &[
+                    "sign",
+                    "/sha1",
+                    config
+                        .windows_thumbprint
+                        .as_deref()
+                        .context("signing certificate")?,
+                    "/fd",
+                    "sha256",
+                    "/tr",
+                    config
+                        .windows_timestamp_url
+                        .as_deref()
+                        .context("timestamp service")?,
+                    "/td",
+                    "sha256",
+                ],
+                path,
+            ),
+        )?;
+        runner.run(
+            "signtool.exe",
+            &args(&["verify", "/pa", "/all", "/v"], path),
+        )?;
+    }
+    Ok(())
+}
+
 pub(crate) fn finish(
     config: &Signing,
     os: &str,
@@ -228,6 +273,31 @@ mod tests {
                 br#"{"status":"Accepted"}"#.to_vec()
             })
         }
+    }
+    #[test]
+    fn windows_helpers_require_authorization_and_are_signed_before_verification() -> Result<()> {
+        let config = Signing {
+            code_signing: Policy::Required,
+            windows_thumbprint: Some("a".repeat(40)),
+            windows_timestamp_url: Some("https://timestamp.example.test".into()),
+            ..Default::default()
+        };
+        let mut runner = Fake::default();
+        let paths = vec![std::path::PathBuf::from("staged-helper.exe")];
+        assert!(sidecars(&config, "windows", false, &paths, &mut runner).is_err());
+        assert!(runner.calls.is_empty());
+        sidecars(&config, "windows", true, &paths, &mut runner)?;
+        assert_eq!(runner.calls.len(), 2);
+        assert_eq!(runner.calls[0].1[0], "sign");
+        assert_eq!(runner.calls[1].1[0], "verify");
+        assert_eq!(
+            runner.calls[0].1.last(),
+            Some(&paths[0].as_os_str().to_owned())
+        );
+        let mut off = Fake::default();
+        sidecars(&Signing::default(), "windows", false, &paths, &mut off)?;
+        assert!(off.calls.is_empty());
+        Ok(())
     }
     fn config() -> Signing {
         Signing {

@@ -252,7 +252,7 @@ pub(crate) fn resolve(selectors: &Selectors, dev: bool) -> Result<BuildPlan> {
     let static_config_hash = report::hash_json(&serde_json::json!({
         "package": project.package_id, "bin": project.bin, "target": target, "profile": profile,
         "features": features, "default_features": default_features, "deployment_target": deployment_target,
-        "windows_product_name": if final_os == "windows" && config.build.windows_resources.is_some() { config.app.product_name.as_ref() } else { None },
+        "app": config.app, "sidecars": config.bundle.sidecars,
         "windows_resources": if final_os == "windows" { config.build.windows_resources.as_ref() } else { None },
         "before_build": config.hooks.before_build, "cargo_config": serde_json::to_value(&cargo_config)?,
         "environment": environment, "resource_layout": resource_layout, "tools": tool_versions,
@@ -277,6 +277,15 @@ pub(crate) fn resolve(selectors: &Selectors, dev: bool) -> Result<BuildPlan> {
             ))
         })
         .collect::<Result<_>>()?;
+    for sidecar in &config.bundle.sidecars {
+        let path = PathBuf::from(sidecar.source.replace("{target}", &target));
+        let hash = if path.exists() {
+            Some(report::hash_file(&path)?)
+        } else {
+            None
+        };
+        build_input_hashes.insert(path, hash);
+    }
     if final_os == "windows"
         && let Some(windows) = &config.build.windows_resources
     {

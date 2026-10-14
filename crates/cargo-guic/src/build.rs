@@ -26,6 +26,8 @@ pub(crate) struct BuildRecord {
     pub executable_path: PathBuf,
     pub snapshot_path: PathBuf,
     pub executable_hash: String,
+    #[serde(default)]
+    pub sidecars: Vec<crate::resources::Input>,
     pub build_affecting_config_hash: String,
     pub build_input_hashes: BTreeMap<PathBuf, Option<String>>,
     pub resource_layout: String,
@@ -87,6 +89,9 @@ pub(crate) fn compile(plan: &BuildPlan) -> Result<BuildRecord> {
         .context("snapshot directory has no name")?
         .to_string_lossy()
         .into_owned();
+    let sidecar_directory = tempfile::Builder::new()
+        .prefix("sidecars-")
+        .tempdir_in(directory.path())?;
     let record = BuildRecord {
         schema_version: 1,
         id: id.clone(),
@@ -102,6 +107,10 @@ pub(crate) fn compile(plan: &BuildPlan) -> Result<BuildRecord> {
         executable_path: executable,
         snapshot_path,
         executable_hash,
+        sidecars: crate::sidecars::stage(
+            &crate::sidecars::collect(plan)?,
+            sidecar_directory.path(),
+        )?,
         build_affecting_config_hash: plan.build_affecting_config_hash.clone(),
         build_input_hashes: plan.build_input_hashes.clone(),
         resource_layout: plan.resource_layout.clone(),
@@ -132,6 +141,7 @@ pub(crate) fn compile(plan: &BuildPlan) -> Result<BuildRecord> {
     process::check_cancelled()?;
     report::atomic_new(&root.join("records").join(format!("{id}.json")), &record)?;
     let _ = input_directory.keep();
+    let _ = sidecar_directory.keep();
     let _ = directory.keep();
     if let Some(directory) = universal_directory {
         let _ = directory.keep();
@@ -202,6 +212,10 @@ fn cargo_executable(plan: &BuildPlan, target: &str) -> Result<PathBuf> {
             .env_remove("GUIC_BUILD_REQUEST")
             .env_remove("GUIC_BUILD_REQUEST_HASH");
     }
+    command
+        .env("GUIC_APP_PACKAGE", &plan.project.package)
+        .env("GUIC_APP_IDENTIFIER", &plan.identifier)
+        .env("GUIC_APP_NAME", &plan.product_name);
     let output = process::capture(&mut command)?;
     if let Some(hash) = handshake {
         verify_handshake(&output, &plan.project.package_id, &hash)?;
@@ -292,6 +306,28 @@ pub(crate) fn verify(plan: &BuildPlan, record: &BuildRecord) -> Result<()> {
         ensure!(
             expected.as_ref() == Some(&report::hash_file(path)?),
             "build input changed after planning; rebuild before bundling"
+        );
+    }
+    let expected_sidecars = crate::sidecars::collect(plan)?;
+    ensure!(
+        record.sidecars.len() == expected_sidecars.len(),
+        "sidecar list changed; rebuild"
+    );
+    for (saved, expected) in record.sidecars.iter().zip(&expected_sidecars) {
+        ensure!(
+            saved.destination == expected.destination && saved.sha256 == expected.sha256,
+            "sidecar changed; rebuild"
+        );
+        crate::config::reject_symlinks(&saved.source)?;
+        ensure!(
+            saved.source.canonicalize()?.starts_with(
+                record
+                    .snapshot_path
+                    .parent()
+                    .context("snapshot parent")?
+                    .canonicalize()?
+            ) && report::hash_file(&saved.source)? == saved.sha256,
+            "invalid sidecar snapshot; rebuild"
         );
     }
     crate::config::reject_symlinks(&record.snapshot_path)?;
@@ -409,6 +445,7 @@ pub(crate) fn fixture() -> Result<(tempfile::TempDir, BuildPlan, BuildRecord)> {
         locked: true,
         executable_path: root.join("original"),
         executable_hash: report::hash_file(&snapshot)?,
+        sidecars: vec![],
         snapshot_path: snapshot,
         build_affecting_config_hash: plan.build_affecting_config_hash.clone(),
         build_input_hashes: BTreeMap::new(),

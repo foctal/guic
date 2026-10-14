@@ -161,6 +161,14 @@
             "$ref": "#/$defs/Resource"
           },
           "type": "array"
+        },
+        "sidecars": {
+          "default": [],
+          "description": "Target-specific executables installed beside the main application.",
+          "items": {
+            "$ref": "#/$defs/Sidecar"
+          },
+          "type": "array"
         }
       },
       "type": "object"
@@ -527,6 +535,24 @@
       },
       "type": "object"
     },
+    "Sidecar": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "Plain installed name, without the Windows .exe extension.",
+          "type": "string"
+        },
+        "source": {
+          "description": "Source path relative to Guic.toml; {target} expands to the selected triple.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "source"
+      ],
+      "type": "object"
+    },
     "Signing": {
       "additionalProperties": false,
       "properties": {
@@ -662,7 +688,8 @@
         "icons": [],
         "protocols": [],
         "resource-contract": null,
-        "resources": []
+        "resources": [],
+        "sidecars": []
       }
     },
     "hooks": {

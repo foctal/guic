@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Implement `guic/native` with the new `guic-native` crate: shared build/runtime
+  identity, writable application directories, authenticated single-instance
+  activation, native menus and tray services, coordinated shutdown, recoverable
+  window geometry, persisted theme preference, and owned sidecar processes.
+- Add OS light/dark tracking with explicit System/Light/Dark preference, a
+  `CommandRouter::resolve_id` path for native commands, and `Menubar::native`
+  for the shared menu model on Linux and custom window chrome.
+- Package target-specific sidecars from `bundle.sidecars`, snapshot and verify
+  them with build records, and use the same executable-relative layout in dev.
+- Emit application identity from `guic-build` on all desktop platforms and add
+  the runnable `guic-example-desktop-shell` integration example.
+
 - Preserve unmatched combining marks during editor search-and-replace, cover
   partial grapheme matches in search selections, and bound visible-line arithmetic.
 - Clean up JSON save temporaries after backup failures without removing files
