@@ -868,6 +868,50 @@ impl Menubar {
         self
     }
 
+    /// Converts the shared native menu model for in-window presentation, including Linux.
+    /// Top-level entries must be submenus, matching `ApplicationMenuService`.
+    #[must_use]
+    pub fn native(self, items: &[guic_core::NativeMenuItem]) -> Self {
+        fn convert(items: &[guic_core::NativeMenuItem], path: &str) -> Vec<MenuItem> {
+            items
+                .iter()
+                .enumerate()
+                .map(|(index, item)| match item {
+                    guic_core::NativeMenuItem::Separator => MenuItem::separator(),
+                    guic_core::NativeMenuItem::Command(command) => {
+                        let item = MenuItem::new(command.id.clone(), command.label.clone())
+                            .disabled(!command.enabled);
+                        if command.checked == Some(true) {
+                            item.icon(IconName::Check)
+                        } else {
+                            item
+                        }
+                    }
+                    guic_core::NativeMenuItem::Submenu { label, items } => {
+                        let id = format!("{path}/{index}");
+                        MenuItem::new(id.clone(), label.clone()).children(convert(items, &id))
+                    }
+                })
+                .collect()
+        }
+        self.menus(
+            items
+                .iter()
+                .enumerate()
+                .filter_map(|(index, item)| {
+                    if let guic_core::NativeMenuItem::Submenu { label, items } = item {
+                        Some(MenubarMenu::new(
+                            label.clone(),
+                            convert(items, &format!("native/{index}")),
+                        ))
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
+        )
+    }
+
     /// Sets which top-level menu is currently open.
     #[must_use]
     pub fn open(mut self, open: Option<usize>) -> Self {

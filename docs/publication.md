@@ -10,7 +10,7 @@ All public crates use version `0.3.0`. Publish in dependency order:
 
 1. `guic-macros`, `guic-tokens`, `guic-assets`, and `guic-webview`
 2. `guic-core` and `guic-icons`
-3. `guic-components`, `guic-charts`, and `guic-editor`
+3. `guic-components`, `guic-charts`, `guic-editor`, and `guic-native`
 4. `guic`
 
 Examples, samples, `guic-story`, `quick-xml-compat`, and `xtask` are internal
@@ -40,7 +40,7 @@ credentials, platform signing material, and unrelated application assets.
 
 - `guic-core`, `guic-tokens`, `guic-components`, `guic-icons`, `guic-assets`,
   and `guic-macros` are preview APIs.
-- `guic-charts` and `guic-webview` are preview subsystems.
+- `guic-charts`, `guic-native`, and `guic-webview` are preview subsystems.
 - `guic-editor` is experimental.
 - The umbrella `guic` crate inherits the least-stable enabled feature.
 - `0.3.x` releases may change preview and experimental APIs between releases.

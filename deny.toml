@@ -63,3 +63,10 @@ allow = ["CDLA-Permissive-2.0"]
 name = "webpki-roots"
 version = "=1.0.9"
 allow = ["CDLA-Permissive-2.0"]
+
+# Reviewed StatusNotifierItem implementation for GPUI's non-GTK Linux desktop.
+# The public-domain dedication and warranty text are included in guic-native.
+[[licenses.exceptions]]
+name = "ksni"
+version = "=0.3.6"
+allow = ["Unlicense"]

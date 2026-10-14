@@ -10,7 +10,7 @@ Rust APIs, feature flags, persistence formats, and host contracts.
 | Internal | Not published and not part of the support contract. |
 
 `guic-core`, tokens, components, icons, assets, macros, charts, and
-WebView are Preview. `guic-editor` is Experimental. Examples, samples, story,
+WebView and native integration are Preview. `guic-editor` is Experimental. Examples, samples, story,
 compatibility crates, and tooling are Internal.
 
 Public enums may gain variants while APIs are Preview; exhaustive application

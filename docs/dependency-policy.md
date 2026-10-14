@@ -125,3 +125,13 @@ artifacts and never publishes them. Review the updater's download, signature
 verification and platform installation paths when upgrading. Native installation
 and restart acceptance remain application-specific. File watching uses `ignore`
 for Git ignore rules and excludes Cargo build outputs.
+
+## Native desktop adapters
+
+`guic-native` uses `tray-icon`/`muda` under their MIT/Apache-2.0 terms. Linux
+selects the `ksni` StatusNotifierItem backend rather than requiring a GTK event
+loop in a GPUI application. `ksni 0.3.6` declares Unlicense; its public-domain
+dedication, permission statement, and warranty text are shipped in
+`crates/guic-native/THIRD-PARTY-LICENSES.txt`. The cargo-deny exception is scoped
+to that exact dependency version and must be reviewed on upgrade. Other new
+native dependencies remain covered by the existing license allowlist.

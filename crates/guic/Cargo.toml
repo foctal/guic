@@ -13,7 +13,7 @@ rust-version.workspace = true
 
 [features]
 default = ["components", "icons", "assets", "native"]
-native = []
+native = ["dep:guic-native"]
 components = ["dep:guic-components"]
 charts = ["dep:guic-charts"]
 editor = ["dep:guic-editor"]
@@ -36,6 +36,7 @@ guic-assets = { version = "0.3.0", path = "../guic-assets", optional = true }
 guic-components = { version = "0.3.0", path = "../guic-components", optional = true }
 guic-charts = { version = "0.3.0", path = "../guic-charts", optional = true }
 guic-core = { version = "0.3.0", path = "../guic-core" }
+guic-native = { version = "0.3.0", path = "../guic-native", optional = true }
 guic-editor = { version = "0.3.0", path = "../guic-editor", optional = true }
 guic-icons = { version = "0.3.0", path = "../guic-icons", optional = true }
 guic-macros = { version = "0.3.0", path = "../guic-macros" }

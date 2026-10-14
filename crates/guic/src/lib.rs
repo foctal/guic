@@ -39,6 +39,9 @@ pub use cargo_packager_updater as updater;
 
 pub use guic_core as core;
 pub use guic_macros::{shared_format, shared_string};
+/// Desktop application identity, activation, lifecycle, menus, trays, and sidecars.
+#[cfg(feature = "native")]
+pub use guic_native as native;
 pub use guic_tokens as tokens;
 
 /// Creates a theme name without requiring a direct `guic-tokens` dependency.
