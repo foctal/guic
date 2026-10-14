@@ -17,8 +17,15 @@ fn cargo_build_script_acknowledges_and_refreshes_requests() -> anyhow::Result<()
         "fn main() { guic_build::build().expect(\"GUIC build request\"); }",
     )?;
     fs::write(
+        root.join("Guic.toml"),
+        format!(
+            "[app]\nidentifier='org.example.ordinary'\nproduct-name='Ordinary'\n[platform.{}.app]\nproduct-name='Platform Fixture'\n",
+            std::env::consts::OS
+        ),
+    )?;
+    fs::write(
         root.join("src/main.rs"),
-        "fn main() { println!(\"{}\", option_env!(\"GUIC_BUILD_REQUEST_HASH\").unwrap_or(\"ordinary-cargo\")); }",
+        r#"fn main() { println!("{}|{}|{}|{}", option_env!("GUIC_BUILD_REQUEST_HASH").unwrap_or("ordinary-cargo"), env!("GUIC_APP_IDENTIFIER"), env!("GUIC_APP_NAME"), env!("CARGO_PKG_VERSION")); }"#,
     )?;
     let request = guic_build::Request {
         schema_version: 1,
@@ -38,11 +45,17 @@ fn cargo_build_script_acknowledges_and_refreshes_requests() -> anyhow::Result<()
             .env_remove("RUSTFLAGS")
             .env_remove("CARGO_ENCODED_RUSTFLAGS")
             .env_remove("GUIC_BUILD_REQUEST")
-            .env_remove("GUIC_BUILD_REQUEST_HASH");
+            .env_remove("GUIC_BUILD_REQUEST_HASH")
+            .env_remove("GUIC_APP_PACKAGE")
+            .env_remove("GUIC_APP_IDENTIFIER")
+            .env_remove("GUIC_APP_NAME");
         if let Some(hash) = &hash {
             cargo
                 .env("GUIC_BUILD_REQUEST", serde_json::to_string(&request)?)
-                .env("GUIC_BUILD_REQUEST_HASH", hash);
+                .env("GUIC_BUILD_REQUEST_HASH", hash)
+                .env("GUIC_APP_PACKAGE", "guic-handshake-fixture")
+                .env("GUIC_APP_IDENTIFIER", "org.example.resolved")
+                .env("GUIC_APP_NAME", format!("Resolved {}", &hash[..1]));
         }
         let output = cargo.output()?;
         assert!(
@@ -64,7 +77,11 @@ fn cargo_build_script_acknowledges_and_refreshes_requests() -> anyhow::Result<()
         assert!(output.status.success());
         assert_eq!(
             String::from_utf8(output.stdout)?.trim(),
-            hash.as_deref().unwrap_or("ordinary-cargo")
+            if let Some(hash) = &hash {
+                format!("{hash}|org.example.resolved|Resolved {}|1.2.3", &hash[..1])
+            } else {
+                "ordinary-cargo|org.example.ordinary|Platform Fixture|1.2.3".into()
+            }
         );
     }
     Ok(())

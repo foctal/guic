@@ -51,6 +51,7 @@ pub struct Request {
 /// `build.rs`. Without the CLI, `[build.windows-resources]` in `Guic.toml` is used.
 /// A multi-binary application must configure `build.bin` for ordinary Cargo builds.
 pub fn build() -> Result<()> {
+    emit_identity()?;
     println!("cargo:rerun-if-env-changed=GUIC_BUILD_REQUEST");
     println!("cargo:rerun-if-env-changed=GUIC_BUILD_REQUEST_HASH");
     println!("cargo:rerun-if-changed=Guic.toml");
@@ -96,6 +97,52 @@ pub fn build() -> Result<()> {
             );
             println!("cargo:rustc-env=GUIC_BUILD_REQUEST_HASH={hash}");
         }
+    }
+    Ok(())
+}
+
+fn emit_identity() -> Result<()> {
+    for key in ["GUIC_APP_PACKAGE", "GUIC_APP_IDENTIFIER", "GUIC_APP_NAME"] {
+        println!("cargo:rerun-if-env-changed={key}");
+    }
+    let package = std::env::var("CARGO_PKG_NAME")?;
+    let mut identity = None;
+    if std::env::var("GUIC_APP_PACKAGE").as_deref() == Ok(&package) {
+        identity = Some((
+            std::env::var("GUIC_APP_IDENTIFIER")?,
+            std::env::var("GUIC_APP_NAME")?,
+        ));
+    } else {
+        let base = PathBuf::from(
+            std::env::var_os("CARGO_MANIFEST_DIR").context("missing manifest directory")?,
+        );
+        let path = base.join("Guic.toml");
+        if path.exists() {
+            let mut value: toml::Value = toml::from_str(&std::fs::read_to_string(path)?)?;
+            let os = std::env::var("CARGO_CFG_TARGET_OS")?;
+            if let Some(overlay) = value.get("platform").and_then(|v| v.get(&os)).cloned() {
+                merge(&mut value, overlay);
+            }
+            if let Some(app) = value.get("app")
+                && let Some(id) = app.get("identifier").and_then(toml::Value::as_str)
+            {
+                identity = Some((
+                    id.into(),
+                    app.get("product-name")
+                        .and_then(toml::Value::as_str)
+                        .unwrap_or(&package)
+                        .into(),
+                ));
+            }
+        }
+    }
+    if let Some((id, name)) = identity {
+        ensure!(
+            !id.chars().any(char::is_control) && !name.chars().any(char::is_control),
+            "application identity contains control characters"
+        );
+        println!("cargo:rustc-env=GUIC_APP_IDENTIFIER={id}");
+        println!("cargo:rustc-env=GUIC_APP_NAME={name}");
     }
     Ok(())
 }
