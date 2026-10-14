@@ -93,7 +93,13 @@ impl AppPaths {
         Ok(Self {
             config: resolve(dirs::config_dir())?,
             data: resolve(dirs::data_dir())?,
-            cache: resolve(dirs::cache_dir())?,
+            // Windows uses LocalAppData for both data and cache roots. Keep
+            // disposable files separate from persistent data and instance locks.
+            cache: if cfg!(windows) {
+                local_data.join("cache")
+            } else {
+                resolve(dirs::cache_dir())?
+            },
             local_data,
             logs,
         })
@@ -133,6 +139,17 @@ impl AppPaths {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(windows)]
+    #[test]
+    fn windows_cache_does_not_contain_persistent_data() -> Result<()> {
+        let identity = AppIdentity::new("org.example.paths", "Paths", "1")?;
+        let paths = AppPaths::discover(&identity)?;
+        assert_eq!(paths.cache, paths.local_data.join("cache"));
+        for persistent in [&paths.config, &paths.data, &paths.local_data, &paths.logs] {
+            assert!(!persistent.starts_with(&paths.cache));
+        }
+        Ok(())
+    }
     #[test]
     fn identities_cannot_escape_directories() -> Result<()> {
         for id in ["../other", "com..app", "com/app", "com.\\app", "com.app\n"] {
