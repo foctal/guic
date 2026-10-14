@@ -177,6 +177,8 @@ pub struct DesktopMenus {
     trays: HashMap<String, InstalledTray>,
     #[cfg(target_os = "windows")]
     windows: Vec<gpui::AnyWindowHandle>,
+    #[cfg(target_os = "windows")]
+    attachments: HashMap<gpui::WindowId, windows_menu::Attachment>,
 }
 impl DesktopMenus {
     /// Acquires the process-wide menu backend on the GPUI thread.
@@ -206,6 +208,8 @@ impl DesktopMenus {
             trays: HashMap::new(),
             #[cfg(target_os = "windows")]
             windows: Vec::new(),
+            #[cfg(target_os = "windows")]
+            attachments: HashMap::new(),
         })
     }
     /// Returns the service proxy for background tasks or dependency injection.
@@ -217,12 +221,14 @@ impl DesktopMenus {
         validate(&items, true)?;
         let menu = build_menu(&items)?;
         #[cfg(target_os = "windows")]
-        self.for_windows(cx, |window| {
-            if let Some(old) = &self.menu {
-                detach(&old.menu, window)?;
+        {
+            self.attachments.clear();
+            self.windows.retain(|handle| cx.windows().contains(handle));
+            for handle in &self.windows {
+                let attachment = handle.update(cx, |_, window, _| attach(&menu.menu, window))??;
+                self.attachments.insert(handle.window_id(), attachment);
             }
-            attach(&menu.menu, window)
-        })?;
+        }
         #[cfg(target_os = "macos")]
         menu.menu.init_for_nsapp();
         self.menu = Some(menu);
@@ -263,31 +269,23 @@ impl DesktopMenus {
         self.trays.remove(id);
     }
     /// Attaches the menu to a Windows window. Other platforms need no per-window attachment.
-    pub fn attach_window(&mut self, window: &gpui::Window, _cx: &mut App) -> Result<()> {
+    pub fn attach_window(&mut self, window: &gpui::Window, cx: &mut App) -> Result<()> {
         #[cfg(target_os = "windows")]
         {
+            self.windows.retain(|handle| cx.windows().contains(handle));
+            self.attachments
+                .retain(|id, _| self.windows.iter().any(|handle| handle.window_id() == *id));
             if let Some(menu) = &self.menu {
-                attach(&menu.menu, window)?;
+                let id = window.window_handle().window_id();
+                self.attachments.remove(&id);
+                self.attachments.insert(id, attach(&menu.menu, window)?);
             }
             if !self.windows.contains(&window.window_handle()) {
                 self.windows.push(window.window_handle());
             }
         }
         #[cfg(not(target_os = "windows"))]
-        let _ = window;
-        Ok(())
-    }
-    #[cfg(target_os = "windows")]
-    fn for_windows(
-        &self,
-        cx: &mut App,
-        mut f: impl FnMut(&gpui::Window) -> Result<()>,
-    ) -> Result<()> {
-        for handle in &self.windows {
-            if let Ok(result) = handle.update(cx, |_, window, _| f(window)) {
-                result?;
-            }
-        }
+        let _ = (window, cx);
         Ok(())
     }
     /// Runs service requests and menu event delivery. Retain the returned task;
@@ -374,6 +372,8 @@ impl DesktopMenus {
 }
 impl Drop for DesktopMenus {
     fn drop(&mut self) {
+        #[cfg(target_os = "windows")]
+        self.attachments.clear();
         #[cfg(target_os = "macos")]
         if let Some(menu) = &self.menu {
             menu.menu.remove_for_nsapp();
@@ -473,29 +473,16 @@ fn build_menu(items: &[NativeMenuItem]) -> Result<InstalledMenu> {
 }
 
 #[cfg(target_os = "windows")]
-fn attach(menu: &Menu, window: &gpui::Window) -> Result<()> {
+fn attach(menu: &Menu, window: &gpui::Window) -> Result<windows_menu::Attachment> {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     let RawWindowHandle::Win32(handle) = HasWindowHandle::window_handle(window)?.as_raw() else {
         anyhow::bail!("expected a Win32 window")
     };
     // SAFETY: GPUI owns a live HWND, and this operation runs on its UI thread.
-    unsafe {
-        menu.init_for_hwnd(handle.hwnd.get())?;
-    }
-    Ok(())
+    unsafe { windows_menu::Attachment::new(menu.clone(), handle.hwnd.get() as _) }
 }
 #[cfg(target_os = "windows")]
-fn detach(menu: &Menu, window: &gpui::Window) -> Result<()> {
-    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-    let RawWindowHandle::Win32(handle) = HasWindowHandle::window_handle(window)?.as_raw() else {
-        anyhow::bail!("expected a Win32 window")
-    };
-    // SAFETY: the HWND belongs to the live GPUI window provided by its update callback.
-    unsafe {
-        menu.remove_for_hwnd(handle.hwnd.get())?;
-    }
-    Ok(())
-}
+mod windows_menu;
 
 #[cfg(test)]
 mod tests {
