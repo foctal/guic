@@ -281,7 +281,7 @@ mod tests {
     #[test]
     fn payload_escapes_xml_preserves_resources_and_rejects_collisions() -> Result<()> {
         let temp = tempfile::tempdir()?;
-        let mut request = request(temp.path())?;
+        let mut request = request(&temp.path().canonicalize()?)?;
         let root = tempfile::tempdir()?;
         let text = manifest(&request)?;
         assert!(text.contains("Fixture &amp; Tools"));
