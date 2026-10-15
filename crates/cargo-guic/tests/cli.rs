@@ -83,7 +83,7 @@ fn invoke(directory: &Path, args: &[&str]) -> Result<Output> {
 #[test]
 fn windows_installer_formats_are_selectable() -> Result<()> {
     let directory = fixture()?;
-    let plan = success(invoke(
+    let output = invoke(
         directory.path(),
         &[
             "inspect",
@@ -96,11 +96,16 @@ fn windows_installer_formats_are_selectable() -> Result<()> {
             "--formats",
             "nsis,msi,msix",
         ],
-    )?)?;
-    assert_eq!(
-        plan["plan"]["formats"],
-        serde_json::json!(["nsis", "msi", "msix"])
-    );
+    )?;
+    if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
+        let plan = success(output)?;
+        assert_eq!(
+            plan["plan"]["formats"],
+            serde_json::json!(["nsis", "msi", "msix"])
+        );
+    } else {
+        failure(output, "cross-compilation is not yet validated")?;
+    }
     let invalid = invoke(
         directory.path(),
         &[
