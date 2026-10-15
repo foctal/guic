@@ -7,7 +7,7 @@ Application development and packaging tooling for GUIC. See the
 The CLI supports project discovery, configuration inspection, prerequisite checks,
 development execution and immutable build records. `build` compiles and packages;
 `bundle` packages a saved executable. Native formats include macOS app/DMG,
-Windows NSIS, and Linux deb/AppImage, with staged resources and optional signing
+Windows NSIS/MSI/MSIX, and Linux deb/AppImage, with staged resources and optional signing
 and notarization through explicit `--execute-signing`. `package-trial` uses the
 same pipeline for candidate artifacts. Publication remains a separate manual
 operation.

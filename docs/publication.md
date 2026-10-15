@@ -14,7 +14,9 @@ All public crates use version `0.3.0`. Publish in dependency order:
 4. `guic`
 
 Examples, samples, `guic-story`, `quick-xml-compat`, and `xtask` are internal
-and set `publish = false`.
+and set `publish = false`. `cargo-guic` and `guic-build` also set
+`publish = false`; install/use them from the checkout as documented in the
+[cargo-guic guide](cargo-guic.md).
 
 ## Dry run
 

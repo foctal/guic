@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Add the unpublished `cargo-guic` CLI and `guic-build` helper for project
+  configuration, development launch, verified build snapshots, diagnostics,
+  external resources, and native packaging (Linux DEB/AppImage, macOS app/DMG,
+  and Windows NSIS/MSI/MSIX).
+- Terminate owned Unix process-group descendants when a cargo-guic child exits,
+  including background processes left by hooks or development applications.
+- Require an executable Bash for Linux AppImage diagnostics and packaging, and
+  reject non-executable files during Unix tool discovery.
+- Update locked rustls to 0.23.46 to address RUSTSEC-2026-0346 through
+  RUSTSEC-2026-0349.
+
 - Implement `guic/native` with the new `guic-native` crate: shared build/runtime
   identity, writable application directories, authenticated single-instance
   activation, native menus and tray services, coordinated shutdown, recoverable
@@ -31,6 +42,15 @@ All notable changes to this project will be documented in this file.
   `--target universal-apple-darwin`.
 - Add local update key generation and signed update feed preparation, plus the
   optional `guic/updater` feature for in-app update checks and installation.
+
+### Migration notes
+
+- The default-enabled `native` feature now includes the `guic-native` desktop
+  services dependency instead of acting as a placeholder. Applications that do
+  not need these services can select features with `default-features = false`.
+- Applications using shared native identity should call `guic_build::build()`
+  from their build script on every desktop platform. The helper and cargo-guic
+  remain checkout-only tools, not published crates.
 
 ## 0.3.0 - 2026-10-10
 

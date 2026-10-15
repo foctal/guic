@@ -235,6 +235,13 @@ and `mime-type`. `bundle.protocols` entries accept `schemes` and `name`. Both
 are arrays of tables and map through the backend. Installation behavior still
 requires native acceptance.
 
+On Linux, the pinned backend writes MIME types and `x-scheme-handler` entries
+into the desktop file. It does not generate shared-mime-info XML to register
+new filename extensions. Use an existing MIME type or provision its MIME
+registration separately; declaring an extension alone does not associate that
+extension with the application. Debian runtime dependencies are also explicit
+through `deb-depends`, not inferred from the executable's imports.
+
 The backend allowlist includes `publisher`, `copyright`, `long-description`,
 `category`, `license-file`, `macos-info-plist`, `macos-entitlements`,
 `macos-frameworks`, `dmg-background`, `deb-depends`, `deb-desktop-template`,
