@@ -103,6 +103,36 @@ fn wait_until(
             change?;
             return Ok(None);
         }
+        #[cfg(unix)]
+        {
+            // Observe exit without reaping: the leader must reserve its process
+            // group ID until all descendants have been terminated.
+            let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+            let result = unsafe {
+                libc::waitid(
+                    libc::P_PID,
+                    child.id(),
+                    &mut info,
+                    libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+                )
+            };
+            if result != 0 {
+                return Err(std::io::Error::last_os_error().into());
+            }
+            #[cfg(target_os = "macos")]
+            let pid = info.si_pid;
+            #[cfg(not(target_os = "macos"))]
+            let pid = unsafe { info.si_pid() };
+            if pid != 0 {
+                // The unreaped child still owns this group, even after exit.
+                unsafe {
+                    libc::kill(-(child.id() as i32), libc::SIGKILL);
+                }
+            } else {
+                std::thread::sleep(Duration::from_millis(200));
+                continue;
+            }
+        }
         if let Some(status) = child.try_wait()? {
             check_cancelled()?;
             return Ok(Some(status));
@@ -118,4 +148,23 @@ pub(crate) fn hook(hook: Option<&crate::config::Hook>) -> Result<()> {
         status(&mut command).context("hook failed")?;
     }
     Ok(())
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn completed_child_does_not_leave_background_descendants() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let marker = directory.path().join("survived");
+        status(
+            Command::new("sh")
+                .args(["-c", "(sleep 0.5; touch \"$1\") >/dev/null 2>&1 &", "sh"])
+                .arg(&marker),
+        )?;
+        std::thread::sleep(Duration::from_secs(1));
+        assert!(!marker.exists(), "background descendant survived its owner");
+        Ok(())
+    }
 }
