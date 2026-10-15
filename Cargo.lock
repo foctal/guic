@@ -2869,7 +2869,7 @@ dependencies = [
 
 [[package]]
 name = "guic"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "cargo-packager-updater",
  "guic-assets",
@@ -2887,7 +2887,7 @@ dependencies = [
 
 [[package]]
 name = "guic-assets"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "guic-gpui",
  "serde",
@@ -2911,7 +2911,7 @@ dependencies = [
 
 [[package]]
 name = "guic-charts"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "guic-core",
  "guic-gpui",
@@ -2920,7 +2920,7 @@ dependencies = [
 
 [[package]]
 name = "guic-components"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "guic-core",
  "guic-gpui",
@@ -2934,7 +2934,7 @@ dependencies = [
 
 [[package]]
 name = "guic-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "guic-gpui",
  "guic-tokens",
@@ -2949,7 +2949,7 @@ dependencies = [
 
 [[package]]
 name = "guic-editor"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "guic-core",
  "guic-gpui",
@@ -3444,7 +3444,7 @@ dependencies = [
 
 [[package]]
 name = "guic-icons"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "guic-gpui",
  "guic-tokens",
@@ -3452,7 +3452,7 @@ dependencies = [
 
 [[package]]
 name = "guic-macros"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "quote",
  "syn 2.0.117",
@@ -3460,7 +3460,7 @@ dependencies = [
 
 [[package]]
 name = "guic-native"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -3501,7 +3501,7 @@ dependencies = [
 
 [[package]]
 name = "guic-tokens"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "guic-gpui",
  "schemars",
@@ -3513,7 +3513,7 @@ dependencies = [
 
 [[package]]
 name = "guic-webview"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "guic-gpui",
