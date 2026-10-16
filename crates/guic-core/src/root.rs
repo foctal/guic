@@ -11,6 +11,7 @@ use guic_tokens::Theme;
 /// overlays, and focus management, then renders the wrapped application view.
 /// Unhandled Tab and Shift-Tab keys move between child tab stops.
 pub struct Root {
+    _theme_subscription: Option<gpui::Subscription>,
     view: AnyView,
     focus_handle: FocusHandle,
     focus_scope: FocusScopeId,
@@ -40,6 +41,9 @@ impl Root {
         .detach();
         cx.global_mut::<GlobalState>().mount_root();
         Self {
+            _theme_subscription: cx
+                .has_global::<guic_tokens::ThemeController>()
+                .then(|| guic_tokens::ThemeController::observe(window, cx)),
             view: view.into(),
             focus_handle,
             focus_scope,

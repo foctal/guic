@@ -1,0 +1,48 @@
+[package]
+name = "cargo-guic"
+version = "0.1.0"
+publish = false
+description = "Development and packaging orchestration for GUIC applications."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+guic-build = { path = "../guic-build" }
+anyhow.workspace = true
+cargo_metadata = "0.23"
+cargo-config2 = "0.1.45"
+
+cargo-packager = { version = "=0.11.8", default-features = false, features = ["rustls-tls"] }
+clap = { version = "4", features = ["derive"] }
+ctrlc = { version = "3", features = ["termination"] }
+fs2 = "0.4"
+dirs = "5"
+
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.10"
+tempfile = "3"
+toml = "0.8"
+walkdir = "2"
+glob = "0.3"
+ignore = "0.4"
+base64 = "0.22"
+minisign = "0.7"
+semver = "1"
+url = "2"
+flate2 = "1"
+tar = "0.4"
+plist = "1"
+image = { version = "0.25", default-features = false, features = ["png", "ico"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+cargo-packager-updater = "=0.2.3"

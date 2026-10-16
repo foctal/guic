@@ -1,7 +1,10 @@
 [workspace]
 members = [
+    "crates/cargo-guic",
+    "crates/guic-build",
     "crates/guic",
     "crates/guic-core",
+    "crates/guic-native",
     "crates/guic-tokens",
     "crates/guic-components",
     "crates/guic-charts",
@@ -16,6 +19,7 @@ members = [
     "examples/assets_demo",
     "examples/charts_dashboard",
     "examples/native_reference",
+    "examples/desktop_shell",
     "examples/webview",
     "samples/component-gallery",
     "xtask",

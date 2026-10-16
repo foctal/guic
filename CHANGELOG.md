@@ -4,6 +4,64 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## 0.4.0 - 2026-10-16
+
+### Added
+
+- Implement `guic/native` with the new `guic-native` crate: shared build/runtime
+  identity, writable application directories, authenticated single-instance
+  activation, native menus and tray services, coordinated shutdown, recoverable
+  window geometry, persisted theme preference, and owned sidecar processes.
+- Add OS light/dark tracking with explicit System/Light/Dark preference, a
+  `CommandRouter::resolve_id` path for native commands, and `Menubar::native`
+  for the shared menu model on Linux and custom window chrome.
+- Add the unpublished `cargo-guic` CLI and `guic-build` helper for project
+  configuration, development launch, verified build snapshots, diagnostics,
+  external resources, and native packaging (Linux DEB/AppImage, macOS app/DMG,
+  and Windows NSIS/MSI/MSIX).
+- Package target-specific sidecars from `bundle.sidecars`, snapshot and verify
+  them with build records, and use the same executable-relative layout in dev.
+- Emit application identity from `guic-build` on all desktop platforms and add
+  the runnable `guic-example-desktop-shell` integration example.
+- Add opt-in cargo-guic file watching with automatic rebuild, restart, and recovery
+  after build failures.
+- Support macOS Universal Binary builds and packaging through
+  `--target universal-apple-darwin`.
+- Add local update key generation and signed update feed preparation, plus the
+  optional `guic/updater` feature for in-app update checks and installation.
+
+### Fixed
+
+- Terminate owned Unix process-group descendants when a cargo-guic child exits,
+  including background processes left by hooks or development applications.
+- Require an executable Bash for Linux AppImage diagnostics and packaging, and
+  reject non-executable files during Unix tool discovery.
+- Preserve unmatched combining marks during editor search-and-replace, cover
+  partial grapheme matches in search selections, and bound visible-line arithmetic.
+- Clean up JSON save temporaries after backup failures without removing files
+  that the save did not create.
+- Normalize file watcher roots and exclusions, including parent components and
+  symlinked directory prefixes.
+- Keep chart coordinates finite for axis ranges spanning extreme finite values.
+- Make umbrella-crate examples compile without default features and allow
+  `guic::theme_name!` without a direct `guic-tokens` dependency.
+- Canonicalize MSIX test fixture paths so tests accept macOS temporary directories
+  reached through the system `/var` symlink.
+
+### Security
+
+- Update locked rustls to 0.23.46 to address RUSTSEC-2026-0346 through
+  RUSTSEC-2026-0349.
+
+### Migration notes
+
+- The default-enabled `native` feature now includes the `guic-native` desktop
+  services dependency instead of acting as a placeholder. Applications that do
+  not need these services can select features with `default-features = false`.
+- Applications using shared native identity should call `guic_build::build()`
+  from their build script on every desktop platform. The helper and cargo-guic
+  remain checkout-only tools, not published crates.
+
 ## 0.3.0 - 2026-10-10
 
 - Upgrade the guic-gpui runtime family to 0.4.0.

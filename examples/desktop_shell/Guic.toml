@@ -1,0 +1,15 @@
+schema-version = 1
+[app]
+identifier = "org.guic.desktop-shell"
+product-name = "GUIC Desktop Shell"
+[build]
+package = "guic-example-desktop-shell"
+[bundle]
+icons = ["../assets_demo/packaging/icon.png"]
+[bundle.formats]
+macos = ["app"]
+windows = ["nsis"]
+linux = ["deb"]
+[[bundle.protocols]]
+name = "GUIC desktop example"
+schemes = ["guic-example"]

@@ -198,6 +198,19 @@ impl CommandRouter {
         self.find_enabled(&keystroke, &CommandScope::Global)
     }
 
+    /// Resolves an enabled command identifier within the active named or global scope.
+    #[must_use]
+    pub fn resolve_id(&self, id: &str, active_scopes: &[SharedString]) -> Option<&CommandSpec> {
+        self.commands.iter().find(|command| {
+            command.id.as_ref() == id
+                && command.enabled
+                && match &command.scope {
+                    CommandScope::Global => true,
+                    CommandScope::Named(scope) => active_scopes.contains(scope),
+                }
+        })
+    }
+
     fn find_enabled(&self, keystroke: &Keystroke, scope: &CommandScope) -> Option<&CommandSpec> {
         self.commands.iter().find(|command| {
             command.enabled

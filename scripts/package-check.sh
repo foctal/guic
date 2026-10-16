@@ -12,6 +12,7 @@ independent_packages=(
 
 dependent_packages=(
   guic-core
+  guic-native
   guic-icons
   guic-components
   guic-charts

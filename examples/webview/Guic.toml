@@ -1,0 +1,26 @@
+schema-version = 1
+
+[app]
+identifier = "org.guic.fixture.webview"
+product-name = "GUIC WebView Fixture"
+
+[build]
+package = "guic-example-webview"
+bin = "guic-example-webview"
+
+[runtime]
+webview = true
+
+[bundle]
+icons = ["../assets_demo/packaging/icon.png"]
+
+[bundle.formats]
+macos = ["app", "dmg"]
+windows = ["nsis"]
+linux = ["deb", "appimage"]
+
+[platform.linux.backend.cargo-packager]
+deb-depends = ["libgtk-3-0", "libwebkit2gtk-4.1-0"]
+
+[platform.windows.bundle]
+icons = ["../assets_demo/packaging/icon.ico"]

@@ -1,0 +1,680 @@
+# cargo-guic
+
+`cargo-guic` supports development and native packaging of GUIC applications.
+It resolves Cargo projects, runs development builds, and packages recorded
+executables through cargo-packager. The CLI has no GUIC or GPUI runtime
+dependency and does not add packaging dependencies to applications.
+
+`build` compiles the application and generates its configured native packages.
+`build --no-bundle` saves an executable snapshot without packaging; `bundle`
+packages a compatible saved snapshot without rebuilding. `package-trial` uses
+the same pipeline and marks its outputs as trial candidates.
+
+External resources support the common installed-resource resolver or an
+application-defined resolver. Signing and notarization require configured
+`required` policies and explicit `--execute-signing` on `build`, `bundle`, or
+`package-trial`. Installation testing and publication remain application-owner
+responsibilities. macOS Universal Binary builds are supported; other
+cross-compilation workflows remain outside this version's scope.
+
+## Install from source
+
+The CLI is not published to crates.io. From a checkout of this repository, use
+Rust 1.95 or newer and the native build tools for your operating system:
+
+```sh
+cargo install --path crates/cargo-guic --locked
+cargo guic --help
+```
+
+For development of the CLI itself, use `cargo run -p cargo-guic -- --help` from
+this repository. When operating on another application, run the installed CLI
+from that application's workspace so its Cargo configuration is discovered.
+
+## Quick start
+
+From an existing application workspace, replace `myapp` with its Cargo package
+name and choose a permanent reverse-domain application identifier:
+
+```sh
+cargo guic init -p myapp --identifier com.example.myapp
+cargo guic inspect -p myapp
+cargo guic dev -p myapp
+cargo guic build -p myapp --no-bundle
+```
+
+`init` writes Guic.toml next to the application's Cargo.toml without replacing
+existing files. It requires an explicit identifier and accepts only project
+selectors. It initializes app/DMG, NSIS, and deb/AppImage formats for their
+native hosts; configure icons and other build settings in Guic.toml afterward.
+
+Cargo commands use `--locked` by default. Ensure the application has an up-to-date
+Cargo.lock, or pass `--unlocked` to allow Cargo to resolve and update dependencies.
+`dev` builds with the dev profile and runs a copy of the executable once, with
+the application directory as its working directory. Forward application arguments
+with `cargo guic dev -p myapp -- --application-argument`. Add `--watch` to rebuild
+and restart automatically. `build --no-bundle` defaults to the release profile.
+
+## Create a native package
+
+Configure icons and formats in Guic.toml, then compile and package in one step:
+
+```sh
+cargo guic build -p myapp
+```
+
+To package a previously built executable without recompiling:
+
+```sh
+cargo guic build -p myapp --no-bundle
+cargo guic bundle -p myapp --build-record /absolute/path/to/record.json
+```
+
+The build report includes an `id`; its saved record is under Cargo's resolved
+`target_directory/guic/<package-id-hash>/records/<id>.json`. `bundle` can omit
+`--build-record` when exactly one compatible record exists. It never guesses
+between multiple compatible builds.
+
+Use the same target, profile and feature selectors as the recorded build. A
+custom `--profile ship` requires a corresponding Cargo profile. `--formats`
+replaces the configured list; omit it to use all formats configured for the host.
+
+| Native host | Formats |
+| --- | --- |
+| macOS | `app`, `dmg` |
+| Windows with MSVC | `nsis`, `msi`, `msix` |
+| Linux | `deb`, `appimage` |
+
+Each packaging operation runs the before-bundle hook once and creates separate
+copies for each format. Successful reports have `complete: true`; normal
+`build` and `bundle` reports have `trial: false`. The `acceptance: "not-verified"`
+field refers to application-specific installation testing, not package generation
+or signature verification. See the [packaging guide](packaging.md) for platform
+distribution requirements.
+
+`package-trial` remains available for explicit candidate generation. It requires
+`--build-record`, never compiles, and reports `trial: true` while using the same
+resource, signing, and output checks as `bundle`:
+
+```sh
+cargo guic package-trial -p myapp --build-record /absolute/path/to/record.json
+```
+
+## Commands
+
+| Command | Purpose |
+| --- | --- |
+| `init` | Create an application's Guic.toml. |
+| `inspect` | Show resolved settings and their provenance without running hooks. |
+| `doctor` | Check tools and runtime prerequisites; inspect a saved build with `--build-record`. |
+| `dev` | Build and run once; `--watch` enables automatic rebuild and restart. |
+| `updater keygen` | Generate a local update-signing key pair. |
+| `updater prepare` | Prepare signed update payloads and a feed without uploading. |
+| `build` | Build and generate configured native packages. |
+| `bundle` | Package a compatible saved executable without compiling. |
+| `build --no-bundle` | Build and save an executable snapshot and build record. |
+| `package-trial` | Generate native packages from an explicit build record. |
+| `schema` | Print the Guic.toml JSON Schema. |
+
+No command publishes releases or crates, modifies Git history, or opens pull
+requests. Explicit notarization submits artifacts to Apple's notary service.
+
+## Configuration
+
+The [JSON Schema](cargo-guic.schema.json) describes configuration version 1.
+Unknown keys and incompatible schema versions are errors, including unknown
+keys in inactive platform overrides.
+
+```toml
+schema-version = 1
+
+[app]
+identifier = "com.example.myapp"
+product-name = "My Application"
+
+[build]
+package = "myapp"
+bin = "myapp"
+# profile = "ship"
+# features = ["feature-a"]
+# default-features = false
+# inputs = ["assets/embedded-data.json"]
+
+[bundle]
+icons = ["assets/app.png"]
+
+# Native package formats for build, bundle, and package-trial.
+[bundle.formats]
+macos = ["app", "dmg"]
+windows = ["nsis"]
+linux = ["deb", "appimage"]
+
+[platform.macos.build]
+deployment-target = "12.0"
+
+[signing]
+code-signing = "off"
+notarization = "off"
+
+[backend.cargo-packager]
+publisher = "Example Organization"
+```
+
+A virtual workspace with multiple executable packages requires `--package` or
+`build.package` from an explicitly selected configuration. Multiple binaries
+require `--bin`, `build.bin`, or Cargo's `default-run`. Conflicting package/bin
+selectors fail. Cargo metadata supplies inherited version, authors, description,
+license, and homepage; executable and display names remain distinct.
+
+`--config` identifies its adjacent Cargo.toml unless `--manifest-path` is also
+supplied. CLI paths are relative to the invocation directory. Configured file
+paths and hook directories are relative to Guic.toml. CLI options override the
+selected `[platform.macos.*]`, `[platform.windows.*]`, or `[platform.linux.*]`
+tables, which override common tables. Tables merge by key; arrays replace.
+`--formats` replaces the format list. `inspect` includes field provenance.
+
+Cargo configuration is resolved from the invocation directory, as with Cargo.
+This includes hierarchical configuration, environment target selection, target
+directories, and compiler settings. Explicit native targets are passed to Cargo;
+multiple or non-native targets fail. macOS deployment targets are passed to the
+compiler and backend metadata consistently. Forced conflicting Cargo environment
+settings fail. This does not validate a platform deployment baseline.
+
+`build.inputs` declares files that affect the executable, such as embedded data.
+Their content hashes are part of record compatibility. A before-build hook may
+create missing declared inputs; all must exist after it finishes. Inputs are
+rechecked after compilation and copied alongside the executable snapshot.
+Undeclared source files are not a source-tree attestation: rebuild when the
+current source is required.
+
+## External resources
+
+External resources require an explicit versioned runtime contract:
+
+```toml
+[bundle]
+resource-contract = "guic-native-v1"
+
+[[bundle.resources]]
+source = "assets/data/**/*.json"
+destination = "data"
+```
+
+An existing source path is treated literally, including names containing glob
+metacharacters. An exact file maps to the exact destination. A directory maps its descendant
+files beneath the destination. A glob preserves paths relative to the static
+prefix before its first wildcard. Empty matches fail; expansion is sorted and
+collisions, path traversal, reserved Windows names and symlinks are rejected.
+Resources are copied and hashed after before-bundle, then copied separately for
+each format. Resource content is packaging-only; changing the runtime contract
+requires rebuilding.
+
+`guic-native-v1` uses `guic_assets::ResourceRoot::discover("cargo-bin-name")`.
+Use guic-assets from a checkout containing this API; do not assume an older
+crates.io release includes it.
+It resolves macOS `Contents/Resources`, Windows files beside the executable,
+and Linux `../lib/<cargo-bin-name>` relative to the installed `usr/bin` executable.
+The Linux layout is shared by the pinned backend's deb and mounted/extracted
+AppImage outputs, allowing the same snapshot for both. All paths are independent
+of the working directory. The root must exist; logical resource paths reject
+traversal and escaping symlinks. `FileAssetSource::installed` integrates the root
+with GPUI's existing asset interface. These inputs are not writable user storage.
+
+`dev` stages resources, supplies an absolute `GUIC_RESOURCE_DIR`, and runs a copy
+of the executable. Windows DLL resources are placed beside that development
+copy. Ordinary Cargo execution can set the same absolute environment variable
+or call `ResourceRoot::from_directory`. No source-tree fallback is applied by
+the resolver. The `application-managed-v1` contract is available for
+applications with a custom resolver. Test installed resource loading for each
+application and format.
+
+## Platform metadata
+
+`bundle.file-associations` entries accept `extensions`, `name`, `description`
+and `mime-type`. `bundle.protocols` entries accept `schemes` and `name`. Both
+are arrays of tables and map through the backend. Installation behavior still
+requires native acceptance.
+
+On Linux, the pinned backend writes MIME types and `x-scheme-handler` entries
+into the desktop file. It does not generate shared-mime-info XML to register
+new filename extensions. Use an existing MIME type or provision its MIME
+registration separately; declaring an extension alone does not associate that
+extension with the application. Debian runtime dependencies are also explicit
+through `deb-depends`, not inferred from the executable's imports.
+
+The backend allowlist includes `publisher`, `copyright`, `long-description`,
+`category`, `license-file`, `macos-info-plist`, `macos-entitlements`,
+`macos-frameworks`, `dmg-background`, `deb-depends`, `deb-desktop-template`,
+`nsis-installer-icon`, `nsis-header-image`, `nsis-sidebar-image`,
+`msix-publisher` and `msix-version`. Paths are
+relative to Guic.toml and are copied into isolated staging. macOS Info.plist
+extensions may add usage descriptions but cannot override CLI-owned identity,
+version, executable, product name or deployment target. Frameworks preserve
+relative internal symlinks only; escaping, absolute or dangling links fail.
+
+## Windows installers
+
+NSIS remains the default. Select MSI or MSIX with `--formats msi,msix`, or
+configure `bundle.formats.windows = ["nsis", "msi", "msix"]`. Packaging requires
+a native Windows MSVC target. MSI uses cargo-packager's WiX backend, which
+downloads its pinned WiX tools when needed; reports use the format name `msi`.
+The pinned WiX template supports x86 and x64 MSI packages. MSIX also supports ARM64.
+
+MSIX uses `makeappx.exe` from the Windows SDK, discovered on PATH or in the SDK
+installation. SDK validation remains enabled. Configure a square PNG or ICO
+in `bundle.icons`; cargo-guic generates the required logo sizes. For example:
+
+```toml
+[bundle]
+icons = ["packaging/app.ico"]
+
+[bundle.formats]
+windows = ["msi", "msix"]
+
+[backend.cargo-packager]
+publisher = "Example Company"
+msix-publisher = "CN=Example Company"
+# Optional four-part override, required for Cargo prerelease/build versions:
+# msix-version = "1.2.3.0"
+```
+
+The MSIX identity uses `app.identifier` (3–50 ASCII letters, digits, periods or
+hyphens). Stable Cargo versions map from `major.minor.patch` to
+`major.minor.patch.0`; all four components must fit in 16 bits. The publisher
+must match the signing certificate subject. See Microsoft's
+[MSIX packaging instructions](https://learn.microsoft.com/en-us/windows/msix/desktop/desktop-to-uwp-manual-conversion).
+
+MSIX packages target Windows 10 version 1809 or later and declare a full-trust
+desktop application. Sidecars and resources retain their paths beside the main
+executable. File extensions and protocol schemes become manifest registrations.
+`AppxManifest.xml`, `AppxBlockMap.xml`, `AppxSignature.p7x`, `[Content_Types].xml`,
+`AppxMetadata` and `GuicAssets` are reserved package destinations.
+
+With signing off, MSIX output is unsigned and intended for inspection or later
+manual signing. Installing it normally requires a trusted signature. Existing
+`signing.windows-thumbprint`, `signing.windows-timestamp-url`,
+`code-signing = "required"` and `--execute-signing` sign and verify the binaries
+and package. Creating a package does not install it or verify installed launch.
+The built-in updater feed still selects NSIS on Windows; MSI/MSIX are not
+substitutes for its NSIS update artifacts.
+
+## Windows executable resources
+
+Installer artwork is separate from Windows EXE resources. Configure the latter:
+
+```toml
+[platform.windows.build.windows-resources]
+icon = "packaging/app.ico"
+# Enable when GPUI already links its windows-manifest resource.
+use-dependency-manifest = true
+# manifest = "packaging/app.manifest"
+company-name = "Example Organization"
+copyright = "Copyright Example Organization"
+```
+
+The helper is not published to crates.io. Add a path dependency to your GUIC
+checkout in the application's Cargo.toml (adjust the relative path):
+
+```toml
+[build-dependencies]
+guic-build = { path = "../guic/crates/guic-build" }
+```
+
+Call it from the application's build.rs, incorporating this call into any existing
+build script:
+
+```rust
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    guic_build::build()?;
+    Ok(())
+}
+```
+
+The helper embeds the selected binary's ICO, Cargo version, product name and
+manifest. Its default manifest
+requests standard-user privileges, common controls, PerMonitorV2 DPI awareness
+and long paths. A custom manifest replaces that default. Numeric Windows version
+components must fit u16; the full Cargo version including prerelease text remains
+in the string version resource. The helper does not affect installer artwork.
+
+GPUI 0.4.0 enables its own Windows manifest, including through
+`guic-gpui-platform`. Set `use-dependency-manifest = true` for these applications
+to embed only branding resources and keep GPUI's manifest. Otherwise MSVC reports
+duplicate MANIFEST resources. This option defaults to false and cannot be
+combined with `manifest`; the dependency's manifest determines DPI, privileges
+and other runtime settings, including whether long paths are enabled.
+
+Native input content hashes participate in build compatibility. The CLI checks
+the selected package's Cargo build-script acknowledgement, so omitting the helper
+fails instead of silently producing an unbranded executable. Changes invalidate
+Cargo's build-script cache. With ordinary Cargo, the helper reads Guic.toml and
+its Windows overrides; set `build.bin` explicitly for multi-binary applications.
+The helper is native-Windows-only for resource compilation and has no GPUI or
+packager dependency. All other hosts keep ordinary Cargo builds working.
+
+Backend lifecycle hooks, executable paths, versions, targets, outputs, signing
+secrets and unclassified fields cannot be overridden.
+
+## Signing and notarization
+
+For a signed macOS package:
+
+```toml
+[signing]
+code-signing = "required"
+notarization = "required"
+macos-identity = "Developer ID Application: Example Organization (TEAMID)"
+macos-keychain-profile = "example-notary-profile"
+```
+
+Store credentials separately using the OS tooling, then explicitly run
+`build --execute-signing` or `bundle --execute-signing` with the usual
+project/record/format selectors. `package-trial --execute-signing` is also supported.
+`build --no-bundle` cannot be combined with `--execute-signing`.
+The profile is a credential reference, not a password. The backend signs nested
+macOS code; the worker checks the signature against the requested identity.
+DMGs are also signed. Required notarization submits an app ZIP or DMG, requires
+an `Accepted` result, staples and validates the ticket, then re-verifies the
+signature. These commands contact Apple's service only when explicitly executed
+with `--execute-signing`; inspection, diagnostics, and `build --no-bundle`
+never submit anything.
+
+Windows signing uses `windows-thumbprint` (40 hexadecimal characters) and
+`windows-timestamp-url` (an HTTPS RFC 3161 endpoint) with `code-signing =
+"required"`. The backend signs staged inputs and the NSIS output; the worker
+independently runs `signtool verify /pa /all`. Verify credential access and
+installer/uninstaller behavior on the target system. Linux OS code signing is
+outside this CLI's scope. Updater signatures are separate and supported through `updater prepare`.
+
+An off policy never imports signing fields into the backend or runs signing
+tools, even if ambient signing environment variables exist. An enabled policy
+without `--execute-signing` fails before hooks or packaging. Every requested
+verification must succeed; backend success without verified outcomes fails.
+Reports retain per-output verification and aggregate status without credentials.
+
+## Hooks
+
+Hooks use a program and argument array, run once for their respective phase,
+and fail the operation on any nonzero exit:
+
+```toml
+[hooks.before-build]
+program = "asset-generator"
+args = ["--output", "generated/data.bin"]
+cwd = "."
+```
+
+A shell is never implicit. To use one, explicitly select `sh` with `-c`, or the
+appropriate Windows shell and arguments. Relative program paths containing a
+separator resolve from Guic.toml; bare names use PATH. The before-build hook may
+generate declared inputs, but cannot change the build configuration during the
+operation. `bundle` never runs before-build. `inspect` and `doctor` run neither
+hook. They may query Cargo metadata and compiler versions.
+
+## Reports
+
+Reports are JSON on stdout; human progress, Cargo diagnostics, hooks, and the
+application's output go to stderr. `--json` also emits versioned error objects
+with stage/application/target context when available. Hook arguments, Cargo environment values,
+and credentials are omitted from inspection and records; only a configuration
+digest is retained. Do not place credentials in hook arguments or build flags:
+external tools control their own stderr. Ctrl-C cancels owned child processes
+and never produces a success report.
+
+## Diagnostics
+
+`doctor` checks native build tools and SDK tools, packaging prerequisites,
+Linux development packages, display/FUSE hints and explicitly requested WebView
+availability. `doctor --build-record <record.json>` additionally verifies the
+snapshot and inspects imports using `dumpbin`, `otool` or `readelf`; it never
+executes that application. Configure application-specific requirements:
+
+```toml
+[runtime]
+webview = true
+
+[platform.linux.runtime]
+glibc-max = "2.31"
+pkg-config = ["libexample"]
+dynamic-libraries = ["libexample.so.1"]
+
+[platform.windows.runtime]
+dynamic-libraries = ["example.dll"]
+```
+
+`glibc-max` is checked against imported symbol versions, and is enforced before
+packaging. Build on the oldest supported distribution; packaging cannot reduce
+an executable's ABI requirements. Build packages and runtime libraries are
+reported separately. Linux runtime lookup checks the host loader cache; Windows
+checks configured root DLL resources and System32. Explicit dynamic requirements
+cover libraries absent from static import tables. Resource packaging alone does
+not set ELF rpaths or macOS loader paths. macOS load commands are included for
+review of rpaths and deployment metadata. Dependencies of plugins/frameworks,
+loader search order and destination-machine compatibility still require native
+acceptance; host discovery is not a redistribution guarantee.
+
+WebView is opt-in. Windows checks the installed Evergreen WebView2 registration;
+macOS checks system WebKit; Linux checks WebKitGTK 4.1. Runtime installers are
+never downloaded or run by doctor. Bundle authorized DLLs explicitly as root
+resources, or document the application's runtime prerequisite. Fixed-version
+WebView2 installations require application-managed discovery and acceptance.
+
+A failed or unresolved required check returns a nonzero exit status. JSON uses
+`passed: null` for unverified checks, rather than a successful result. Diagnostics
+record located tool paths, queried tool versions, and relevant lockfile package
+versions under `lockfile:` keys (these are lockfile candidates, not proof that a
+particular feature used them). No dependencies are installed automatically.
+
+On Windows, run `doctor` from an x64 Native Tools Command Prompt for Visual
+Studio, or initialize the corresponding developer environment first. Rust can
+locate MSVC automatically, but `doctor` requires `link.exe` and `dumpbin.exe` on
+`PATH`. Windows SDK tools such as `rc.exe` and `fxc.exe` are also discovered from
+installed SDK directories.
+
+For configured formats, `doctor` includes a `packaging-prerequisites` check for
+native format support, required tools, resources, and signing configuration.
+Diagnostics validate signing policy without executing it or requiring
+`--execute-signing`. `ready: true` means all required checks passed; it does not
+certify installed application behavior or credential access.
+
+## Build records and backend boundary
+
+Data lives in Cargo's resolved target directory:
+
+```text
+guic/<package-id-hash>/
+  application.lock
+  records/build-<unique-id>.json
+  snapshots/build-<unique-id>/<executable>
+  snapshots/build-<unique-id>/inputs-<unique-id>/<index>
+  artifacts/attempt-<unique-id>/
+```
+
+The executable comes from the matching successful Cargo `compiler-artifact`
+message, including custom profiles. A fresh copy and SHA-256 digest protect
+later bundling from another Cargo build replacing the original. Records are
+written atomically without replacing existing records. Stored snapshots are
+logically immutable and hashes are verified before use; filesystem permissions
+are not a security boundary.
+
+`bundle` verifies package, binary, identifier, application version, target,
+profile, feature selection, resource layout, and build configuration. Pass
+matching selectors for nondefault profiles/features. Implicit selection requires
+exactly one compatible record; two compatible builds require `--build-record`.
+Missing, modified, incompatible, and unsupported-version records fail. Packaging
+metadata such as icons and publisher does not require rebuilding. Manifest,
+compiler, Cargo configuration, declared input, and build-hook changes are treated
+conservatively as build-affecting. Identity changes require a new build; installer
+upgrade continuity still requires native acceptance.
+
+The adapter uses **cargo-packager 0.11.8**, with its CLI feature disabled. Packaging
+runs in an isolated worker with copied inputs, a controlled environment and
+serial access to the shared backend cache. Missing or invalid outputs fail the
+operation. If a later format fails, earlier outputs remain available with an
+incomplete report.
+
+The backend may download external tools over HTTPS and caches them under the OS
+cache directory in `.cargo-packager`. The CLI's lock coordinates cargo-guic
+processes; it does not coordinate separate cargo-packager processes. Packaging
+does not guarantee offline operation or byte-for-byte reproducibility. Include
+[THIRD-PARTY-LICENSES.txt](../crates/cargo-guic/THIRD-PARTY-LICENSES.txt) when
+redistributing the CLI.
+
+## References
+
+Windows integration references: Microsoft's [VERSIONINFO resource specification](https://learn.microsoft.com/en-us/windows/win32/menurc/versioninfo-resource)
+and [WebView2 Runtime distribution and detection guidance](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution).
+
+## File watching and automatic restart
+
+```sh
+cargo guic dev -p myapp --watch
+cargo guic dev -p myapp --watch --watch-path ../shared --watch-ignore generated
+```
+
+Watching is opt-in; `--no-watch` explicitly selects the default one-shot behavior.
+The watcher polls workspace files, the configuration, declared build inputs and
+resource paths, plus additional `--watch-path` entries. Git ignore rules, `.git`,
+`target`, Cargo's resolved output directory, and `--watch-ignore` entries are
+excluded. External path dependencies can be added with `--watch-path`.
+
+Changes stop the running application and its owned child processes before a
+fresh build and resource staging. Build failures keep the watcher alive so the
+next edit can recover. An application that exits waits for another edit.
+Ctrl-C stops the watcher and its running child processes. Generated files and
+application-written logs should be ignored to avoid rebuild loops. Arguments
+following `--` are forwarded on each restart. Progress goes to stderr; a watch
+session does not emit a successful one-shot build report on every restart.
+
+## macOS Universal Binary
+
+Install both macOS Rust standard libraries and the Xcode command line tools:
+
+```sh
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+cargo guic build -p myapp --target universal-apple-darwin
+```
+
+The before-build hook runs once. Cargo builds both architectures with the same
+profile, feature policy, inputs and deployment target. `lipo` combines the two
+executables and verifies both slices before saving the immutable build record.
+The record retains `universal-apple-darwin`; use that target again for `bundle`.
+App/DMG packaging and optional signing operate on the combined executable.
+
+This mode requires macOS. Native dependencies must build for both architectures;
+any supplied frameworks and dynamic libraries must also contain the appropriate
+slices. Universal mode does not convert third-party libraries automatically.
+
+## Signed application updates
+
+Update preparation is separate from OS code signing and publication. Supported
+update payloads are macOS `.app.tar.gz`, Windows NSIS `.exe`, and Linux `.AppImage`.
+A report containing only DMG or deb cannot produce an in-app update; include
+`app` or `appimage` in the corresponding package formats. Native signatures and
+notarization, when configured, finish before update archives are created.
+
+Generate a key pair once and keep the private key outside the repository:
+
+```sh
+cargo guic updater keygen --output /secure/location/updater.key
+```
+
+The public key is written to `/secure/location/updater.key.pub`. Existing files
+are never overwritten. `GUIC_UPDATER_PASSWORD` supplies the key password; if
+absent, an empty password is used without an interactive prompt. Use
+`--password-env NAME` to select another environment variable. Embed only the
+public key in the application.
+
+After packaging, pass the completed `artifacts/attempt-*/report.json` files:
+
+```sh
+cargo guic updater prepare \
+  --artifact-report /build/macos/report.json \
+  --artifact-report /build/windows/report.json \
+  --artifact-report /build/linux/report.json \
+  --private-key /secure/location/updater.key \
+  --public-key /secure/location/updater.key.pub \
+  --base-url https://updates.example.com/releases/1.2.3/ \
+  --output ./updates-1.2.3
+```
+
+Reports must describe the same application identifier and version. Preparation
+checks artifact hashes, copies them to an isolated directory, creates any app
+archive, signs every payload and verifies signatures against the public key.
+It writes `latest.json` and the payloads/signatures into a new output directory.
+Universal app payloads are listed for both `macos-aarch64` and `macos-x86_64`.
+Overlapping platform entries are rejected. The CLI does not upload anything;
+host the generated directory at the specified HTTPS location manually.
+
+Enable `guic`'s `updater` feature in an application using this checkout. The
+`guic::updater` module exposes `cargo-packager-updater` 0.2.3:
+
+```rust,no_run
+fn check_for_updates() -> Result<(), Box<dyn std::error::Error>> {
+    let config = guic::updater::Config {
+        endpoints: vec!["https://updates.example.com/latest.json".parse()?],
+        pubkey: include_str!("../updater.key.pub").trim().to_owned(),
+        ..Default::default()
+    };
+    if let Some(update) = guic::updater::check_update(env!("CARGO_PKG_VERSION").parse()?, config)? {
+        update.download_and_install()?;
+    }
+    Ok(())
+}
+```
+
+Run this blocking operation on an application-owned background thread at startup
+or on the application's chosen schedule. `UpdaterBuilder` provides timeouts,
+headers, target overrides and Windows installation options; download callbacks
+can drive a progress UI. The application controls when to install and restart.
+Windows installation may terminate the running application. Linux in-app updates
+require an AppImage installation; deb upgrades remain package-manager operations.
+
+The feed protocol uses `version`, `platforms`, `url`, `signature`, and `format`.
+It is the cargo-packager-updater protocol, not a promise of Tauri plugin wire
+compatibility. Signatures verify downloaded payloads before installation; serve
+both the feed and payloads over HTTPS and retain trusted control of release
+metadata. OS signing and update-signing keys are independent.
+
+## Sidecar executables
+
+Declare prebuilt helpers with a stable installed name and a source relative to
+`Guic.toml`. `{target}` expands to the selected Rust target triple, including
+`universal-apple-darwin` when building a Universal Binary.
+
+```toml
+[[bundle.sidecars]]
+name = "example-worker"
+source = "helpers/example-worker-{target}"
+```
+
+Use platform overrides for sources with different extensions. Names contain
+ASCII letters, digits, hyphens, and underscores, without an `.exe` suffix;
+Windows adds that suffix to the installed name. Use application-specific names
+because Linux packages install binaries under `usr/bin`. The source must be a
+regular file, executable on Unix, with no symlink components. Supply the matching
+architecture (a universal helper for a universal macOS app). A before-build hook
+may generate a missing source; the refreshed plan hashes it after the hook.
+
+Sidecar content and definitions affect the build record. Build snapshots retain
+private copies with hashes. Unix staged helpers use mode 0755 so installation
+under a different owner does not make them unexecutable. Bundle/trial validates snapshots and creates separate
+copies per format so signing cannot mutate the original build. Helpers use the
+backend binary list, including normal executable signing, rather than the asset
+resource list. Names may not collide with the main executable or Windows
+resources. `dev` copies the same snapshots beside its temporary application
+executable. Changes are included in development watch inputs.
+
+The installed layout is `Contents/MacOS` on macOS, the installation directory
+on Windows, and `usr/bin` on Linux/AppImage. `guic::native::Sidecars` implements
+that lookup contract. Helpers are not downloaded or compiled implicitly.
+
+## Shared runtime identity
+
+Call `guic_build::build()` in the application's build script on every platform.
+It emits `GUIC_APP_IDENTIFIER` and `GUIC_APP_NAME` from the resolved CLI plan or,
+for ordinary Cargo builds, the target platform overlay in `Guic.toml`.
+`guic::native::application_identity!()` combines those values with the calling
+package's version. Identity changes invalidate the CLI build record. The CLI
+passes identity only to the selected package; build scripts in dependencies do
+not receive that application's identity as their own.

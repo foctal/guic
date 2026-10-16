@@ -3,6 +3,9 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod resources;
+pub use resources::ResourceRoot;
+
 use gpui::{App, AssetSource, Global, SharedString};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -162,6 +165,11 @@ impl FileAssetSource {
     #[must_use]
     pub fn new(base: impl Into<PathBuf>) -> Self {
         Self { base: base.into() }
+    }
+
+    /// Creates a filesystem source from the installed resource contract.
+    pub fn installed(binary: &str) -> std::io::Result<Self> {
+        Ok(Self::new(ResourceRoot::discover(binary)?.path()))
     }
 
     /// Returns the base directory.

@@ -6,6 +6,8 @@ tokens, components, optional WebView integration, and tooling.
 ## Crate topology
 
 - `guic-core` — runtime, focus, overlay, and platform abstractions.
+- `guic-native` — application identity, activation, lifecycle, native menus/trays,
+  window state, and sidecar ownership; exposed by `guic/native`.
 - `guic-tokens` — theming and design tokens.
 - `guic-components` — the single canonical home for all reusable widgets,
   including optional subsystems (data table, tree, dock, markdown) gated behind

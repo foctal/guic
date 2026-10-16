@@ -1,0 +1,46 @@
+[package]
+name = "guic-native"
+version = "0.4.0"
+description = "Native desktop application integration for GUIC."
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+gpui.workspace = true
+guic-core = { version = "0.4.0", path = "../guic-core" }
+guic-tokens = { version = "0.4.0", path = "../guic-tokens" }
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+libc = "0.2"
+dirs = "6"
+fs2 = "0.4"
+async-channel = "2"
+futures = "0.3"
+uuid = { version = "1", features = ["v4"] }
+url = "2"
+image = { version = "0.25", default-features = false, features = ["png", "ico"] }
+raw-window-handle.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+tray-icon = { version = "0.25.1", default-features = false, features = ["ksni"] }
+
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+tray-icon = { version = "0.25.1", default-features = false }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+
+[dev-dependencies]
+tempfile = "3"
+gpui = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true

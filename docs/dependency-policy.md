@@ -95,3 +95,43 @@ validation follows the [platform smoke checklist](platform-smoke.md).
 choices do not define GUIC's policy. The license of an application crate does
 not replace the licenses of its transitive dependencies; GUIC reviews the
 resolved `guic-gpui` graph directly.
+
+## cargo-guic Backend
+
+The unpublished `cargo-guic` CLI pins `cargo-packager = 0.11.8`, disables its CLI
+feature, and selects rustls for backend HTTPS tool downloads. The backend is
+isolated from the GUIC/GPUI application dependency graph. See [cargo-guic](cargo-guic.md) for supported workflows and restrictions.
+
+The `webpki-roots` 0.26.11 and 1.0.9 certificate-data dependencies use
+`CDLA-Permissive-2.0`. The source agreement was reviewed: sharing the data requires
+including the agreement text. Exact-version license exceptions in `deny.toml`
+cover these two packages only, and the full agreement is retained in
+`crates/cargo-guic/THIRD-PARTY-LICENSES.txt`. Include that file with any future
+CLI binary distribution and re-review the exception on upgrades. Advisory exceptions remain separately scoped in `deny.toml`.
+
+The unpublished `guic-build` helper uses `embed-resource` only on Windows hosts
+for native MSVC resource compilation. The resolved version is recorded in
+Cargo.lock; the helper does not depend on GUIC, GPUI or cargo-packager. Its
+serde/schemars request types are shared with the CLI so configuration
+and build-script inputs stay aligned. Runtime resource lookup in guic-assets
+uses only the standard library and adds no packaging dependency.
+
+## Optional application updater
+
+The `guic/updater` feature pins `cargo-packager-updater = 0.2.3` and adds its
+blocking HTTPS client and Minisign verification support only when enabled. It
+uses the cargo-packager update format; CLI preparation signs copies of completed
+artifacts and never publishes them. Review the updater's download, signature
+verification and platform installation paths when upgrading. Native installation
+and restart acceptance remain application-specific. File watching uses `ignore`
+for Git ignore rules and excludes Cargo build outputs.
+
+## Native desktop adapters
+
+`guic-native` uses `tray-icon`/`muda` under their MIT/Apache-2.0 terms. Linux
+selects the `ksni` StatusNotifierItem backend rather than requiring a GTK event
+loop in a GPUI application. `ksni 0.3.6` declares Unlicense; its public-domain
+dedication, permission statement, and warranty text are shipped in
+`crates/guic-native/THIRD-PARTY-LICENSES.txt`. The cargo-deny exception is scoped
+to that exact dependency version and must be reviewed on upgrade. Other new
+native dependencies remain covered by the existing license allowlist.

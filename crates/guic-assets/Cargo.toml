@@ -1,6 +1,6 @@
 [package]
 name = "guic-assets"
-version = "0.3.0"
+version = "0.4.0"
 description = "Asset loading abstractions for GUIC."
 edition.workspace = true
 license.workspace = true
@@ -16,6 +16,9 @@ gpui.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
 
 [lints]
 workspace = true

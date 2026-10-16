@@ -4,12 +4,13 @@
 //!
 //! ```no_run
 //! use guic::prelude::*;
+//! use gpui::{ParentElement as _, div};
 //!
 //! struct Dashboard;
 //!
 //! impl Render for Dashboard {
 //!     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-//!         Button::new("Save").primary()
+//!         div().child("Dashboard")
 //!     }
 //! }
 //! ```
@@ -26,6 +27,7 @@ pub use guic_core::{
     TrayService, UpdateInfo, UpdateService,
 };
 pub use guic_tokens::{Theme, ThemeContextExt, ThemeRegistry};
+pub use guic_tokens::{ThemeController, ThemePreference};
 
 #[cfg(feature = "icons")]
 pub use guic_icons::{Icon, IconName};

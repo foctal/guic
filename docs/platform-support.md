@@ -9,7 +9,7 @@ components, assets, icons, macros, examples, and samples.
 | Platform | CI validation | Manual release validation | Notes |
 | --- | --- | --- | --- |
 | macOS latest | `cargo test --workspace --all-features --lib` | Build, launch, keyboard, mouse, focus, overlay, text input, clipboard, high-contrast review where available | Uses the pinned `guic-gpui` release. |
-| Windows latest | `cargo test --workspace --all-features --lib` | Build, launch, keyboard, mouse, focus, overlay, text input, clipboard, high-contrast review where available | Uses the pinned `guic-gpui` release. The latest recorded checks are in [Platform Smoke Record](platform-smoke.md). |
+| Windows latest | `cargo test --workspace --all-features --lib` | Build, launch, keyboard, mouse, focus, overlay, text input, clipboard, high-contrast review where available | Uses the pinned `guic-gpui` release. |
 | Ubuntu latest | `cargo fmt`, `cargo test --workspace --all-features`, `cargo doc --workspace --all-features --no-deps`, theme schema check | Build, launch, keyboard, mouse, focus, overlay, text input, clipboard, font fallback, Linux desktop backend review | Linux development dependencies are installed by `scripts/install-linux-deps.sh`. |
 
 ## Linux Desktop Assumptions
@@ -47,5 +47,5 @@ Before a release is considered platform-ready, maintainers should validate:
 - Optional WebView examples on every supported platform when `webview` is in
   scope for the release.
 
-Record results using [Platform Smoke Record](platform-smoke.md). Automated CI
-does not replace this physical-system release gate.
+Use the [platform smoke checklist](platform-smoke.md) and retain results in the
+release record. Automated CI does not replace this physical-system release gate.
