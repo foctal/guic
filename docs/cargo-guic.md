@@ -17,10 +17,21 @@ application-defined resolver. Signing and notarization require configured
 responsibilities. macOS Universal Binary builds are supported; other
 cross-compilation workflows remain outside this version's scope.
 
-## Install from source
+## Installation
 
-The CLI is not published to crates.io. From a checkout of this repository, use
-Rust 1.95 or newer and the native build tools for your operating system:
+Use Rust 1.95 or newer and the native build tools for your operating system.
+After the initial crates.io publication, install the CLI with:
+
+```sh
+cargo install cargo-guic --locked
+cargo guic --help
+```
+
+`--locked` is currently required: `cargo-packager 0.11.8` depends on
+`zip 0.6`, whose releases are all yanked. The packaged lockfile retains the
+resolved version; installation without `--locked` fails dependency resolution.
+
+Until then, or to install from source, run from this repository's root:
 
 ```sh
 cargo install --path crates/cargo-guic --locked
@@ -312,13 +323,16 @@ company-name = "Example Organization"
 copyright = "Copyright Example Organization"
 ```
 
-The helper is not published to crates.io. Add a path dependency to your GUIC
-checkout in the application's Cargo.toml (adjust the relative path):
+After the initial crates.io publication, add the helper to the application's
+Cargo.toml:
 
 ```toml
 [build-dependencies]
-guic-build = { path = "../guic/crates/guic-build" }
+guic-build = "0.1.0"
 ```
+
+Before publication, use `guic-build = { path = "../guic/crates/guic-build" }`
+instead, adjusting the path to your checkout.
 
 Call it from the application's build.rs, incorporating this call into any existing
 build script:

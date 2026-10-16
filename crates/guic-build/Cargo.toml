@@ -1,10 +1,11 @@
 [package]
 name = "guic-build"
 version = "0.1.0"
-publish = false
 description = "Build-time native resource integration for GUIC applications."
 edition.workspace = true
 license.workspace = true
+homepage.workspace = true
+readme = "README.md"
 repository.workspace = true
 rust-version.workspace = true
 

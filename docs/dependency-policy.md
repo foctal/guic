@@ -98,7 +98,13 @@ resolved `guic-gpui` graph directly.
 
 ## cargo-guic Backend
 
-The unpublished `cargo-guic` CLI pins `cargo-packager = 0.11.8`, disables its CLI
+CLI installation currently requires `--locked`: `cargo-packager 0.11.8` depends
+on `zip ^0.6`, whose releases are all yanked. The existing lockfile still permits
+archive verification and installation. `num-modular 0.6.6` in the lockfile is also
+yanked. Revisit these dependencies when updating the backend; do not advertise
+unlocked CLI installation until fresh dependency resolution succeeds.
+
+The `cargo-guic` CLI pins `cargo-packager = 0.11.8`, disables its CLI
 feature, and selects rustls for backend HTTPS tool downloads. The backend is
 isolated from the GUIC/GPUI application dependency graph. See [cargo-guic](cargo-guic.md) for supported workflows and restrictions.
 
@@ -109,7 +115,7 @@ cover these two packages only, and the full agreement is retained in
 `crates/cargo-guic/THIRD-PARTY-LICENSES.txt`. Include that file with any future
 CLI binary distribution and re-review the exception on upgrades. Advisory exceptions remain separately scoped in `deny.toml`.
 
-The unpublished `guic-build` helper uses `embed-resource` only on Windows hosts
+The `guic-build` helper uses `embed-resource` only on Windows hosts
 for native MSVC resource compilation. The resolved version is recorded in
 Cargo.lock; the helper does not depend on GUIC, GPUI or cargo-packager. Its
 serde/schemars request types are shared with the CLI so configuration
