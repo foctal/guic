@@ -31,6 +31,14 @@ check_package_license() {
   fi
 }
 
+for package in guic-build cargo-guic; do
+  echo "Checking tooling package metadata and contents: ${package}"
+  check_package_license "${package}"
+done
+
+# Verify both archives together using Cargo's temporary registry for dependencies.
+cargo package --locked --allow-dirty -p guic-build -p cargo-guic
+
 for package in "${independent_packages[@]}"; do
   echo "Checking package metadata and contents: ${package}"
   check_package_license "${package}"
@@ -42,5 +50,5 @@ for package in "${dependent_packages[@]}"; do
   check_package_license "${package}"
 done
 
-echo "Independent package archives and all package file lists passed."
+echo "Tooling and independent package archives and all package file lists passed."
 echo "Dependent archives require publishing prerequisites in docs/publication.md order."

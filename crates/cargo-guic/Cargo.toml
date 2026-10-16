@@ -1,15 +1,16 @@
 [package]
 name = "cargo-guic"
 version = "0.1.0"
-publish = false
 description = "Development and packaging orchestration for GUIC applications."
 edition.workspace = true
 license.workspace = true
+homepage.workspace = true
+readme = "README.md"
 repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-guic-build = { path = "../guic-build" }
+guic-build = { version = "0.1.0", path = "../guic-build" }
 anyhow.workspace = true
 cargo_metadata = "0.23"
 cargo-config2 = "0.1.45"

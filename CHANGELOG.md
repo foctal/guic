@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+### Changed
+
+- Prepare `guic-build` and `cargo-guic` 0.1.0 for crates.io publication, with
+  versioned dependencies, packaged licenses, and archive verification. After
+  manual publication, install with `cargo install cargo-guic --locked` and run
+  `cargo guic`.
+
 ## 0.4.0 - 2026-10-16
 
 ### Added
