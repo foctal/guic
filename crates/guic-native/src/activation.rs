@@ -320,6 +320,8 @@ fn receive(
     sender: &async_channel::Sender<ActivationRequest>,
     delivered: &mut std::collections::VecDeque<String>,
 ) -> Result<()> {
+    // Accepted sockets can inherit the listener's nonblocking mode on macOS.
+    stream.set_nonblocking(false)?;
     stream.set_read_timeout(Some(Duration::from_millis(500)))?;
     stream.set_write_timeout(Some(Duration::from_millis(500)))?;
     let mut length = [0; 4];
@@ -360,6 +362,56 @@ impl Drop for ActivationOwner {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn receive_waits_for_fragmented_requests_on_nonblocking_connections() -> Result<()> {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
+        let mut client = TcpStream::connect(listener.local_addr()?)?;
+        client.set_read_timeout(Some(Duration::from_secs(2)))?;
+        let (mut server, _) = listener.accept()?;
+        // Reproduce the mode macOS inherits from a nonblocking listener on every platform.
+        server.set_nonblocking(true)?;
+        let request = ActivationRequest::current()?;
+        let id = uuid::Uuid::new_v4().to_string();
+        let packet = serde_json::to_vec(&Packet {
+            token: "test-token".into(),
+            id: id.clone(),
+            request: request.clone(),
+        })?;
+        let (sender, receiver) = async_channel::bounded(1);
+        let (completed, completion) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let mut delivered = std::collections::VecDeque::new();
+            let result = receive(&mut server, "test-token", &sender, &mut delivered);
+            let _ = completed.send(result);
+            delivered
+        });
+        let assert_pending = || {
+            let result = completion.recv_timeout(Duration::from_millis(50));
+            assert!(
+                matches!(result, Err(std::sync::mpsc::RecvTimeoutError::Timeout)),
+                "activation receive completed before the full request: {result:?}"
+            );
+        };
+        assert_pending();
+        let length = (packet.len() as u32).to_be_bytes();
+        client.write_all(&length[..2])?;
+        assert_pending();
+        client.write_all(&length[2..])?;
+        let split = packet.len() / 2;
+        client.write_all(&packet[..split])?;
+        assert_pending();
+        client.write_all(&packet[split..])?;
+        let mut ack = [0];
+        client.read_exact(&mut ack)?;
+        assert_eq!(ack, [1]);
+        completion.recv_timeout(Duration::from_secs(2))??;
+        assert_eq!(receiver.try_recv()?, request);
+        assert!(receiver.try_recv().is_err());
+        assert_eq!(worker.join().expect("activation receiver"), [id]);
+        Ok(())
+    }
+
     #[cfg(windows)]
     #[test]
     fn windows_native_encoding_survives_forwarding() -> Result<()> {
