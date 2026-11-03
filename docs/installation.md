@@ -1,32 +1,31 @@
 # Installation
 
 GUIC requires Rust 1.95 or newer. Add the toolkit, GPUI, and the platform
-runtime to the application manifest. These pins apply to published GUIC 0.4.0:
+runtime to the application manifest. These versions apply to GUIC 0.5.0:
 
 ```toml
 [dependencies]
-guic = "0.4.0"
-gpui = { package = "guic-gpui", version = "=0.4.0" }
+guic = "0.5.0"
+gpui = { package = "guic-gpui", version = "=0.5.0" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-gpui_platform = { package = "guic-gpui-platform", version = "=0.4.0", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
+gpui_platform = { package = "guic-gpui-platform", version = "=0.5.0", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-gpui_platform = { package = "guic-gpui-platform", version = "=0.4.0", features = ["font-kit"] }
+gpui_platform = { package = "guic-gpui-platform", version = "=0.5.0", features = ["font-kit"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-gpui_platform = { package = "guic-gpui-platform", version = "=0.4.0" }
+gpui_platform = { package = "guic-gpui-platform", version = "=0.5.0" }
 ```
 
-The current development checkout uses the 0.5.0 runtime family. To use the
-checkout, set both `guic-gpui` and `guic-gpui-platform` to `=0.5.0` and replace
-the `guic` dependency with a local path or a pinned Git revision:
+To use a source checkout, replace the `guic` dependency with a local path or
+a pinned Git revision and keep the matching runtime versions:
 
 ```toml
 guic = { git = "https://github.com/foctal/guic", rev = "<commit>" }
 ```
 
-Do not use a moving branch for reproducible builds. GUIC `0.4.x` is a preview;
+Do not use a moving branch for reproducible builds. GUIC `0.5.x` is a preview;
 enable only the subsystem features the application needs and review
 [API Stability](api-stability.md) before upgrading.
 

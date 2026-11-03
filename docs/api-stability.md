@@ -1,6 +1,6 @@
 # API Stability
 
-GUIC `0.4.x` is a preview. Public APIs, feature flags, and persistence formats
+GUIC `0.5.x` is a preview. Public APIs, feature flags, and persistence formats
 may change between releases. See the [changelog](../CHANGELOG.md) before upgrading.
 
 | Scope | Status |

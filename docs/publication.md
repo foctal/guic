@@ -5,7 +5,7 @@ script builds and verifies archives without uploading them.
 
 ## Public crate set and order
 
-The GUI library crates use version `0.4.0`. Publish in dependency order:
+The GUI library crates use version `0.5.0`. Publish in dependency order:
 
 1. `guic-macros`, `guic-tokens`, `guic-assets`, and `guic-webview`
 2. `guic-core` and `guic-icons`

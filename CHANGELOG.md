@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## 0.5.0 - 2026-11-03
+
 ### Changed
 
 - Correct component examples and consolidate usage guides; remove internal

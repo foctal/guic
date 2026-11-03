@@ -9,7 +9,7 @@ themes, application primitives, and a broad component set for desktop apps.
 
 ## Status
 
-GUIC `0.4.x` is a preview release. Core APIs are usable, but breaking changes
+GUIC `0.5.x` is a preview release. Core APIs are usable, but breaking changes
 are expected. Editor and WebView integrations are experimental. See
 [API Stability](https://github.com/foctal/guic/blob/main/docs/api-stability.md)
 and [Platform Support](https://github.com/foctal/guic/blob/main/docs/platform-support.md)
@@ -19,9 +19,8 @@ before adopting GUIC in a product.
 
 GUIC requires Rust 1.95 or newer. Follow the
 [installation guide](https://github.com/foctal/guic/blob/main/docs/installation.md)
-for Cargo dependencies and Linux packages. The source checkout uses the 0.5.0
-GPUI family; published GUIC 0.4.0 uses 0.4.0. Keep the runtime and platform pins
-matched to the GUIC version you use.
+for Cargo dependencies and Linux packages. GUIC 0.5.0 uses the matching 0.5.0
+`guic-gpui` runtime and platform crates.
 
 ## Quick Start
 
