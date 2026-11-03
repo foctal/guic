@@ -10,9 +10,9 @@ unapproved licenses, and any advisory that is not explicitly reviewed in
 `deny.toml`. GUIC's resolved dependency graph is expected to use crates.io
 sources only.
 
-## Maintenance exceptions
+## Advisory exceptions
 
-`deny.toml` records accepted maintenance advisories by ID. Review exceptions
+`deny.toml` records accepted advisories by ID. Review exceptions
 when dependencies change and remove them when maintained replacements become
 available. Security advisories are release-blocking unless explicitly reviewed.
 
@@ -93,8 +93,11 @@ The lockfile includes fixes for Markdown and certificate advisories:
 The Markdown dependency now requires at least 0.13.6. GUIC's Markdown parser
 currently enables tables, not the affected wikilinks option.
 
-The following upstream dependency chains have unresolved advisories and are
-not exempted from the advisory policy:
+The following seven advisories are temporarily accepted by ID in `deny.toml`
+pending decisions on the packaging and zbus migrations. Compatible dependency
+updates cannot resolve them. These exceptions allow the policy check to pass;
+the underlying vulnerabilities and maintenance risks remain unresolved. New
+advisories are not covered by these exceptions.
 
 - `cargo-packager` 0.11.8 requires `zip` 0.6.6. RustSec reports
   [RUSTSEC-2026-0367](https://rustsec.org/advisories/RUSTSEC-2026-0367),
@@ -112,4 +115,6 @@ not exempted from the advisory policy:
   Their replacement is part of zbus 6, requiring migration of the dependent
   accessibility and notification stacks, including the pinned GPUI family.
 
-Review these unresolved advisories before publication.
+Revisit these exceptions when the migration policy is decided or the affected
+dependencies change. Remove them when the corresponding advisories no longer
+apply.

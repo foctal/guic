@@ -9,8 +9,8 @@ All notable changes to this project will be documented in this file.
 - Correct component examples and consolidate usage guides; remove internal
   validation records and planning notes.
 - Update the pinned `guic-gpui` runtime and platform family to 0.5.0.
-- Update compatible Markdown and TLS dependencies to patched releases; document
-  the remaining upstream dependency audit blockers.
+- Update compatible Markdown and TLS dependencies to patched releases; temporarily
+  accept seven upstream ZIP and zbus advisories pending migration decisions.
 - Apply Select sizing to popup typography and compact option padding.
 - Make TreeView rendered row pitch match virtualization, center disclosure cells,
   and add fixed/fill height, body-only presentation, and scroll tracking.
