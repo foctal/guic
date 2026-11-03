@@ -14,7 +14,7 @@ PanelMenu::new("settings-navigation")
         MenuItem::new("billing", "Billing").disabled(true),
     ])
     .selected(Some(active_section.clone()))
-    .on_select(cx.listener(|view, id, _, cx| {
+    .on_select(cx.listener(|view, id: &gpui::SharedString, _, cx| {
         view.active_section = id.clone();
         cx.notify();
     }));

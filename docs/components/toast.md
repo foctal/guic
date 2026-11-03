@@ -1,20 +1,12 @@
 # Toast
 
-## Purpose
-
 Transient notifications. `Toast` is a single notification card; `ToastStack`
 positions and layers a list of toasts in a window corner above all other
 content.
 
-## Import
-
 ```rust
 use guic::prelude::{Toast, ToastStack, ToastPlacement, ToastVariant};
-```
 
-## Basic Usage
-
-```rust
 ToastStack::new("app-toasts")
     .placement(ToastPlacement::BottomRight)
     .toasts(vec![

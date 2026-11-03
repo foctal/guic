@@ -1,19 +1,11 @@
 # InputNumber
 
-## Purpose
-
 A numeric stepper with decrement/increment controls. Host-managed: supply the
 value and react to `on_change`.
 
-## Import
-
 ```rust
 use guic::prelude::InputNumber;
-```
 
-## Basic Usage
-
-```rust
 InputNumber::new("quantity")
     .value(3.0)
     .range(0.0, 99.0)

@@ -1,22 +1,16 @@
 # DataTable
 
-## Purpose
+Enable the `data-table` feature on `guic`.
 
 Render structured row and column data with stable sizing, row selection
 styling, and explicit loading, empty, and error states.
-
-## Import
 
 ```rust
 use guic::prelude::{
     DataColumn, DataColumnPin, DataRow, DataTable, DataTableColumnViewport,
     DataTableViewport,
 };
-```
 
-## Basic Usage
-
-```rust
 DataTable::new("builds")
     .columns(vec![
         DataColumn::new("name", "Name"),
@@ -46,7 +40,7 @@ DataTable::new("large-builds")
     .viewport(DataTableViewport::new(720.0, 240.0).overscan(3))
 ```
 
-## Host-Managed Navigation
+## Navigation
 
 ```rust
 use guic::prelude::{DataTableNavigation, DataTableNavigationOutcome};
@@ -64,7 +58,7 @@ match table.navigation_outcome("stable", DataTableNavigation::Down) {
 }
 ```
 
-## In-Widget Keyboard Navigation
+## Keyboard
 
 Provide a host-owned `FocusHandle` through `focusable` to turn the host-managed
 navigation helpers into real keyboard interaction. When the table body is
@@ -112,7 +106,7 @@ For host-managed selection outside the widget event path, `selected_row_ids`,
 `row_range_ids`, and `selection_change` expose the same table-ordered selection
 math used by the widget.
 
-## Host-Managed Column Resizing
+## Column resizing
 
 ```rust
 let table = DataTable::new("builds").columns(vec![
@@ -127,7 +121,7 @@ let resized = table
 
 Providing `on_column_resize` also adds an eight-pixel resize handle to every
 header. Dragging emits the current pointer-derived width; clicking the handle
-emits a 24-pixel keyboard/test-friendly increment. The host stores the emitted
+emits a 24-pixel increment. The host stores the emitted
 width and supplies it on the next render.
 
 ```rust
@@ -187,16 +181,5 @@ DataTable::new("builds")
     .row_actions_width(144.0)
 ```
 
-## Notes
-
-The current implementation emphasizes predictable presentation and integration
-with application-managed state. Row virtualization is supported through
-externally supplied viewport metadata, which keeps scroll ownership in the host
-application while reducing the rendered row count for large datasets. Column
-virtualization follows the same contract and always retains pinned edge columns.
-`selected_row_id`, `visible_row_models`, and `navigation_outcome` provide a
-host-managed foundation for keyboard traversal and selection workflows.
-`visible_column_models`, `resized_column`, and `apply_column_resize` provide
-the same kind of host-managed foundation for column sizing and resize flows.
-Custom renderers are pure callbacks; application state changes remain explicit
-through component event handlers owned by the host.
+Custom cell and row-action renderers return elements. Keep state changes in
+component event handlers and supply the updated state on the next render.

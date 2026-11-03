@@ -1,15 +1,17 @@
 # TextArea
 
-`TextArea` is the multi-line member of the shared GUIC text-input family.
+`TextArea` is an alias for `TextInput`. Use `TextInput::text_area` to create
+a multiline text field; calling the alias's `new` method creates a plain input.
 
-Highlights:
+```rust
+use guic::prelude::TextInput;
 
-- Reuses the GPUI-backed text editing core
-- Up/Down move between visual lines, including soft wraps, preserving the preferred horizontal position across short lines
-- Shift+Up/Down extend selection; horizontal movement and editing reset the preferred horizontal position
-- Larger surface for note-taking and longer descriptions
-- Suitable as the default long-form text component while richer editor work continues in higher layers
+let input = cx.new(|cx| TextInput::text_area("text-area", cx).placeholder("Enter text"));
+```
 
-Story coverage:
+Retain the entity and render `input.clone()`.
+Up/Down moves between visual lines, including soft wraps, while preserving
+the preferred horizontal position. Shift+Up/Down extends the selection.
+Horizontal movement and editing reset that position.
 
-- `crates/guic-story/src/main.rs`
+See [TextInput](text-input.md) for editing, callbacks, and keyboard bindings.

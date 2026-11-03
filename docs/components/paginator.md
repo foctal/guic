@@ -1,20 +1,12 @@
 # Paginator
 
-## Purpose
-
 A host-managed page navigation control. Renders previous/next buttons and a
 truncated run of page buttons (with ellipses) around the current page — pairs
 naturally with `DataTable`.
 
-## Import
-
 ```rust
 use guic::prelude::Paginator;
-```
 
-## Basic Usage
-
-```rust
 Paginator::new("results")
     .page_count(12)
     .page(current_page) // zero-based

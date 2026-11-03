@@ -1,19 +1,13 @@
 # Markdown
 
-## Purpose
+Enable the `markdown` feature on `guic`.
 
 Render Markdown documents and lightweight embedded HTML previews inside GUIC
 layouts.
 
-## Import
-
 ```rust
 use guic::prelude::{HtmlFragment, Markdown};
-```
 
-## Basic Usage
-
-```rust
 Markdown::new("# Release Notes\n\n- Stable tokens\n- Component gallery")
 ```
 
@@ -34,11 +28,8 @@ Markdown::new(
 )
 ```
 
-## Notes
-
-The current renderer focuses on production-oriented preview use cases such as
-release notes, status panes, and embedded help content. It covers headings,
-paragraphs, lists, tables, block quotes, thematic rules, fenced code blocks,
+The renderer supports headings, paragraphs, lists, tables, block quotes,
+thematic rules, fenced code blocks,
 inline formatting markers, and lightweight HTML fragments.
 
 ## HTML Boundaries

@@ -4,11 +4,12 @@
 It is suitable for inspectors, about panels, and settings summaries.
 
 ```rust,ignore
-PropertyList::new()
-    .item(PropertyItem::new("Version", "1.4.0"))
-    .item(PropertyItem::new("Channel", "Stable").badge("Active"))
+use guic::prelude::{BadgeVariant, PropertyItem, PropertyList};
+
+PropertyList::new("Application").items(vec![
+    PropertyItem::new("Version", "1.4.0"),
+    PropertyItem::new("Channel", "Stable").badge("Active", BadgeVariant::Primary),
+])
 ```
 
-Property lists are read-only. Interactive values should be rendered as real
-controls outside the list. Layout, separators, typography, and colors are
-derived from theme tokens.
+Property lists are read-only. Render editable values as separate controls.

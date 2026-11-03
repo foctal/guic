@@ -1,19 +1,11 @@
 # Tag
 
-## Purpose
-
 Display a tinted categorization label, optionally with a leading status dot and
-a remove affordance for filter-chip workflows.
-
-## Import
+a remove button for filter-chip workflows.
 
 ```rust
 use guic::prelude::{Tag, TagVariant};
-```
 
-## Basic Usage
-
-```rust
 Tag::new("backend")
     .variant(TagVariant::Info)
     .dot(true)

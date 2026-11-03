@@ -1,18 +1,12 @@
 # TreeView
 
-## Purpose
+Enable the `tree` feature on `guic`.
 
 Render hierarchical data for navigation, inspectors, and project-style sidebars.
 
-## Import
-
 ```rust
 use guic::prelude::{TreeNode, TreeView};
-```
 
-## Basic Usage
-
-```rust
 TreeView::new("project-tree").nodes(vec![
     TreeNode::new("src", "src").expanded(true).children(vec![
         TreeNode::new("main", "main.rs").selected(true),
@@ -20,7 +14,7 @@ TreeView::new("project-tree").nodes(vec![
 ])
 ```
 
-## Host-Managed Navigation
+## Navigation
 
 ```rust
 use guic::prelude::{TreeNavigation, TreeNavigationOutcome};
@@ -39,9 +33,9 @@ match tree.navigation_outcome("main", TreeNavigation::Left) {
 }
 ```
 
-## In-Widget Keyboard Navigation
+## Keyboard
 
-Provide a host-owned `FocusHandle` through `focusable` to enable real keyboard
+Provide a host-owned `FocusHandle` through `focusable` to enable keyboard
 interaction. When the tree is focused, `Up`/`Down` and `Home`/`End` move the
 selection through `on_select` or `on_node_selection`, while `Left`/`Right`
 either move between parent/child nodes or collapse/expand a branch through
@@ -72,12 +66,33 @@ use guic::prelude::TreeViewport;
 TreeView::new("large-project-tree")
     .nodes(nodes)
     .row_height(36.0)
-    .viewport(TreeViewport::new(scroll_offset, 240.0).overscan(3))
-    .max_height(240.0)
+    .viewport(TreeViewport::new(scroll_offset, body_height).overscan(3))
+    .height(240.0)
 ```
 
-The host remains responsible for updating `scroll_offset`. Use a stable row
-height matching the rendered design so spacer calculations stay accurate.
+Retain a `gpui::ScrollHandle` and pass it through `track_scroll`. Read
+`-handle.offset().y` for the scroll offset and use the available body height,
+excluding the title and outer padding, for `TreeViewport`. Refresh the view
+when this metadata changes. Rendered rows and virtual spacers use the same pitch.
+
+## Sizing
+
+`row_height` sets the actual row pitch, including spacing: 36 logical pixels by
+default, with a minimum of 24. Long labels truncate within the fixed row height.
+`height` fixes the outer height; `fill_height()` fills a parent with an allocated
+height. `max_height` caps intrinsic height without stretching short trees.
+The title stays fixed while the body scrolls.
+
+`body_only(true)` removes outer padding, background, and border for use in an
+application-owned panel. An explicitly supplied title is retained.
+
+```rust
+TreeView::new("inspector")
+    .nodes(nodes)
+    .row_height(24.0)
+    .height(240.0)
+    .body_only(true)
+```
 
 ## Controlled Mutations
 
@@ -109,7 +124,7 @@ Cmd/Ctrl-click toggles a node, and Shift-click or Shift-navigation selects an
 inclusive range in visible tree order.
 
 Use `selection_mode(TreeSelectionMode::Checkbox)` to render checkbox
-affordances on each visible node. Checkbox clicks and Space on the focused node
+controls on each visible node. Checkbox clicks and Space on the focused node
 emit toggle selection updates.
 
 ```rust
@@ -153,11 +168,3 @@ TreeView::new("project-tree")
         let _ = node_id; // fetch or reveal children in host state
     })
 ```
-
-## Notes
-
-`TreeView` provides visual hierarchy, expansion state, selection styling,
-lazy-loading placeholders, controlled nested mutations, and bounded rendering
-for large visible trees. `visible_node_ids`,
-`next_visible_node_id`, and `previous_visible_node_id` provide a host-managed
-foundation for keyboard traversal. Tree state remains host-owned and explicit.

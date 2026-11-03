@@ -4,7 +4,9 @@
 ranking, a bounded result list, disabled-command filtering, accessible dialog
 and listbox semantics, and keyboard operation.
 
-```rust,ignore
+```rust
+use guic::prelude::{CommandPalette, CommandPaletteItem};
+
 let palette = cx.new(|cx| {
     CommandPalette::new("workspace-commands", cx)
         .items(vec![
@@ -13,13 +15,8 @@ let palette = cx.new(|cx| {
                 .keywords(["load", "document"]),
             CommandPaletteItem::new("settings.open", "Open settings"),
         ])
-        .on_activate(cx.listener(|view, command, window, cx| {
-            view.run_command(command.id(), window, cx);
-        }))
-        .on_dismiss(cx.listener(|view, _, cx| {
-            view.palette_open = false;
-            cx.notify();
-        }))
+        .on_activate(|_command, _window, _cx| { /* dispatch command */ })
+        .on_dismiss(|_window, _cx| { /* close palette */ })
 });
 ```
 
@@ -36,5 +33,4 @@ first match. `max_results` limits the number of matches, not the viewport size.
 
 The search input is the sole owner of the palette's focus handle. Do not also
 register that handle on a parent with `track_focus`: two focused accessibility
-nodes violate GPUI's tree invariant. The wrapper retains its dialog role and
-key context without a second focus registration.
+nodes violate GPUI's tree invariant.

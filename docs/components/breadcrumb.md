@@ -1,19 +1,11 @@
 # Breadcrumb
 
-## Purpose
-
 Show the navigation path to the current location. The trailing item is treated
 as the current page; preceding items are clickable when a handler is set.
 
-## Import
-
 ```rust
 use guic::prelude::{Breadcrumb, BreadcrumbItem};
-```
 
-## Basic Usage
-
-```rust
 Breadcrumb::new("nav")
     .items(vec![
         BreadcrumbItem::new("home", "Home"),

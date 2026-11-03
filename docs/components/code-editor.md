@@ -1,19 +1,11 @@
 # CodeEditor
 
-## Purpose
-
 Render a controlled native code editor surface backed by a line-oriented buffer,
 selection metadata, diagnostics, search, and lightweight syntax classification.
 
-## Import
-
 ```rust
 use guic::prelude::{CodeEditor, CodeEditorOptions, EditorBuffer, EditorSession};
-```
 
-## Basic Usage
-
-```rust
 let session = EditorSession::new(EditorBuffer::from_text(
     "fn main() {\n    println!(\"hello\");\n}",
 ));
@@ -33,15 +25,15 @@ CodeEditor::new("source", session.buffer().clone())
 history. `CodeEditor::on_edit` reports both the updated buffer and selections so
 controlled applications do not lose cursor state between renders.
 
-The keyboard surface supports text insertion, selection replacement,
-Backspace/Delete, Enter, Tab, arrows, Home/End, Shift selection extension,
+Supply `focusable(handle)` to enable keyboard editing. It supports text insertion,
+selection replacement, Backspace/Delete, Enter, Tab, arrows, Home/End, Shift selection extension,
 Select All, and clipboard copy/cut/paste. Buffer operations preserve Unicode
 grapheme boundaries and edit only the affected lines.
 
-## Support Level
+## Limitations
 
-`guic-editor` is a dedicated subsystem crate. Enable it through the `editor`
-feature on `guic`, or depend on `guic-editor` directly for editor-focused
-applications. It remains a preview subsystem: pointer-accurate cursor placement,
-pixel-level selection and caret painting, scroll-wheel integration, IME,
-language adapters, and large-file rendering benchmarks are still release gates.
+Enable the `editor` feature on `guic`, or depend on `guic-editor` directly.
+The editor is experimental: it does not provide IME input, pixel-accurate caret
+placement, or built-in scroll-wheel handling. Click callbacks identify a line's
+start; selection highlighting covers whole lines. Applications control the
+visible range through `CodeEditorOptions`.

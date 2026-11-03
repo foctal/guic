@@ -1,13 +1,13 @@
 # Tooltip
 
-`Tooltip` wraps any GUIC element and delegates deployment to GPUI's tooltip lifecycle.
+`Tooltip` shows a short message using GPUI's tooltip lifecycle. It preserves
+the wrapped element's layout and interaction.
 
-Highlights:
+```rust
+use guic::prelude::{Button, Tooltip};
 
-- Native GPUI tooltip handling
-- Token-driven bubble styling
-- Good fit for short explanatory affordances
+Tooltip::new(Button::new("Save"), "Save this document").id("save-tooltip")
+```
 
-Story coverage:
-
-- `crates/guic-story/src/main.rs`
+Supply distinct IDs for wrappers created in a loop or shared factory.
+Buttons and icon buttons also provide a `.tooltip(...)` builder.

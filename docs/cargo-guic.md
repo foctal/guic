@@ -20,7 +20,7 @@ cross-compilation workflows remain outside this version's scope.
 ## Installation
 
 Use Rust 1.95 or newer and the native build tools for your operating system.
-After the initial crates.io publication, install the CLI with:
+Install a released version of the CLI with:
 
 ```sh
 cargo install cargo-guic --locked
@@ -31,16 +31,15 @@ cargo guic --help
 `zip 0.6`, whose releases are all yanked. The packaged lockfile retains the
 resolved version; installation without `--locked` fails dependency resolution.
 
-Until then, or to install from source, run from this repository's root:
+To install from source, run from this repository's root:
 
 ```sh
 cargo install --path crates/cargo-guic --locked
 cargo guic --help
 ```
 
-For development of the CLI itself, use `cargo run -p cargo-guic -- --help` from
-this repository. When operating on another application, run the installed CLI
-from that application's workspace so its Cargo configuration is discovered.
+Run the installed CLI from the application workspace so Cargo discovers its
+configuration.
 
 ## Quick start
 
@@ -127,8 +126,8 @@ cargo guic package-trial -p myapp --build-record /absolute/path/to/record.json
 | `package-trial` | Generate native packages from an explicit build record. |
 | `schema` | Print the Guic.toml JSON Schema. |
 
-No command publishes releases or crates, modifies Git history, or opens pull
-requests. Explicit notarization submits artifacts to Apple's notary service.
+The CLI does not publish artifacts. Notarization explicitly submits artifacts
+to Apple's notary service.
 
 ## Configuration
 
@@ -195,8 +194,7 @@ settings fail. This does not validate a platform deployment baseline.
 Their content hashes are part of record compatibility. A before-build hook may
 create missing declared inputs; all must exist after it finishes. Inputs are
 rechecked after compilation and copied alongside the executable snapshot.
-Undeclared source files are not a source-tree attestation: rebuild when the
-current source is required.
+Records do not hash undeclared source files. Rebuild to package the current source.
 
 ## External resources
 
@@ -221,8 +219,6 @@ each format. Resource content is packaging-only; changing the runtime contract
 requires rebuilding.
 
 `guic-native-v1` uses `guic_assets::ResourceRoot::discover("cargo-bin-name")`.
-Use guic-assets from a checkout containing this API; do not assume an older
-crates.io release includes it.
 It resolves macOS `Contents/Resources`, Windows files beside the executable,
 and Linux `../lib/<cargo-bin-name>` relative to the installed `usr/bin` executable.
 The Linux layout is shared by the pinned backend's deb and mounted/extracted
@@ -323,16 +319,15 @@ company-name = "Example Organization"
 copyright = "Copyright Example Organization"
 ```
 
-After the initial crates.io publication, add the helper to the application's
-Cargo.toml:
+Add the build helper to the application's Cargo.toml:
 
 ```toml
 [build-dependencies]
 guic-build = "0.1.0"
 ```
 
-Before publication, use `guic-build = { path = "../guic/crates/guic-build" }`
-instead, adjusting the path to your checkout.
+For a source checkout, use `guic-build = { path = "../guic/crates/guic-build" }`,
+adjusting the path to your checkout.
 
 Call it from the application's build.rs, incorporating this call into any existing
 build script:
@@ -351,7 +346,7 @@ and long paths. A custom manifest replaces that default. Numeric Windows version
 components must fit u16; the full Cargo version including prerelease text remains
 in the string version resource. The helper does not affect installer artwork.
 
-GPUI 0.4.0 enables its own Windows manifest, including through
+The pinned GPUI runtime enables its own Windows manifest, including through
 `guic-gpui-platform`. Set `use-dependency-manifest = true` for these applications
 to embed only branding resources and keep GPUI's manifest. Otherwise MSVC reports
 duplicate MANIFEST resources. This option defaults to false and cannot be
@@ -491,7 +486,7 @@ Diagnostics validate signing policy without executing it or requiring
 `--execute-signing`. `ready: true` means all required checks passed; it does not
 certify installed application behavior or credential access.
 
-## Build records and backend boundary
+## Build records
 
 Data lives in Cargo's resolved target directory:
 
@@ -521,7 +516,7 @@ compiler, Cargo configuration, declared input, and build-hook changes are treate
 conservatively as build-affecting. Identity changes require a new build; installer
 upgrade continuity still requires native acceptance.
 
-The adapter uses **cargo-packager 0.11.8**, with its CLI feature disabled. Packaging
+The adapter uses `cargo-packager` 0.11.8, with its CLI feature disabled. Packaging
 runs in an isolated worker with copied inputs, a controlled environment and
 serial access to the shared backend cache. Missing or invalid outputs fail the
 operation. If a later format fails, earlier outputs remain available with an
@@ -620,7 +615,7 @@ Universal app payloads are listed for both `macos-aarch64` and `macos-x86_64`.
 Overlapping platform entries are rejected. The CLI does not upload anything;
 host the generated directory at the specified HTTPS location manually.
 
-Enable `guic`'s `updater` feature in an application using this checkout. The
+Enable `guic`'s `updater` feature. The
 `guic::updater` module exposes `cargo-packager-updater` 0.2.3:
 
 ```rust,no_run

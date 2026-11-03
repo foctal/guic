@@ -18,7 +18,6 @@ commands.register(
         .scope(CommandScope::named("terminal"))
         .shortcut(Keystroke::parse("secondary-k")?),
 )?;
-# Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
 Pass active scopes from most specific to least specific when resolving an

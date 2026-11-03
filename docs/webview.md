@@ -3,18 +3,8 @@
 GUIC provides experimental WebView support through the separate
 `guic-webview` crate.
 
-## Why separate?
-
-The main toolkit is native-first and should not require WebView support in
-default builds. Keeping WebView optional preserves that product direction while
-still supporting practical hybrid integration needs.
-
-## Intended use
-
-- OAuth and login flows
-- Embedded documentation
-- HTML preview
-- Legacy web surface integration
+Enable the `webview` feature on `guic` for login flows, embedded documentation,
+HTML previews, or other content that needs a browser engine.
 
 ## Caveats
 
@@ -22,7 +12,6 @@ still supporting practical hybrid integration needs.
 - It should be treated as an isolated surface, not a seamless composited GPUI
   primitive.
 - Behavior depends on the underlying platform WebView implementation.
-- The current implementation uses upstream `wry`.
 - On Windows, the example currently sets `GPUI_DISABLE_DIRECT_COMPOSITION=true`
   before app startup as a workaround for compositor conflicts.
 
@@ -65,8 +54,7 @@ Run this from X11 and from a Wayland session with XWayland. The automated
 
 With GTK 3.24.41 and WebKitGTK 2.52.6, forcing `GDK_SCALE=2` can emit a
 `_gdk_frame_clock_freeze` warning inside Wry's foreign-window `show_all` call.
-Rendering, input, resizing, and normal shutdown have been checked at that scale;
-the upstream GTK/Wry warning remains a known limitation. Do not enable
+This is a known GTK/Wry limitation. Do not enable
 `G_DEBUG=fatal-criticals` for that configuration.
 
 The Linux host must initialize GTK before constructing the WebView, attach the

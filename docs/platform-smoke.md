@@ -64,16 +64,3 @@ from this checklist, together with:
   timeout, piped output, and nonzero exit handling.
 - Exercise final OS quit/logoff separately from application-managed guarded quit;
   GPUI's final quit hook has a bounded cleanup deadline and cannot veto shutdown.
-
-Local development validation on 2026-10-14 used macOS with a temporary app
-launcher around the debug desktop-shell example. Native menu activation,
-unsaved-change prompts and cancellation, native close prompting, restart,
-theme persistence, geometry persistence, and secondary-process forwarding were
-checked. This was not installer/signing acceptance. Windows job-object code was
-cross-compiled independently; the full Windows cross-check was blocked by the
-missing MinGW C compiler. Windows and Linux native desktop interactions still
-require the physical-platform checks above.
-
-The subsequent [Windows validation record](windows-validation.md) distinguishes
-native MSVC builds, automated process tests, local installation checks, direct
-GUI observations, and any remaining manual acceptance work.

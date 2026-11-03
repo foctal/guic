@@ -1,20 +1,12 @@
 # Menubar
 
-## Purpose
-
 A horizontal application menu bar. Clicking a top-level label opens its
 dropdown. Open state is host-managed so it composes with application command
 state.
 
-## Import
-
 ```rust
 use guic::prelude::{Menubar, MenubarMenu, MenuItem};
-```
 
-## Basic Usage
-
-```rust
 Menubar::new("app-menubar")
     .open(open_index)
     .menus(vec![

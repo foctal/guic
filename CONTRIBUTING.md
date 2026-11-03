@@ -7,7 +7,8 @@ Thank you for contributing to GUIC.
 - Keep all repository content in English.
 - Follow the current crate boundaries in [Architecture](docs/architecture.md).
 - Prefer additive, well-documented changes with tests for stateful logic.
-- Avoid introducing WebView functionality into the core workspace.
+- Keep WebView dependencies in the optional `guic-webview` crate.
+- Follow the [accessibility conventions](docs/accessibility.md) for custom controls.
 
 ## Local checks
 

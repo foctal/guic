@@ -1,7 +1,7 @@
 # Installation
 
 GUIC requires Rust 1.95 or newer. Add the toolkit, GPUI, and the platform
-runtime to the application manifest:
+runtime to the application manifest. These pins apply to published GUIC 0.4.0:
 
 ```toml
 [dependencies]
@@ -18,11 +18,12 @@ gpui_platform = { package = "guic-gpui-platform", version = "=0.4.0", features =
 gpui_platform = { package = "guic-gpui-platform", version = "=0.4.0" }
 ```
 
-Before the public crates are available, replace the `guic` dependency with a
-pinned Git revision:
+The current development checkout uses the 0.5.0 runtime family. To use the
+checkout, set both `guic-gpui` and `guic-gpui-platform` to `=0.5.0` and replace
+the `guic` dependency with a local path or a pinned Git revision:
 
 ```toml
-guic = { git = "https://github.com/foctal/guic", rev = "<audited-revision>" }
+guic = { git = "https://github.com/foctal/guic", rev = "<commit>" }
 ```
 
 Do not use a moving branch for reproducible builds. GUIC `0.4.x` is a preview;

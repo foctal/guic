@@ -11,17 +11,9 @@ the same pipeline for candidate artifacts. Signing and notarization require
 explicit `--execute-signing`. See the CLI guide for commands and configuration.
 Release execution and approval remain application-owner responsibilities.
 
-## Current Distribution Boundary
-
-GUIC pins `guic-gpui` and `guic-gpui-platform` 0.4.0 from crates.io. These
-packages contain the accessibility and platform APIs used by GUIC, so GPUI no
-longer prevents GUIC crates from being packaged. Every public GUIC crate must
-still pass a package dry run and metadata review before the maintainer publishes
-it.
-
-The platform checklists below cover application distribution in general.
-cargo-guic supports app/DMG, NSIS and deb/AppImage on their native hosts;
-other formats require separate tooling.
+cargo-guic supports app/DMG, NSIS/MSI/MSIX, and deb/AppImage on their native
+hosts. The following checklists cover application distribution. Toolkit crate
+publication is described [separately](publication.md).
 
 ## macOS
 
@@ -40,7 +32,7 @@ other formats require separate tooling.
 2. Include icons, version resources, runtime assets, and any WebView runtime
    policy required by enabled features.
 3. Sign binaries and the installer with the product's code-signing identity.
-4. Create an NSIS installer, or use separate tooling for MSI or MSIX.
+4. Create an NSIS, MSI, or MSIX installer.
 5. Test install, upgrade, uninstall, long paths, non-ASCII user paths,
    and a standard non-administrator account.
 

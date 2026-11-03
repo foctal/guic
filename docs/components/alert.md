@@ -1,18 +1,10 @@
 # Alert
 
-## Purpose
-
 Surface a contextual message that needs stronger emphasis than a normal label.
-
-## Import
 
 ```rust
 use guic::prelude::{Alert, AlertVariant};
-```
 
-## Basic Usage
-
-```rust
 Alert::new("Saved successfully").title("Status").success()
 ```
 
@@ -24,12 +16,7 @@ Alert::new("Saved successfully").title("Status").success()
 - `AlertVariant::Warning`
 - `AlertVariant::Danger`
 
-## Keyboard Behavior
+## Keyboard
 
-Alerts are passive by default. When a close button is enabled, the close action
-currently responds to pointer interaction only.
-
-## Theming Behavior
-
-Alert background, foreground, border, spacing, and radius values all come from
-the active theme tokens.
+Alerts are passive by default. With `closable(true)` and `on_close` set, the
+close button supports pointer activation and Enter/Space when focused.

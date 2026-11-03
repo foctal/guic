@@ -21,7 +21,6 @@ if let Some(recovered) = store.load_recovering::<Settings>()? {
         // Tell the user that the previous generation was recovered.
     }
 }
-# Ok::<(), guic_core::PersistenceError>(())
 ```
 
 Each save serializes to a unique adjacent temporary file, flushes and

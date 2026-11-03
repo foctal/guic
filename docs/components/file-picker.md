@@ -1,18 +1,11 @@
 # FilePicker
 
-## Purpose
-
 Render a controlled file-import workflow surface.
 
-## Import
-
 ```rust
+use gpui::PathPromptOptions;
 use guic::prelude::FilePicker;
-```
 
-## Basic Usage
-
-```rust,ignore
 FilePicker::new("attachments")
     .files(vec!["design.pdf", "notes.md"])
     .label("Attach files")
@@ -27,11 +20,7 @@ FilePicker::new("attachments")
     })
 ```
 
-## Notes
-
-`FilePicker` deliberately does not launch native dialogs itself. The host owns
-the platform integration, then passes selected file labels back through
+The application opens the native dialog and passes selected file labels through
 `FilePicker::files`. GPUI's `App::prompt_for_paths` and
-`App::prompt_for_new_path` provide the native cross-platform open/save dialog
-boundary; applications should handle cancellation and Linux launch errors
-explicitly.
+`App::prompt_for_new_path` provide native open/save dialogs. Handle cancellation
+and platform errors in the application.

@@ -1,19 +1,11 @@
 # Panel
 
-## Purpose
-
 A lighter-weight titled container than `Card`, with an optional collapse
 toggle in the header. Useful for sidebars, inspectors, and settings groups.
 
-## Import
-
 ```rust
 use guic::prelude::Panel;
-```
 
-## Basic Usage
-
-```rust
 Panel::new("filters", "Filters")
     .collapsible(true)
     .collapsed(false)

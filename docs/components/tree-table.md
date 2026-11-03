@@ -1,19 +1,11 @@
 # TreeTable
 
-## Purpose
-
 Render hierarchical records with table columns, expandable branches, and
 host-managed row selection.
 
-## Import
-
 ```rust
 use guic::prelude::{TreeTable, TreeTableColumn, TreeTableRow};
-```
 
-## Basic Usage
-
-```rust
 TreeTable::new("files")
     .columns(vec![
         TreeTableColumn::new("name", "Name").width(240),
@@ -29,8 +21,6 @@ TreeTable::new("files")
         let _ = id;
     })
 ```
-
-## Notes
 
 `TreeTable` expects the application to own row expansion and selection state.
 Use `visible_row_ids` when tests or host state need the rendered row order.

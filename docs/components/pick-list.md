@@ -11,7 +11,7 @@ PickList::new("reviewers")
         SelectItem::new("grace", "Grace Hopper"),
     ])
     .selected(assigned_reviewer_indices.clone())
-    .on_change(cx.listener(|view, selection, _, cx| {
+    .on_change(cx.listener(|view, selection: &Vec<usize>, _, cx| {
         view.assigned_reviewer_indices = selection.clone();
         cx.notify();
     }));

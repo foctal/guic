@@ -2,20 +2,20 @@
 
 `TextInput` is the baseline GPUI-backed single-line field in GUIC.
 
-Highlights:
+Create the input as an entity, retain it in the view, and render a clone:
 
-- Native GPUI input handling via `EntityInputHandler`
-- Clipboard actions and selection shortcuts
-- Token-driven sizing and focus styling
-- Platform text-input semantics with an accessible label and disabled state
-- Shared implementation used by `SearchInput`, `PasswordInput`, and `TextArea`
+```rust
+use guic::prelude::TextInput;
 
-Use `.accessible_label(...)` when the visible label differs from the
-placeholder. Otherwise, the placeholder is used as the accessibility fallback.
+let input = cx.new(|cx| TextInput::new("name", cx).placeholder("Name"));
+```
 
-Story coverage:
+Read its value with `input.read(cx).current_value()`, or register `on_change`
+when constructing it. `accessible_label(...)` sets the accessible name; otherwise
+the placeholder is used. `disabled(true)` prevents editing.
 
-- `crates/guic-story/src/main.rs`
+Use `TextInput::search`, `password`, or `text_area` for the related input modes.
+They share clipboard, selection, and grapheme-aware editing behavior.
 
 ## Keyboard bindings
 
