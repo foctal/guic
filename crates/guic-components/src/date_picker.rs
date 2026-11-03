@@ -10,10 +10,10 @@ use std::rc::Rc;
 type DateHandler = Rc<dyn Fn(&SharedString, &mut Window, &mut App)>;
 type DateOpenHandler = Rc<dyn Fn(&bool, &mut Window, &mut App)>;
 
-/// A controlled date picker trigger.
+/// A controlled date picker with an optional calendar grid.
 ///
-/// `DatePicker` renders the current date value and emits an open request. The
-/// host owns calendar popover/dialog state and applies the selected date.
+/// The application supplies the date and open state, then applies changes from
+/// the selection and open-state callbacks.
 #[derive(gpui::IntoElement)]
 pub struct DatePicker {
     id: SharedString,

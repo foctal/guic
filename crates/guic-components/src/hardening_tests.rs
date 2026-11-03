@@ -5,7 +5,8 @@ use crate::{
 use gpui::VisualContext as _;
 use gpui::{
     AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, Modifiers, MouseButton,
-    ParentElement as _, Render, Styled as _, TestAppContext, Window, div, px,
+    ParentElement as _, Render, StatefulInteractiveElement as _, Styled as _, TestAppContext,
+    Window, div, px,
 };
 use guic_icons::IconName;
 
@@ -607,4 +608,424 @@ fn hardening_menu_mounts_focus_and_restores_after_escape(cx: &mut TestAppContext
         assert!(view.read(cx).previous.is_focused(window))
     })
     .expect("restored");
+}
+
+struct CompactSelectHarness {
+    size: ComponentSize,
+    empty: bool,
+}
+impl Render for CompactSelectHarness {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().size_full().text_size(px(40.)).child(
+            Select::new("compact-options")
+                .width(px(180.))
+                .size(self.size)
+                .expanded(true)
+                .selected(Some(2))
+                .empty_message("Empty")
+                .items(if self.empty {
+                    vec![]
+                } else {
+                    vec![
+                        SelectItem::new("selected", "Selected"),
+                        SelectItem::new("disabled", "Disabled").disabled(true),
+                        SelectItem::new(
+                            "long",
+                            "A long option label that wraps onto several lines",
+                        ),
+                    ]
+                }),
+        )
+    }
+}
+
+#[gpui::test]
+fn select_popup_typography_does_not_inherit_large_parent_text(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        guic_core::init(cx);
+        guic_tokens::init(cx);
+        crate::init(cx);
+    });
+    for (size, font, padding, trigger) in [
+        (ComponentSize::Small, 12., 4., 28.),
+        (ComponentSize::Medium, 14., 12., 34.),
+    ] {
+        let (view, cx) = cx.add_window_view(|_, _| CompactSelectHarness { size, empty: false });
+        let trigger_bounds = cx
+            .debug_bounds("guic-select-trigger-compact-options")
+            .expect("trigger");
+        let label_bounds = cx
+            .debug_bounds("guic-select-label-compact-options")
+            .expect("label");
+        assert!(trigger_bounds.contains(&label_bounds.origin));
+        assert!(trigger_bounds.contains(&label_bounds.bottom_right()));
+        let selected = cx
+            .debug_bounds("guic-select-item-0")
+            .expect("selected option");
+        let disabled = cx
+            .debug_bounds("guic-select-item-1")
+            .expect("disabled option");
+        let long = cx.debug_bounds("guic-select-item-2").expect("long option");
+        assert_eq!(selected.size.height, px(font * 1.5 + padding * 2.));
+        assert_eq!(disabled.size.height, selected.size.height);
+        assert!(long.size.height > selected.size.height);
+        assert_eq!(
+            cx.debug_bounds("guic-select-trigger-compact-options")
+                .expect("trigger")
+                .size
+                .height,
+            px(trigger)
+        );
+        view.update(cx, |view, cx| {
+            view.empty = true;
+            cx.notify();
+        });
+        assert_eq!(
+            cx.debug_bounds("guic-select-empty")
+                .expect("empty message")
+                .size
+                .height,
+            selected.size.height
+        );
+    }
+}
+
+#[cfg(feature = "tree")]
+struct CompactTreeHarness {
+    height: f32,
+    fill: bool,
+    count: usize,
+    offset: Option<f32>,
+    pitch: f32,
+    scroll: gpui::ScrollHandle,
+    title: bool,
+}
+#[cfg(feature = "tree")]
+impl Render for CompactTreeHarness {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let mut tree = crate::TreeView::new("compact-tree")
+            .body_only(true)
+            .row_height(self.pitch)
+            .track_scroll(self.scroll.clone())
+            .nodes(
+                (0..self.count)
+                    .map(|i| {
+                        crate::TreeNode::new(
+                            format!("compact-{i}"),
+                            "A very long inspector label with enough text to exceed a narrow panel",
+                        )
+                    })
+                    .collect(),
+            );
+        if self.title {
+            tree = tree.title("Inspector");
+        }
+        if let Some(offset) = self.offset {
+            tree = tree.viewport(crate::TreeViewport::new(offset, self.height).overscan(1));
+        }
+        tree = if self.fill {
+            tree.fill_height()
+        } else {
+            tree.height(self.height)
+        };
+        div()
+            .size_full()
+            .child(div().w(px(180.)).h(px(self.height)).child(tree))
+    }
+}
+
+#[cfg(feature = "tree")]
+#[gpui::test]
+fn tree_fixed_and_filled_panels_have_exact_row_pitch(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        guic_core::init(cx);
+        guic_tokens::init(cx);
+        crate::init(cx);
+    });
+    for fill in [false, true] {
+        for height in [80., 160., 320.] {
+            let (view, cx) = cx.add_window_view(|_, _| CompactTreeHarness {
+                height,
+                fill,
+                count: 2,
+                offset: None,
+                pitch: 24.,
+                scroll: gpui::ScrollHandle::new(),
+                title: false,
+            });
+            for count in [0, 2, 1000] {
+                view.update(cx, |view, cx| {
+                    view.count = count;
+                    cx.notify();
+                });
+                let outer = cx.debug_bounds("guic-tree-compact-tree").expect("tree");
+                let body = cx
+                    .debug_bounds("guic-tree-body-compact-tree")
+                    .expect("body");
+                assert_eq!(outer.size.height, px(height));
+                assert_eq!(body.size.height, px(height));
+                if count > 0 {
+                    let first = cx.debug_bounds("guic-tree-row-compact-0").expect("first");
+                    let next = cx.debug_bounds("guic-tree-row-compact-1").expect("next");
+                    assert_eq!(first.size.height, px(24.));
+                    assert_eq!(next.top() - first.top(), px(24.));
+                    assert_eq!(first.left(), body.left());
+                }
+            }
+        }
+    }
+}
+
+#[cfg(feature = "tree")]
+#[gpui::test]
+fn virtual_tree_spacers_match_row_offsets_at_start_middle_and_end(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        guic_core::init(cx);
+        guic_tokens::init(cx);
+        crate::init(cx);
+    });
+    for pitch in [24., 36.] {
+        let (view, cx) = cx.add_window_view(|_, _| CompactTreeHarness {
+            height: 144.,
+            fill: false,
+            count: 1000,
+            offset: Some(0.),
+            pitch,
+            scroll: gpui::ScrollHandle::new(),
+            title: false,
+        });
+        for (offset, index, selector) in [
+            (0., 0., "guic-tree-row-compact-0"),
+            (500. * pitch, 500., "guic-tree-row-compact-500"),
+            (1000. * pitch - 144., 999., "guic-tree-row-compact-999"),
+        ] {
+            view.update(cx, |view, cx| {
+                view.offset = Some(offset);
+                cx.notify();
+            });
+            let body = cx
+                .debug_bounds("guic-tree-body-compact-tree")
+                .expect("body");
+            let row = cx.debug_bounds(selector).expect("rendered row");
+            assert_eq!(row.top() - body.top(), px(index * pitch));
+            assert_eq!(row.size.height, px(pitch));
+        }
+    }
+}
+
+struct ModalRegressionHarness {
+    confirmation: bool,
+    dismissible: bool,
+    long: bool,
+    open: bool,
+    underlying_clicks: usize,
+    cancellations: usize,
+    confirmations: usize,
+}
+impl Render for ModalRegressionHarness {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let message = if self.long {
+            "Long dialog content. ".repeat(300)
+        } else {
+            "Short content".into()
+        };
+        let cancel = cx.listener(|this, _, _, cx| {
+            this.cancellations += 1;
+            this.open = false;
+            cx.notify();
+        });
+        let confirm = cx.listener(|this, _, _, cx| {
+            this.confirmations += 1;
+            this.open = false;
+            cx.notify();
+        });
+        let modal = if self.confirmation {
+            crate::ConfirmDialog::new("regression-modal")
+                .open(self.open)
+                .dismissible(self.dismissible)
+                .title("Confirmation")
+                .message(message)
+                .on_cancel(cancel)
+                .on_confirm(confirm)
+                .into_any_element()
+        } else {
+            crate::Dialog::new("regression-modal")
+                .open(self.open)
+                .dismissible(self.dismissible)
+                .title("Dialog")
+                .content(div().child(message))
+                .secondary_label("Cancel")
+                .primary_label("Confirm")
+                .on_cancel(cancel)
+                .on_confirm(confirm)
+                .into_any_element()
+        };
+        div()
+            .size_full()
+            .child(
+                div()
+                    .id("background-control")
+                    .absolute()
+                    .inset_0()
+                    .on_click(cx.listener(|this, _, _, _| this.underlying_clicks += 1)),
+            )
+            .child(
+                div()
+                    .ml(px(70.))
+                    .mt(px(50.))
+                    .w(px(80.))
+                    .h(px(60.))
+                    .child(modal),
+            )
+    }
+}
+
+#[gpui::test]
+fn nested_modals_occlude_cards_and_scrims_and_respect_dismissal(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        guic_core::init(cx);
+        guic_tokens::init(cx);
+        crate::init(cx);
+    });
+    for confirmation in [false, true] {
+        for dismissible in [false, true] {
+            let (view, cx) = cx.add_window_view(|_, _| ModalRegressionHarness {
+                confirmation,
+                dismissible,
+                long: false,
+                open: true,
+                underlying_clicks: 0,
+                cancellations: 0,
+                confirmations: 0,
+            });
+            cx.simulate_resize(gpui::size(px(360.), px(260.)));
+            let card = cx
+                .debug_bounds(if confirmation {
+                    "guic-confirm-dialog-card"
+                } else {
+                    "guic-dialog-card"
+                })
+                .expect("card");
+            let scrim = cx
+                .debug_bounds(if confirmation {
+                    "guic-confirm-dialog-scrim"
+                } else {
+                    "guic-dialog-scrim"
+                })
+                .expect("scrim");
+            assert_eq!(scrim.origin, gpui::point(px(0.), px(0.)));
+            assert_eq!(scrim.size, gpui::size(px(360.), px(260.)));
+            assert!(card.left() >= px(16.) && card.right() <= px(344.));
+            assert!(card.top() >= px(16.) && card.bottom() <= px(244.));
+            cx.simulate_click(
+                card.origin + gpui::point(px(10.), px(10.)),
+                Modifiers::none(),
+            );
+            view.update(cx, |view, _| {
+                assert!(view.open);
+                assert_eq!(view.underlying_clicks, 0);
+                assert_eq!(view.cancellations, 0);
+            });
+            cx.simulate_click(gpui::point(px(4.), px(4.)), Modifiers::none());
+            view.update(cx, |view, _| {
+                assert_eq!(view.open, !dismissible);
+                assert_eq!(view.cancellations, usize::from(dismissible));
+                assert_eq!(view.underlying_clicks, 0);
+            });
+        }
+    }
+}
+
+#[gpui::test]
+fn long_modals_scroll_actions_into_small_viewports(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        guic_core::init(cx);
+        guic_tokens::init(cx);
+        crate::init(cx);
+    });
+    for confirmation in [false, true] {
+        let (view, cx) = cx.add_window_view(|_, _| ModalRegressionHarness {
+            confirmation,
+            dismissible: true,
+            long: true,
+            open: true,
+            underlying_clicks: 0,
+            cancellations: 0,
+            confirmations: 0,
+        });
+        cx.simulate_resize(gpui::size(px(320.), px(220.)));
+        let card = cx
+            .debug_bounds(if confirmation {
+                "guic-confirm-dialog-card"
+            } else {
+                "guic-dialog-card"
+            })
+            .expect("card");
+        assert!(card.top() >= px(16.) && card.bottom() <= px(204.));
+        cx.simulate_event(gpui::ScrollWheelEvent {
+            position: card.center(),
+            delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(-100000.))),
+            modifiers: Modifiers::none(),
+            touch_phase: gpui::TouchPhase::Moved,
+        });
+        let confirm = cx
+            .debug_bounds("guic-button-Confirm")
+            .expect("confirm action");
+        assert!(
+            card.contains(&confirm.origin) && card.contains(&confirm.bottom_right()),
+            "{card:?}: {confirm:?}"
+        );
+        cx.simulate_click(confirm.center(), Modifiers::none());
+        view.update(cx, |view, _| {
+            assert_eq!(view.confirmations, 1);
+            assert_eq!(view.cancellations, 0);
+            assert_eq!(view.underlying_clicks, 0);
+        });
+    }
+}
+
+#[cfg(feature = "tree")]
+#[gpui::test]
+fn virtual_tree_scroll_handle_keeps_title_fixed_and_visible_rows_aligned(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        guic_core::init(cx);
+        guic_tokens::init(cx);
+        crate::init(cx);
+    });
+    let scroll = gpui::ScrollHandle::new();
+    let (view, cx) = cx.add_window_view(|_, _| CompactTreeHarness {
+        height: 160.,
+        fill: false,
+        count: 1000,
+        offset: Some(0.),
+        pitch: 24.,
+        scroll: scroll.clone(),
+        title: true,
+    });
+    let title = cx
+        .debug_bounds("guic-tree-title-compact-tree")
+        .expect("title");
+    for (index, selector) in [
+        (0., "guic-tree-row-compact-0"),
+        (500., "guic-tree-row-compact-500"),
+        (995., "guic-tree-row-compact-995"),
+    ] {
+        let offset = index * 24.;
+        scroll.set_offset(gpui::point(px(0.), px(-offset)));
+        view.update(cx, |view, cx| {
+            view.offset = Some(offset);
+            cx.notify();
+        });
+        let body = cx
+            .debug_bounds("guic-tree-body-compact-tree")
+            .expect("body");
+        let row = cx.debug_bounds(selector).expect("visible row");
+        assert_eq!(
+            cx.debug_bounds("guic-tree-title-compact-tree")
+                .expect("title"),
+            title
+        );
+        assert_eq!(row.top() - body.top(), px(index * 24.) + scroll.offset().y);
+        assert!(row.bottom() > body.top() && row.top() < body.bottom());
+    }
 }

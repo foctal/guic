@@ -2,7 +2,7 @@ use crate::{ClickHandler, ComponentSize};
 use gpui::{
     App, ClickEvent, FocusHandle, FontWeight, Hsla, InteractiveElement as _, IntoElement,
     ParentElement as _, RenderOnce, SharedString, StatefulInteractiveElement as _, Styled as _,
-    Window, div, px, white,
+    Window, black, div, px, white,
 };
 use guic_core::{AccessibilityElementExt as _, AccessibilityProps, Role};
 use guic_tokens::Theme;
@@ -162,8 +162,8 @@ impl Button {
                 border: theme.border(),
             },
             ButtonVariant::Primary => ButtonPalette {
-                background: theme.primary(),
-                foreground: white(),
+                background: accent_background(theme, theme.primary()),
+                foreground: contrast_text(accent_background(theme, theme.primary())),
                 border: theme.primary(),
             },
             ButtonVariant::Secondary => ButtonPalette {
@@ -177,10 +177,66 @@ impl Button {
                 border: theme.background().opacity(0.0),
             },
             ButtonVariant::Danger => ButtonPalette {
-                background: theme.danger(),
-                foreground: white(),
+                background: accent_background(theme, theme.danger()),
+                foreground: contrast_text(accent_background(theme, theme.danger())),
                 border: theme.danger(),
             },
+        }
+    }
+}
+
+// Resolve translucent accents against the theme surface before painting, so labels
+// remain readable even when the button is placed on a different parent surface.
+fn accent_background(theme: &Theme, accent: Hsla) -> Hsla {
+    let mut background = theme.background().to_rgb();
+    background.a = 1.0;
+    background.blend(accent.to_rgb()).into()
+}
+
+fn luminance(color: Hsla) -> f32 {
+    let color = color.to_rgb();
+    let linear = |value: f32| {
+        if value <= 0.04045 {
+            value / 12.92
+        } else {
+            ((value + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * linear(color.r) + 0.7152 * linear(color.g) + 0.0722 * linear(color.b)
+}
+
+fn contrast_text(background: Hsla) -> Hsla {
+    if luminance(background) > 0.179 {
+        black()
+    } else {
+        white()
+    }
+}
+
+fn interaction_palette(
+    palette: ButtonPalette,
+    theme: &Theme,
+    variant: ButtonVariant,
+    opacity: f32,
+) -> ButtonPalette {
+    let background = palette
+        .background
+        .opacity(if variant == ButtonVariant::Ghost {
+            1.0 - opacity
+        } else {
+            opacity
+        });
+    if matches!(variant, ButtonVariant::Primary | ButtonVariant::Danger) {
+        let background = accent_background(theme, background);
+        ButtonPalette {
+            background,
+            foreground: contrast_text(background),
+            ..palette
+        }
+    } else {
+        ButtonPalette {
+            background,
+            ..palette
         }
     }
 }
@@ -190,13 +246,8 @@ impl RenderOnce for Button {
         let theme = Theme::global(cx);
         let palette = self.palette(theme);
         let element_id = self.id.clone();
-        let hover_bg = palette
-            .background
-            .opacity(if self.variant == ButtonVariant::Ghost {
-                0.08
-            } else {
-                0.92
-            });
+        let hover = interaction_palette(palette, theme, self.variant, 0.92);
+        let pressed = interaction_palette(palette, theme, self.variant, 0.84);
         let metrics = self.size.control_metrics(theme);
         let (height, padding_x, text_size) = (
             metrics.height,
@@ -252,7 +303,12 @@ impl RenderOnce for Button {
         } else if let Some(on_click) = self.on_click {
             let mut button = button
                 .cursor_pointer()
-                .hover(move |style: gpui::StyleRefinement| style.bg(hover_bg))
+                .hover(move |style: gpui::StyleRefinement| {
+                    style.bg(hover.background).text_color(hover.foreground)
+                })
+                .active(move |style: gpui::StyleRefinement| {
+                    style.bg(pressed.background).text_color(pressed.foreground)
+                })
                 .on_click(move |event, window, cx| (on_click)(event, window, cx));
             button = if let Some(focus_handle) = &self.focus_handle {
                 button.track_focus(focus_handle)
@@ -289,5 +345,47 @@ mod tests {
 
         assert_ne!(primary.background, secondary.background);
         assert_ne!(danger.background, secondary.background);
+    }
+}
+
+#[cfg(test)]
+mod contrast_tests {
+    use super::*;
+
+    #[test]
+    fn accent_text_contrasts_with_composited_normal_hover_and_pressed_colors() {
+        for mut theme in [
+            Theme::light(),
+            Theme::dark(),
+            Theme::high_contrast_light(),
+            Theme::high_contrast_dark(),
+        ] {
+            for accent in [
+                theme.color.primary,
+                theme.color.danger,
+                gpui::rgb(0xffff00),
+                gpui::rgb(0x00ff00),
+                gpui::rgba(0xff00ff33),
+                gpui::rgba(0xffffff00),
+            ] {
+                theme.color.primary = accent;
+                theme.color.danger = accent;
+                for variant in [ButtonVariant::Primary, ButtonVariant::Danger] {
+                    let normal = Button::new("Action").variant(variant).palette(&theme);
+                    for palette in [
+                        normal,
+                        interaction_palette(normal, &theme, variant, 0.92),
+                        interaction_palette(normal, &theme, variant, 0.84),
+                    ] {
+                        assert_eq!(palette.background.a, 1.0);
+                        let foreground = luminance(palette.foreground);
+                        let background = luminance(palette.background);
+                        let ratio = (foreground.max(background) + 0.05)
+                            / (foreground.min(background) + 0.05);
+                        assert!(ratio >= 4.5, "{} {variant:?}: {ratio}", theme.name);
+                    }
+                }
+            }
+        }
     }
 }

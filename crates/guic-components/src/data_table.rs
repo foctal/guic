@@ -659,7 +659,7 @@ pub enum DataTableState {
     },
 }
 
-/// A production-oriented table surface for structured tabular data.
+/// A controlled table for structured row and column data.
 ///
 /// The current implementation focuses on stable layout, selection styling,
 /// explicit loading, empty, and error states, plus externally managed row

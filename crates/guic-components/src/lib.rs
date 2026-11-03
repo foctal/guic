@@ -181,8 +181,9 @@ pub use data_table::{
 #[cfg(feature = "dock")]
 pub use dock::{
     CloseButtonVisibility, Dock, DockAxis, DockClosePolicy, DockCommand, DockDensity,
-    DockDragPayload, DockDropTarget, DockDropZone, DockLayout, DockNode, DockPlacement,
-    DockSplitLimits, DockSplitResize, DockStackSelection, DockTab, DockTabSelection, DockTabs,
+    DockDragPayload, DockDropTarget, DockDropZone, DockFocusIndicator, DockLayout, DockNode,
+    DockPlacement, DockSplitLimits, DockSplitResize, DockStackSelection, DockTab, DockTabSelection,
+    DockTabs,
 };
 #[cfg(feature = "markdown")]
 pub use markdown::{HtmlFragment, Markdown};
@@ -1281,7 +1282,13 @@ mod integration_tests {
         let scrim_bounds = cx
             .debug_bounds("guic-dialog-scrim")
             .expect("dialog scrim should exist after opening");
-        cx.simulate_click(scrim_bounds.center(), Modifiers::none());
+        let card = cx.debug_bounds("guic-dialog-card").expect("dialog card");
+        cx.simulate_click(card.center(), Modifiers::none());
+        view.update(cx, |view, _| assert!(view.dialog_open));
+        cx.simulate_click(
+            scrim_bounds.origin + gpui::point(gpui::px(4.), gpui::px(4.)),
+            Modifiers::none(),
+        );
 
         view.update(cx, |view, _| {
             assert!(view.popover_open);

@@ -240,10 +240,7 @@ impl Theme {
     /// Returns a muted foreground color for secondary text and placeholder text.
     #[must_use]
     pub fn muted_foreground(&self) -> Hsla {
-        match self.mode {
-            ThemeMode::Light => self.foreground().opacity(0.42),
-            ThemeMode::Dark => self.foreground().opacity(0.48),
-        }
+        self.foreground().opacity(0.72)
     }
 
     /// Returns the border color as HSLA.
@@ -422,5 +419,47 @@ mod tests {
             registry.get(name.as_str()).map(|theme| theme.name.as_str()),
             Some(name.as_str())
         );
+    }
+}
+
+#[cfg(test)]
+mod contrast_tests {
+    use super::Theme;
+    use gpui::Rgba;
+
+    fn luminance(color: Rgba) -> f32 {
+        let linear = |value: f32| {
+            if value <= 0.04045 {
+                value / 12.92
+            } else {
+                ((value + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * linear(color.r) + 0.7152 * linear(color.g) + 0.0722 * linear(color.b)
+    }
+
+    #[test]
+    fn enabled_and_secondary_text_contrast_on_builtin_surfaces() {
+        for theme in [
+            Theme::light(),
+            Theme::dark(),
+            Theme::high_contrast_light(),
+            Theme::high_contrast_dark(),
+        ] {
+            for surface in [theme.background(), theme.muted(), theme.secondary()] {
+                for text in [theme.foreground(), theme.muted_foreground()] {
+                    let background = surface.to_rgb();
+                    let foreground = luminance(background.blend(text.to_rgb()));
+                    let background = luminance(background);
+                    let contrast =
+                        (foreground.max(background) + 0.05) / (foreground.min(background) + 0.05);
+                    assert!(
+                        contrast >= 4.5,
+                        "{}: {surface:?} {text:?} = {contrast}",
+                        theme.name
+                    );
+                }
+            }
+        }
     }
 }

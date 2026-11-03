@@ -131,7 +131,7 @@ impl Dialog {
 }
 
 impl RenderOnce for Dialog {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let focus_id = format!("{}-focus-lifecycle", self.id);
         if !self.open {
             return guic_core::OverlayFocus::new(focus_id, Empty)
@@ -140,15 +140,19 @@ impl RenderOnce for Dialog {
                 .into_any_element();
         }
 
-        let fallback =
-            _window.use_keyed_state(format!("{}-default-focus", self.id), cx, |_, cx| {
-                cx.focus_handle()
-            });
+        let fallback = window.use_keyed_state(format!("{}-default-focus", self.id), cx, |_, cx| {
+            cx.focus_handle()
+        });
         let fallback = fallback.read(cx).clone();
         let target = self.autofocus.or_else(|| Some(fallback.clone()));
         let trap_id = format!("{}-focus-trap", self.id);
         let theme = Theme::global(cx);
-        let mut footer = div().flex().flex_wrap().justify_end().gap_3();
+        let mut footer = div()
+            .flex_shrink_0()
+            .flex()
+            .flex_wrap()
+            .justify_end()
+            .gap_3();
         if let Some(label) = self.secondary_label {
             let button = Button::new(label)
                 .variant(ButtonVariant::Secondary)
@@ -175,12 +179,16 @@ impl RenderOnce for Dialog {
         let scrim_id = format!("{}-scrim", self.id);
         let dialog_label = self.title.clone().unwrap_or_else(|| self.id.clone());
         let mut card = div()
+            .occlude()
             .id(self.id)
             .track_focus(&fallback)
             .accessibility(AccessibilityProps::new(Role::Dialog).label(dialog_label))
             .debug_selector(|| "guic-dialog-card".to_owned())
             .w(px(480.0))
-            .max_w_full()
+            .max_w((window.viewport_size().width - px(32.0)).max(px(0.0)))
+            .max_h((window.viewport_size().height - px(32.0)).max(px(0.0)))
+            .flex_shrink_0()
+            .overflow_y_scroll()
             .p_5()
             .rounded(px(theme.radius.lg))
             .border_1()
@@ -194,6 +202,7 @@ impl RenderOnce for Dialog {
         if let Some(title) = self.title {
             card = card.child(
                 div()
+                    .flex_shrink_0()
                     .flex()
                     .flex_col()
                     .gap_1()
@@ -217,12 +226,13 @@ impl RenderOnce for Dialog {
         }
 
         if let Some(content) = self.content {
-            card = card.child(content);
+            card = card.child(div().flex_shrink_0().child(content));
         }
 
         card = card.child(footer);
 
         let scrim = div()
+            .occlude()
             .id(scrim_id)
             .debug_selector(|| "guic-dialog-scrim".to_owned())
             .absolute()
@@ -240,17 +250,21 @@ impl RenderOnce for Dialog {
         };
 
         let portal = overlay_portal(
-            guic_core::FocusTrap::new(
-                trap_id,
-                div()
-                    .absolute()
-                    .inset_0()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(scrim)
-                    .child(card),
-            ),
+            gpui::anchored()
+                .position(gpui::point(px(0.), px(0.)))
+                .position_mode(gpui::AnchoredPositionMode::Window)
+                .child(guic_core::FocusTrap::new(
+                    trap_id,
+                    div()
+                        .relative()
+                        .w(window.viewport_size().width)
+                        .h(window.viewport_size().height)
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(scrim)
+                        .child(card),
+                )),
             OverlayPriority::MODAL,
         );
         guic_core::OverlayFocus::new(focus_id, portal)
