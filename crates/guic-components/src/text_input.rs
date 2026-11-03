@@ -841,7 +841,7 @@ impl Element for TextInputElement {
             len: display_text.len(),
             font: style.font(),
             color: if input.disabled || content_is_placeholder {
-                theme.muted()
+                theme.muted_foreground()
             } else {
                 style.color
             },

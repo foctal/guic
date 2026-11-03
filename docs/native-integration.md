@@ -18,11 +18,6 @@ commands, document state, confirmation policy, and service lifetimes. The
 | Window lifecycle | Persist serializable bounds/workspace metadata, cancel or detach background work explicitly, and never serialize native handles. |
 | Background work | Spawn through GPUI/application executors, return typed progress events, and make cancellation ownership explicit. |
 
-Platform adapters should report unsupported capabilities rather than silently
-doing nothing. User-visible failures need a retry or recovery action. Test the
-service traits with deterministic fakes, then run the platform smoke checklist
-against real adapters before release.
-
 `guic-core::NativeServices` provides typed contracts for file dialogs,
 notifications, application menus, tray/status items, secure credentials, deep
 links, single-instance forwarding, and updater handoff. `NativeCapabilities`
@@ -39,12 +34,9 @@ retry/error states, and cancellable work state:
 cargo run -p guic-example-native-reference
 ```
 
-The reference exercises a timer-driven cancellable background operation,
-primary/backup workspace recovery through `JsonStore`, dependency-free chart
-SVG export, runtime theme switching, asset-manifest registration, and creation
-of an independent secondary window. State and export files are written under
-the operating system temporary directory in `guic-native-reference` so the
-example does not mutate the source tree.
+The example writes state and exports to the operating system's temporary
+`guic-native-reference` directory. It includes workspace recovery, chart export,
+theme switching, and a secondary window.
 
 ## Standard desktop shell
 
@@ -58,12 +50,8 @@ commands, confirmation before close/quit/restart, and OS theme tracking.
 Its state is stored under `org.guic.desktop-shell` in platform user directories.
 Run it a second time with file arguments to exercise activation forwarding.
 Protocol registration takes effect when an installer registers `guic-example`.
-The Application menu includes a checked example and a disabled example.
-`Ctrl+Shift+T` toggles the checked example through the same `CommandRouter` and
-handler used by menu clicks; `Ctrl+Shift+D` is registered but disabled. The
-window displays the checked value and execution count, making duplicate or
-missing dispatch visible. These are window-focused shortcuts, not system-wide
-hotkeys or native menu accelerators. The label hints do not install accelerators.
+The sample's menu shortcuts are window-focused bindings, not system-wide hotkeys
+or native menu accelerators. Displayed shortcut hints do not install bindings.
 
 The startup sequence is:
 
@@ -128,7 +116,7 @@ invoke commands removed from a menu.
 | Windows | Native menu attached with `attach_window` | Notification-area icon; PNG/ICO required |
 | Linux | `Menubar::native(&handle.menu())` in the GPUI window | StatusNotifierItem over D-Bus; PNG/ICO required |
 
-With GPUI 0.4.0 on Windows, native menubars need its non-DirectComposition
+On Windows, native menubars need GPUI's non-DirectComposition
 rendering path: set `GPUI_DISABLE_DIRECT_COMPOSITION=1` before constructing the
 GPUI application. Its default `WS_EX_NOREDIRECTIONBITMAP` windows can display
 a transparent menubar even though menu commands remain accessible. The desktop
@@ -166,7 +154,7 @@ Use `Lifecycle::request` for menu/shortcut quit and restart. Use
 `Lifecycle::restart_after` for updater installation: confirmation and persistence
 finish before the installer runs, and only successful installation triggers a
 restart. Cancelling a guard prevents installation entirely. `protect_window` covers ordinary native window
-close requests. GPUI 0.4.0's final OS quit callback occurs after shutdown has
+close requests. GPUI's final OS quit callback occurs after shutdown has
 started: it permits bounded final cleanup, but cannot veto a direct OS quit or
 run an interactive guard. Forced process termination cannot promise saves.
 Application actions that require confirmation must enter through `request`.

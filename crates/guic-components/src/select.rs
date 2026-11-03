@@ -337,12 +337,13 @@ impl RenderOnce for Select {
             .debug_selector(|| format!("guic-select-trigger-{}", self.id))
             .w_full()
             .h(height)
-            .px(px(theme.spacing.x4))
+            .px(metrics.horizontal_padding)
             .rounded(px(theme.radius.md))
             .border_1()
             .border_color(theme.border())
             .bg(theme.background())
             .text_size(text_size)
+            .line_height(gpui::relative(1.5))
             .text_color(if self.selected.is_some() {
                 theme.foreground()
             } else {
@@ -351,12 +352,27 @@ impl RenderOnce for Select {
             .flex()
             .items_center()
             .justify_between()
+            .gap(metrics.gap)
+            .min_w_0()
             .focus_visible({
                 let ring = theme.ring();
                 move |style| style.border_color(ring)
             })
-            .child(selected_label)
-            .child(Icon::new(IconName::ChevronDown).color(theme.muted_foreground()));
+            .child(
+                div()
+                    .debug_selector(|| format!("guic-select-label-{}", self.id))
+                    .min_w_0()
+                    .flex_1()
+                    .truncate()
+                    .child(selected_label),
+            )
+            .child(
+                div().flex_shrink_0().child(
+                    Icon::new(IconName::ChevronDown)
+                        .size(f32::from(metrics.icon_size))
+                        .color(theme.muted_foreground()),
+                ),
+            );
 
         if let Some(width) = self.width {
             trigger = trigger.w(width);
@@ -465,14 +481,21 @@ impl RenderOnce for Select {
                 .rounded(px(theme.radius.md))
                 .bg(theme.background())
                 .shadow_lg()
+                .text_size(text_size)
+                .line_height(gpui::relative(1.5))
                 .flex()
                 .flex_col();
 
             if self.items.is_empty() {
                 menu = menu.child(
                     div()
-                        .px(px(theme.spacing.x4))
-                        .py(px(theme.spacing.x3))
+                        .debug_selector(|| "guic-select-empty".into())
+                        .px(metrics.horizontal_padding)
+                        .py(if self.size == ComponentSize::Small {
+                            px(theme.spacing.x1)
+                        } else {
+                            px(theme.spacing.x3)
+                        })
                         .text_color(theme.muted_foreground())
                         .child(self.empty_message),
                 );
@@ -489,8 +512,12 @@ impl RenderOnce for Select {
                     )
                     .debug_selector(|| format!("guic-select-item-{}", index))
                     .flex_shrink_0()
-                    .px(px(theme.spacing.x4))
-                    .py(px(theme.spacing.x3))
+                    .px(metrics.horizontal_padding)
+                    .py(if self.size == ComponentSize::Small {
+                        px(theme.spacing.x1)
+                    } else {
+                        px(theme.spacing.x3)
+                    })
                     .text_color(if item.disabled {
                         theme.muted_foreground()
                     } else if Some(index) == self.selected {

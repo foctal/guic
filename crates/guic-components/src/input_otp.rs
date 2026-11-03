@@ -10,9 +10,9 @@ type OtpChangeHandler = Rc<dyn Fn(&SharedString, &mut Window, &mut App)>;
 
 /// A controlled one-time-code input display.
 ///
-/// `InputOtp` intentionally leaves text capture to the host for now. It renders
-/// a stable sequence of slots, normalizes incoming values to the configured
-/// length, and emits clear/backspace intents from its affordances.
+/// Renders character slots and normalizes values to the configured length.
+/// With a focus handle, key events request insertion, backspace, or clearing
+/// through `on_change`. The application applies the requested value.
 #[derive(gpui::IntoElement)]
 pub struct InputOtp {
     id: SharedString,

@@ -1,19 +1,11 @@
 # Drawer
 
-## Purpose
-
 A controlled edge-anchored panel that slides in over a dismiss scrim — for side
 navigation, detail panes, and settings sheets.
 
-## Import
-
 ```rust
 use guic::prelude::{Drawer, DrawerSide, Label};
-```
 
-## Basic Usage
-
-```rust
 Drawer::new("details")
     .open(is_open)
     .side(DrawerSide::Right)

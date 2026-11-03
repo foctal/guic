@@ -1,21 +1,13 @@
 # Menu
 
-## Purpose
-
 A reusable menu surface: a bordered panel of actionable rows, separators, and
 section headers. It is the building block shared by `Menubar` and `ContextMenu`,
 and can also be embedded directly (for example, inside a `Popover`).
 
-## Import
-
 ```rust
 use guic::prelude::{Menu, MenuItem};
 use guic::prelude::IconName;
-```
 
-## Basic Usage
-
-```rust
 Menu::new("file-menu")
     .items(vec![
         MenuItem::new("new", "New").icon(IconName::Plus).shortcut("⌘N"),

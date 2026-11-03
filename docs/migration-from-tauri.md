@@ -28,7 +28,7 @@ Migrate one workflow at a time:
 6. Replace platform plugins with small injected service traits.
 7. Add GPUI interaction tests, service tests, and real-platform smoke records.
 
-Keep a WebView only for content that genuinely requires a browser engine. The
+Keep a WebView only for content that requires a browser engine. The
 optional `guic-webview` crate should remain isolated from native application
 state and must be reviewed on every target platform.
 
@@ -44,6 +44,3 @@ state and must be reviewed on every target platform.
 | Promise cancellation/retry | `CancellationToken` and explicit progress/error/retry state |
 | localStorage recovery | `JsonStore::load_recovering` with synchronized adjacent backup |
 | Notification/keychain/updater plugins | Optional typed adapters in `NativeServices` |
-
-This is a source-level migration reference, not physical validation of every
-operating-system adapter.

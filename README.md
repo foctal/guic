@@ -1,4 +1,5 @@
 # GUIC
+
 [![Crates.io](https://img.shields.io/crates/v/guic.svg)](https://crates.io/crates/guic)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/foctal/guic/blob/main/LICENSE)
 
@@ -8,34 +9,18 @@ themes, application primitives, and a broad component set for desktop apps.
 
 ## Status
 
-GUIC `0.4.x` is a preview release. Core APIs are usable, but breaking changes
-are expected and the editor, charts, and WebView integrations remain
-experimental. See [API Stability](https://github.com/foctal/guic/blob/main/docs/api-stability.md)
+GUIC `0.5.x` is a preview release. Core APIs are usable, but breaking changes
+are expected. Editor and WebView integrations are experimental. See
+[API Stability](https://github.com/foctal/guic/blob/main/docs/api-stability.md)
 and [Platform Support](https://github.com/foctal/guic/blob/main/docs/platform-support.md)
 before adopting GUIC in a product.
 
 ## Installation
 
-After the crates are published, add GUIC and its platform runtime:
-
-```toml
-[dependencies]
-guic = "0.4.0"
-gpui = { package = "guic-gpui", version = "=0.4.0" }
-
-[target.'cfg(target_os = "linux")'.dependencies]
-gpui_platform = { package = "guic-gpui-platform", version = "=0.4.0", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
-
-[target.'cfg(target_os = "macos")'.dependencies]
-gpui_platform = { package = "guic-gpui-platform", version = "=0.4.0", features = ["font-kit"] }
-
-[target.'cfg(target_os = "windows")'.dependencies]
-gpui_platform = { package = "guic-gpui-platform", version = "=0.4.0" }
-```
-
-GUIC requires Rust 1.95 or newer. Linux users must also install the native
-dependencies listed in the
-[installation guide](https://github.com/foctal/guic/blob/main/docs/installation.md).
+GUIC requires Rust 1.95 or newer. Follow the
+[installation guide](https://github.com/foctal/guic/blob/main/docs/installation.md)
+for Cargo dependencies and Linux packages. GUIC 0.5.0 uses the matching 0.5.0
+`guic-gpui` runtime and platform crates.
 
 ## Quick Start
 
@@ -73,6 +58,7 @@ cargo run -p guic-sample-component-gallery
 
 - `guic`: umbrella crate and feature re-exports
 - `guic-core`: runtime, focus, overlays, commands, services, and persistence
+- `guic-native`: desktop identity, activation, menus, trays, and lifecycle
 - `guic-tokens`: design tokens, themes, and schema support
 - `guic-components`: native controls and application components
 - `guic-charts`: native chart models and renderers
@@ -94,7 +80,6 @@ Start with [Getting Started](https://github.com/foctal/guic/blob/main/docs/getti
 [Theming](https://github.com/foctal/guic/blob/main/docs/theming.md). Contributors
 should run `./scripts/check.sh` before submitting changes.
 
-GUIC studies `gpui-component` as a technical reference for GPUI usage patterns.
 See [NOTICE.md](https://github.com/foctal/guic/blob/main/NOTICE.md) for attribution.
 
 ## License

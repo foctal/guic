@@ -1,21 +1,13 @@
 # Charts
 
-## Purpose
-
 Render native data visualizations from reusable chart datasets and options.
-
-## Import
 
 ```rust
 use guic::prelude::{
     BarChart, ChartAxis, ChartDataset, ChartOptions, ChartPoint, ChartScale,
-    ChartTooltipMode, ChartValueFormatter, LineChart,
+    ChartHit, ChartTooltipMode, ChartValueFormatter, LineChart,
 };
-```
 
-## Basic Usage
-
-```rust
 LineChart::new("revenue")
     .options(
         ChartOptions::default()
@@ -79,7 +71,7 @@ The chart crate provides:
 - `DoughnutChart`
 - `MixedChart` with per-dataset line, area, bar, or scatter rendering
 
-## Host-Managed Interaction
+## Interaction
 
 Charts follow GUIC's host-managed interaction style. Use `on_hover` to receive
 the nearest `ChartHit`, store that in application state, then pass it back
@@ -99,7 +91,7 @@ LineChart::new("latency")
             .crosshair_index(active_hit.as_ref().map(|hit| hit.point_index)),
     )
     .datasets(vec![samples])
-    .on_hover(cx.listener(|this, hit, _window, cx| {
+    .on_hover(cx.listener(|this, hit: &Option<ChartHit>, _window, cx| {
         this.active_hit = hit.clone();
         cx.notify();
     }))
@@ -147,15 +139,12 @@ formats are also available. `ChartSeries::domain_ticks` returns density-limited
 ticks for category, numeric, and timestamp domains.
 Use `ChartDomainFormatter::Custom` and `ChartValueFormatter::Custom` for
 application-specific labels and units. Custom formatters are plain function
-pointers so chart options remain inexpensive to clone and deterministic.
+pointers and cannot capture application state.
 
 Animate data updates with `ChartTransition::series_at`. The transition is
 frame-scheduler agnostic and interpolates values, numeric/time coordinates, and
 bubble radii. Hosts choose linear or smooth `ChartEasing` and render the
 returned immutable series snapshot for each frame.
-
-Run `cargo bench -p guic-charts --bench chart_models` to measure large-dataset
-hit testing, frequent transitions, and multi-chart dashboard model passes.
 
 Assign datasets to named value axes when units or ranges differ:
 
@@ -185,18 +174,9 @@ metadata.
 
 ## Export
 
-`ChartSeries::to_csv` exports the active domain as comma-separated values for
-save, copy, or reporting flows.
-
-## Notes
+`ChartSeries::to_csv` exports the active domain as CSV.
+`ChartSeries::to_svg(width, height)` exports a standalone SVG image.
 
 `guic-charts` is a dedicated subsystem crate. Enable it through the `charts`
 feature on `guic`, or depend on `guic-charts` directly when building chart-heavy
 surfaces.
-
-The current implementation is useful for native dashboards, but it is still not
-Chart.js-comparable. It includes density-limited domain ticks, host-controlled
-zoom and pan controls, keyboard selection commands, deterministic transition
-models, and repeatable model benchmarks. Remaining work includes automatic
-label-collision layout, richer rendering extension hooks, platform
-accessibility audits, snapshot/export rendering, and GPU rendering benchmarks.

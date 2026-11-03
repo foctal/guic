@@ -1,108 +1,110 @@
 # Components
 
-GUIC includes native controls for common desktop application layouts, input,
-navigation, data display, and feedback. The component gallery exercises the
-complete preview catalog.
+Import components from `guic::prelude`. Most are controlled: the application
+supplies values and applies changes received through callbacks. Stateful inputs
+such as `TextInput` are retained as GPUI entities.
 
-Optional integrations such as WebView support live outside the core component
-crate so that native-first applications do not pay for them by default.
+The following components are available with the default `components` feature.
+Examples show view-construction fragments; names such as `cx`, `nodes`, and
+`is_open` refer to application context or state.
 
-Core components:
+## Text and status
 
-- `Label`
-- `Badge`
-- `Button`
-- `IconButton`
-- `Alert`
-- `Progress`
-- `Checkbox`
-- `Radio`
-- `Switch`
-- `Separator`
-- `Spinner`
-- `Tabs`
-- `ScrollArea`
-- `VirtualList`
-- `TextInput`
-- `SearchInput`
-- `PasswordInput`
-- `TextArea`
-- `Select`
-- `AutoComplete`
-- `Dialog`
-- `Popover`
-- `Tooltip`
-- `Form` / `FormField` / `FormSummary`
-- `CommandPalette`
+[Label](components/label.md),
+[Badge](components/badge.md),
+[Tag](components/tag.md),
+[Chip](components/chip.md),
+[Alert](components/alert.md),
+[Message](components/message.md),
+[Toast](components/toast.md),
+[Progress](components/progress.md),
+[Spinner](components/spinner.md),
+[Skeleton](components/skeleton.md),
+[Avatar](components/avatar.md),
+[Image](components/image.md),
+[Property List](components/property-list.md),
+[Metric Card](components/metric-card.md).
 
-Always-available presentation widgets:
+## Input and forms
 
-- `PropertyList`
-- `MetricCard`
-- `Avatar` — identity initials with optional presence status
-- `Tag` — removable, tinted categorization label
-- `Card` — titled surface with header/body/footer slots
-- `Panel` — titled, optionally collapsible content region
-- `Accordion` — stacked collapsible sections (host-managed expansion)
-- `Breadcrumb` — navigation trail with host-managed selection
-- `Stepper` — multi-step workflow progress indicator
-- `Toolbar` — horizontal action grouping with separators and spacers
-- `Menu` — reusable menu surface (items, separators, headers, shortcuts)
-- `Menubar` — horizontal application menu bar (host-managed open state)
-- `TieredMenu` — nested command menu for hierarchical action groups
-- `ContextMenu` — right-click menu with host-managed position and open state
-- `PanelMenu` — persistent, controlled vertical navigation with grouping
-- `Drawer` — edge-anchored slide-in panel with dismiss scrim
-- `ConfirmDialog` — focused confirm/cancel modal with optional danger styling
-- `ConfirmPopup` — contextual, anchored confirm/cancel surface
-- `Message` — compact inline severity note for forms
-- `Toast` / `ToastStack` — transient corner notifications (host-managed list)
-- `Image` — framed native image surface with loading and fallback states
-- `Slider` — draggable, keyboard-operable value slider (stateful entity)
-- `DatePicker` — controlled date-selection trigger
-- `InputGroup` / `InputGroupAddon` — native input, unit, and action composition
-- `Skeleton` — static, theme-aware loading placeholder with no animation cost
-- `InputNumber` — numeric stepper with keyboard support (host-managed)
-- `InputOtp` — controlled one-time-code slot display
-- `ColorPicker` — controlled swatch picker
-- `CascadeSelect` — controlled multi-column hierarchical select
-- `TreeSelect` — controlled tree-backed select trigger
-- `MultiSelect` — multi-selection dropdown with chips (host-managed)
-- `Paginator` — page navigation with ellipsis truncation (host-managed)
-- `DataView` — controlled list/grid collection presentation
-- `TreeTable` — controlled hierarchical table with expandable rows
-- `FilePicker` — controlled file-import workflow surface
-- `Chip` — selectable, optionally removable compact value for filters and choices
-- `Listbox` — controlled single- or multiple-selection list surface
-- `PickList` — controlled two-pane subset picker
-- `TabMenu` — compact pill-style, host-managed navigation menu
-- `Timeline` — read-only vertical activity and event history
+[Button](components/button.md),
+[IconButton](components/icon-button.md),
+[Checkbox](components/checkbox.md),
+[Radio](components/radio.md),
+[Switch](components/switch.md),
+[TextInput](components/text-input.md),
+[SearchInput](components/search-input.md),
+[PasswordInput](components/password-input.md),
+[TextArea](components/text-area.md),
+[InputNumber](components/input-number.md),
+[InputOtp](components/input-otp.md),
+[Slider](components/slider.md),
+[Select](components/select.md),
+[MultiSelect](components/multi-select.md),
+[AutoComplete](components/auto-complete.md),
+[DatePicker](components/date-picker.md),
+[ColorPicker](components/color-picker.md),
+[CascadeSelect](components/cascade-select.md),
+[TreeSelect](components/tree-select.md),
+[FilePicker](components/file-picker.md),
+[InputGroup](components/input-group.md),
+[Form](components/form.md),
+[Fieldset](components/fieldset.md).
 
-Optional subsystem widgets (gated behind `guic-components` feature flags):
+## Navigation and collections
 
-- `Dock` — `dock`
-- `DataTable` — `data-table`
-- `TreeView` — `tree`
-- `Markdown` / `HtmlFragment` — `markdown`
+[Tabs](components/tabs.md),
+[TabMenu](components/tab-menu.md),
+[Breadcrumb](components/breadcrumb.md),
+[Stepper](components/stepper.md),
+[Menu](components/menu.md),
+[Menubar](components/menubar.md),
+[TieredMenu](components/tiered-menu.md),
+[ContextMenu](components/context-menu.md),
+[PanelMenu](components/panel-menu.md),
+[Listbox](components/listbox.md),
+[PickList](components/pick-list.md),
+[Paginator](components/paginator.md),
+[DataView](components/data-view.md),
+[TreeTable](components/tree-table.md),
+[Timeline](components/timeline.md).
 
-Optional subsystem crates:
+## Layout and overlays
 
-- `LineChart` / `BarChart` / `AreaChart` / `PieChart` — `guic-charts` via the
-  `charts` feature on `guic`
-- `CodeEditor` — `guic-editor` via the `editor` feature on `guic`
+[Card](components/card.md),
+[Panel](components/panel.md),
+[Accordion](components/accordion.md),
+[Toolbar](components/toolbar.md),
+[Separator](components/separator.md),
+[ScrollArea](components/scroll-area.md),
+[VirtualList](components/virtual-list.md),
+[Splitter](components/splitter.md),
+[Dialog](components/dialog.md),
+[ConfirmDialog](components/confirm-dialog.md),
+[ConfirmPopup](components/confirm-popup.md),
+[Popover](components/popover.md),
+[Drawer](components/drawer.md),
+[Tooltip](components/tooltip.md),
+[Command Palette](components/command-palette.md).
 
-All reusable components live in the single `guic-components` crate. The optional
-subsystems above are compiled only when their feature flag is enabled, either
-directly on `guic-components` or via the matching re-export feature on the
-`guic` umbrella crate (`data-table`, `tree`, `dock`, `markdown`). Dedicated
-subsystem crates such as `guic-charts` stay outside `guic-components` and are
-exposed by their own umbrella features when they ship real implementations.
-There is no separate "advanced" component crate.
+## Optional features
 
-See the per-component pages in `docs/components/` for basic usage and API
-guidance. For a runnable end-to-end showcase, launch
-`samples/component-gallery`.
+| Component | Feature on `guic` | Implementation |
+| --- | --- | --- |
+| [DataTable](components/data-table.md) | `data-table` | `guic-components` |
+| [TreeView](components/tree-view.md) | `tree` | `guic-components` |
+| [Dock](components/dock.md) | `dock` | `guic-components` |
+| [Markdown / HtmlFragment](components/markdown.md) | `markdown` | `guic-components` |
+| [Charts](components/charts.md) | `charts` | `guic-charts` |
+| [CodeEditor](components/code-editor.md) | `editor` | `guic-editor` |
 
-Release evidence and known interaction gaps are tracked in
-[`component-readiness.md`](component-readiness.md). An implemented module is not
-automatically a stable or physically validated component.
+For example, enable `tree` and `dock` in your `guic` dependency's `features`
+list. Direct `guic-components` dependencies use the same feature names.
+
+See [shared component behavior](component-behavior.md) for sizing, identity, and
+focus, and [API stability](api-stability.md) for support status. Run the gallery
+from the repository root:
+
+```sh
+cargo run -p guic-sample-component-gallery
+```

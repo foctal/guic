@@ -1,12 +1,10 @@
 # Metric Card
 
-`MetricCard` presents a compact label, primary value, and optional trend for
+`MetricCard` presents a compact label, primary value, and optional detail for
 dashboards and status pages.
 
 ```rust,ignore
-MetricCard::new("Requests", "12,480").trend("+8.2%")
+MetricCard::new("Requests", "12,480").detail("+8.2% from last month")
 ```
 
-This is a read-only presentation component and has no keyboard or disabled
-state. Surface, border, value, and supporting-text colors use the active
-`Theme`.
+The card is read-only.

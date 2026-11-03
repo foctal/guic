@@ -1,17 +1,12 @@
 # Label
 
-## Purpose
-
 Display short text with optional secondary text.
-
-## Import
 
 ```rust
 use guic::prelude::Label;
-```
 
-## Basic Usage
-
-```rust
 Label::new("Welcome").secondary("Ready")
 ```
+
+Use `secondary_text_size(gpui::px(12.))` to size the secondary fragment
+independently. Without it, secondary text inherits the label's text size.

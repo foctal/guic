@@ -1,13 +1,15 @@
 # PasswordInput
 
-`PasswordInput` masks rendered content while preserving native text editing.
+`PasswordInput` is an alias for `TextInput`. Use `TextInput::password` to create
+a masked single-line field; calling the alias's `new` method creates a plain input.
 
-Highlights:
+```rust
+use guic::prelude::TextInput;
 
-- Shared clipboard, selection, and cursor behavior with `TextInput`
-- Grapheme-aware cursor mapping for masked rendering
-- Token-driven focus and disabled styling
+let input = cx.new(|cx| TextInput::password("password-input", cx).placeholder("Enter text"));
+```
 
-Story coverage:
+Retain the entity and render `input.clone()`.
+Masking changes rendering; the entity still stores the original value.
 
-- `crates/guic-story/src/main.rs`
+See [TextInput](text-input.md) for editing, callbacks, and keyboard bindings.

@@ -4,7 +4,7 @@ all-features = true
 [advisories]
 db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/RustSec/advisory-db"]
-# Reviewed maintenance advisories are pinned here so every new advisory still
+# Accepted advisories are pinned by ID so every new advisory still
 # fails CI and the local release gate. See docs/dependency-policy.md.
 ignore = [
     "RUSTSEC-2024-0370",
@@ -22,6 +22,18 @@ ignore = [
     "RUSTSEC-2026-0173",
     "RUSTSEC-2026-0192",
     "RUSTSEC-2026-0206",
+    # Temporary: cargo-packager 0.11.8 requires zip 0.6.6. Compatible updates
+    # cannot resolve these vulnerabilities; retain until the packaging migration
+    # policy is decided. These exceptions do not mitigate ZIP extraction risks.
+    "RUSTSEC-2026-0367",
+    "RUSTSEC-2026-0368",
+    "RUSTSEC-2026-0369",
+    "RUSTSEC-2026-0429",
+    # Temporary: retired zvariant/zbus_names crates remain in the pinned Linux
+    # accessibility and notification stacks, pending a zbus migration decision.
+    "RUSTSEC-2026-0370",
+    "RUSTSEC-2026-0371",
+    "RUSTSEC-2026-0372",
 ]
 yanked = "warn"
 
@@ -61,7 +73,7 @@ allow = ["CDLA-Permissive-2.0"]
 
 [[licenses.exceptions]]
 name = "webpki-roots"
-version = "=1.0.9"
+version = "=1.0.10"
 allow = ["CDLA-Permissive-2.0"]
 
 # Reviewed StatusNotifierItem implementation for GPUI's non-GTK Linux desktop.

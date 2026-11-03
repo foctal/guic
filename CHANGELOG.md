@@ -4,7 +4,26 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## 0.5.0 - 2026-11-03
+
 ### Changed
+
+- Correct component examples and consolidate usage guides; remove internal
+  validation records and planning notes.
+- Update the pinned `guic-gpui` runtime and platform family to 0.5.0.
+- Update compatible Markdown and TLS dependencies to patched releases; temporarily
+  accept seven upstream ZIP and zbus advisories pending migration decisions.
+- Apply Select sizing to popup typography and compact option padding.
+- Make TreeView rendered row pitch match virtualization, center disclosure cells,
+  and add fixed/fill height, body-only presentation, and scroll tracking.
+- Add independent secondary Label text sizing and Dock leaf padding, border,
+  and active-tab focus presentation without changing serialized layouts.
+- Keep modal cards and actions inside the viewport, including nested placement,
+  and prevent card and scrim clicks from reaching underlying controls.
+- Improve secondary and placeholder text contrast, and select readable accent
+  button text for composited normal, hover, and pressed colors.
+- Fix feature-dependent component documentation links and check strict rustdoc
+  with minimal and full component configurations in the existing CI job.
 
 - Prepare `guic-build` and `cargo-guic` 0.1.0 for crates.io publication, with
   versioned dependencies, packaged licenses, and archive verification. After

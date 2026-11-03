@@ -4,12 +4,10 @@
 controlled pane fraction.
 
 ```rust,ignore
-Splitter::new(left, right)
+Splitter::new("workspace", left, right)
     .axis(SplitterAxis::Horizontal)
     .fraction(0.35)
 ```
 
-The fraction is clamped to a safe visible range. The current component is a
-layout primitive rather than an interactive resize handle; applications that
-need pointer and keyboard resizing should use `Dock` or expose explicit resize
-controls. Divider color and spacing use the active `Theme`.
+The fraction is clamped to 0.1–0.9. The divider is not interactive. Use `Dock`
+or application controls when users need to resize panes.

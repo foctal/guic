@@ -1,19 +1,11 @@
 # Slider
 
-## Purpose
-
 A draggable, keyboard-operable value slider. Unlike most components, `Slider` is
 a stateful entity (like `TextInput`): it owns its value and reports changes.
 
-## Import
-
 ```rust
 use guic::prelude::Slider;
-```
 
-## Basic Usage
-
-```rust
 let slider = cx.new(|cx| {
     Slider::new("volume", cx)
         .range(0.0, 100.0)

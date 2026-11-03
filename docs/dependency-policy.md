@@ -10,91 +10,36 @@ unapproved licenses, and any advisory that is not explicitly reviewed in
 `deny.toml`. GUIC's resolved dependency graph is expected to use crates.io
 sources only.
 
-## Reviewed Upstream Maintenance Risks
+## Advisory exceptions
 
-The resolved dependency graph contains upstream maintenance issues that GUIC
-cannot safely rewrite in place:
+`deny.toml` records accepted advisories by ID. Review exceptions
+when dependencies change and remove them when maintained replacements become
+available. Security advisories are release-blocking unless explicitly reviewed.
 
-- GUIC pins the independently maintained Apache-2.0 `guic-gpui` crate family
-  to one exact release. Review its complete transitive graph whenever that
-  release or enabled features change.
-- The graph contains unmaintained GTK3, async-std, font, SVG, and macro crates.
-- The graph may contain yanked releases or crates without manifest license
-  metadata; these findings require an explicit release disposition.
-- `zbus_xml 5.1.1` constrains its dependency name to `quick-xml 0.39`. GUIC
-  patches that package name to a local, source-free compatibility crate which
-  re-exports security-fixed `quick-xml 0.41`. The compatibility crate must be
-  removed once upstream accepts the current release.
+`zbus_xml` 5.1.1 requires `quick-xml` 0.39. A local compatibility crate
+re-exports `quick-xml` 0.41 under that dependency name. The corresponding
+advisory exceptions apply to the compatibility version, which contains no
+upstream parser source. Remove the patch once upstream accepts the newer parser.
 
-Directly upgradable vulnerable lockfile entries must be updated immediately.
-Each accepted maintenance advisory is pinned by ID in `deny.toml`. This keeps
-the advisory gate green without allowing a new advisory to pass unnoticed.
-Security vulnerabilities are release-blocking; reviewed unmaintained or yanked
-transitive packages must be reconsidered for every release.
+Run the current report with:
 
-Run the complete local report with:
-
-```bash
+```sh
 cargo deny check
 ```
 
-GUIC may claim no known unmitigated security vulnerabilities only when the
-advisory output contains maintenance/yank notices alone. It must not claim that
-the dependency graph is free of maintenance risk while those notices remain.
-
-### 2026-08-16 Local Advisory Disposition
-
-`cargo deny check advisories` reported no vulnerability-class advisory in the
-locally resolved graph. It did report the following maintenance risks:
-
-- `RUSTSEC-2024-0412` through `RUSTSEC-2024-0420`: the GTK3 Rust bindings used
-  by the optional Linux `wry` WebView path are unmaintained.
-- `RUSTSEC-2025-0057`: `fxhash` is unmaintained in a target-specific upstream
-  dependency path.
-- `RUSTSEC-2024-0436`: `paste` is unmaintained and is pulled in by `metal`
-  through `guic-gpui` on macOS.
-- `RUSTSEC-2024-0370`: `proc-macro-error` is unmaintained in a target-specific
-  upstream dependency path.
-- `RUSTSEC-2026-0173`: `proc-macro-error2` is unmaintained and is pulled in by
-  `stacksafe-macro` through `guic-gpui`.
-- `RUSTSEC-2026-0206` and `RUSTSEC-2026-0192`: `rustybuzz` and `ttf-parser` are
-  unmaintained in the `usvg`/`fontdb` path through `guic-gpui`.
-- `spin 0.9.8` is yanked and is pulled in by `flume` through
-  `guic-gpui-scheduler`.
-
-These notices are accepted for the source preview because they are transitive,
-no vulnerability-class advisory was present, and replacing them independently
-would fork or destabilize the pinned renderer/platform stack. They remain
-stable-release risks. Re-review them whenever `guic-gpui`, `wry`, `metal`,
-`stacksafe`, `usvg`, `fontdb`, `flume`, or the lockfile changes. Remove each
-exception as soon as its upstream path upgrades, disappears, or gains a
-maintained compatible replacement. Any newly reported vulnerability remains
-release-blocking regardless of this disposition.
-
 ## guic-gpui Registry Dependency
 
-The runtime dependency is `guic-gpui` 0.4.0 and uses the dependency alias `gpui`, keeping
+The runtime dependency is `guic-gpui` 0.5.0 and uses the dependency alias `gpui`, keeping
 existing Rust imports source-compatible. Native applications depend on
-`guic-gpui-platform` 0.4.0 through the alias `gpui_platform`, with
+`guic-gpui-platform` 0.5.0 through the alias `gpui_platform`, with
 target-specific renderer features.
 
 The versions are exact because the forked crate family is released in lockstep
 and GUIC validates each update as one platform and accessibility baseline. The
-0.4.0 release requires Rust 1.95, which is also GUIC's MSRV.
-
-The migration removes GUIC's Zed Git dependency and its local `ztracing`
-compatibility patch. `Cargo.lock` must contain no Git sources, `ztracing`, or
-`zlog` packages in the release dependency graph.
+0.5.0 release requires Rust 1.95, which is also GUIC's MSRV.
 
 Use the crates.io runtime family without GPUI Git patches. Native integration
-validation follows the [platform smoke checklist](platform-smoke.md).
-
-## gpui-component Comparison
-
-`gpui-component` remains useful architectural precedent, but its dependency
-choices do not define GUIC's policy. The license of an application crate does
-not replace the licenses of its transitive dependencies; GUIC reviews the
-resolved `guic-gpui` graph directly.
+checks are listed in the [platform smoke checklist](platform-smoke.md).
 
 ## cargo-guic Backend
 
@@ -108,12 +53,12 @@ The `cargo-guic` CLI pins `cargo-packager = 0.11.8`, disables its CLI
 feature, and selects rustls for backend HTTPS tool downloads. The backend is
 isolated from the GUIC/GPUI application dependency graph. See [cargo-guic](cargo-guic.md) for supported workflows and restrictions.
 
-The `webpki-roots` 0.26.11 and 1.0.9 certificate-data dependencies use
-`CDLA-Permissive-2.0`. The source agreement was reviewed: sharing the data requires
+The `webpki-roots` 0.26.11 and 1.0.10 certificate-data dependencies use
+`CDLA-Permissive-2.0`. Redistribution requires
 including the agreement text. Exact-version license exceptions in `deny.toml`
 cover these two packages only, and the full agreement is retained in
-`crates/cargo-guic/THIRD-PARTY-LICENSES.txt`. Include that file with any future
-CLI binary distribution and re-review the exception on upgrades. Advisory exceptions remain separately scoped in `deny.toml`.
+`crates/cargo-guic/THIRD-PARTY-LICENSES.txt`. Include that file with
+CLI binary distributions and review the exception on upgrades.
 
 The `guic-build` helper uses `embed-resource` only on Windows hosts
 for native MSVC resource compilation. The resolved version is recorded in
@@ -129,8 +74,7 @@ blocking HTTPS client and Minisign verification support only when enabled. It
 uses the cargo-packager update format; CLI preparation signs copies of completed
 artifacts and never publishes them. Review the updater's download, signature
 verification and platform installation paths when upgrading. Native installation
-and restart acceptance remain application-specific. File watching uses `ignore`
-for Git ignore rules and excludes Cargo build outputs.
+and restart behavior must be tested in the application.
 
 ## Native desktop adapters
 
@@ -141,3 +85,36 @@ dedication, permission statement, and warranty text are shipped in
 `crates/guic-native/THIRD-PARTY-LICENSES.txt`. The cargo-deny exception is scoped
 to that exact dependency version and must be reviewed on upgrade. Other new
 native dependencies remain covered by the existing license allowlist.
+
+## Known dependency constraints
+
+The lockfile includes fixes for Markdown and certificate advisories:
+`pulldown-cmark` 0.13.6, `rustls-webpki` 0.103.16, and `webpki-roots` 1.0.10.
+The Markdown dependency now requires at least 0.13.6. GUIC's Markdown parser
+currently enables tables, not the affected wikilinks option.
+
+The following seven advisories are temporarily accepted by ID in `deny.toml`
+pending decisions on the packaging and zbus migrations. Compatible dependency
+updates cannot resolve them. These exceptions allow the policy check to pass;
+the underlying vulnerabilities and maintenance risks remain unresolved. New
+advisories are not covered by these exceptions.
+
+- `cargo-packager` 0.11.8 requires `zip` 0.6.6. RustSec reports
+  [RUSTSEC-2026-0367](https://rustsec.org/advisories/RUSTSEC-2026-0367),
+  [RUSTSEC-2026-0368](https://rustsec.org/advisories/RUSTSEC-2026-0368),
+  [RUSTSEC-2026-0369](https://rustsec.org/advisories/RUSTSEC-2026-0369), and
+  [RUSTSEC-2026-0429](https://rustsec.org/advisories/RUSTSEC-2026-0429).
+  The fixed ZIP major version cannot satisfy that backend's current dependency
+  constraint. Migrating or replacing the backend's extraction dependency needs
+  separate native packaging validation.
+- Linux accessibility and notification dependencies use `zvariant`,
+  `zbus_names`, and `zvariant_derive`, which are retired as standalone crates:
+  [RUSTSEC-2026-0370](https://rustsec.org/advisories/RUSTSEC-2026-0370),
+  [RUSTSEC-2026-0371](https://rustsec.org/advisories/RUSTSEC-2026-0371), and
+  [RUSTSEC-2026-0372](https://rustsec.org/advisories/RUSTSEC-2026-0372).
+  Their replacement is part of zbus 6, requiring migration of the dependent
+  accessibility and notification stacks, including the pinned GPUI family.
+
+Revisit these exceptions when the migration policy is decided or the affected
+dependencies change. Remove them when the corresponding advisories no longer
+apply.

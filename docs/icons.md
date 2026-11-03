@@ -1,11 +1,17 @@
 # Icons
 
-GUIC includes a small set of bundled SVG icons.
+`guic-icons` embeds its SVG assets in the executable. Built-in icons do not
+require source files or an application asset source at runtime.
 
-- Each built-in `IconName` resolves to a bundled SVG file in `crates/guic-icons/assets/`
-- `Icon` renders through GPUI's SVG element with standard theme tinting
-- `Icon::label()` opts an icon into semantic accessibility metadata
-- `IconButton::label()` gives icon-only actions an accessible name
-- No application-level asset source is required for built-in icons because GUIC uses absolute crate-local SVG paths
+```rust
+use guic::prelude::{Icon, IconName};
 
-Applications can provide additional icons through their own asset source.
+Icon::new(IconName::Info).label("Information")
+```
+
+Icons use the active theme's foreground by default. Set `.color(...)` and
+`.size(...)` to override their appearance. Unlabelled icons are decorative;
+`.label(...)` exposes an image role and accessible name. Use
+`IconButton::label(...)` for icon-only actions.
+
+Applications can load additional SVG assets through GPUI's asset source.

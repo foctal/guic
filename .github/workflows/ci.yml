@@ -63,7 +63,14 @@ jobs:
         run: cargo test --workspace --all-features
       - name: Docs
         if: runner.os == 'Linux'
-        run: cargo doc --workspace --all-features --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --workspace --all-features --no-deps --locked
+      - name: Minimal component documentation
+        if: runner.os == 'Linux'
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc -p guic-components --no-default-features --no-deps --locked
       - name: Minimal feature documentation examples
         if: runner.os == 'Linux'
         run: cargo test -p guic --no-default-features --doc

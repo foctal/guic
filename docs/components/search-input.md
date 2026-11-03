@@ -1,13 +1,14 @@
 # SearchInput
 
-`SearchInput` is a search-oriented specialization of `TextInput`.
+`SearchInput` is an alias for `TextInput`. Use `TextInput::search` to create
+a single-line search field; calling the alias's `new` method creates a plain input.
 
-Highlights:
+```rust
+use guic::prelude::TextInput;
 
-- Shared text-editing behavior with `TextInput`
-- Inline search affordance
-- Suitable for lightweight filtering and lookup fields
+let input = cx.new(|cx| TextInput::search("search-input", cx).placeholder("Enter text"));
+```
 
-Story coverage:
+Retain the entity and render `input.clone()`.
 
-- `crates/guic-story/src/main.rs`
+See [TextInput](text-input.md) for editing, callbacks, and keyboard bindings.

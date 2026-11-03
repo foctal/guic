@@ -1,12 +1,12 @@
 # Component Behavior and Host Integration
 
-This guide describes shared layout, identity, focus, and Dock contracts
-for application authors. See the [platform smoke checklist](platform-smoke.md)
-for native integration validation requirements.
+This guide describes shared layout, identity, and focus behavior
+for application authors. [Dock](components/dock.md) documents workspace layout
+and tab-transfer behavior.
 
 ## Control geometry
 
-`ComponentSize::control_metrics(&theme)` is the single source of truth for
+`ComponentSize::control_metrics(&theme)` is the shared source for
 single-line external control heights: Small 28px, Medium 34px, Large 42px.
 `ControlMetrics` also provides text size, horizontal padding, icon size, and gap.
 Button, IconButton, TextInput, Select, InputNumber, MultiSelect, Tabs, and TabMenu
@@ -19,10 +19,10 @@ summary should render that summary separately.
 
 ## Stable identity
 
-Button, IconButton, and Tooltip accept `.id(...)`. Their compatibility constructors
-use stable Rust call-site identity instead of changing counters or visible text.
-A call site is not unique across repeated siblings: **always supply IDs in loops,
-shared factory functions, and repeated component instances without a parent ID**.
+Button, IconButton, and Tooltip accept `.id(...)`. Their default constructors
+use stable Rust call-site identity.
+A call site is not unique across repeated siblings: supply IDs in loops,
+shared factory functions, and repeated component instances without a parent ID.
 Changing a label does not change an explicitly assigned logical ID.
 
 ```rust
@@ -37,46 +37,22 @@ let button = Button::new("+")
 
 IconButton retains `.label(...)` for its accessible name and also supports
 `.id(...)` and `.tooltip(...)`. Prefer a meaningful label over the icon-name
-fallback. Explicit Button/IconButton IDs also determine their debug selectors;
-legacy constructors retain label/icon selectors for compatibility.
+fallback.
 
 ## Wrapper geometry and Select
 
-Tooltip, ContextMenu, and Popover share an internal behavioral trigger. It forwards
-the child's layout ID rather than inserting a new layout box. Percentage sizing,
-flex growth, and intrinsic constraints therefore reach the original parent.
+Tooltip, ContextMenu, and Popover preserve the child's layout, including
+percentage sizing, flex growth, and intrinsic constraints.
 The wrapper does not add a tab stop or override the child's accessibility role.
 Overlay layout runs separately in viewport coordinates.
 
-Select uses the same mechanism: only the trigger participates in normal layout.
-The options menu flips upward when needed, clamps to the viewport, and scrolls
-within its height cap. After mounting or selection changes, it scrolls the selected
-option into view. Selects share a window-scoped exclusive group by default;
-`.exclusive_group(None)` opts out. A newly opened member requests closure of the
-previous member through its controlled callback. Outside mouse-down and selection request closure through
-`on_toggle`; the host must apply controlled state updates. Existing trigger
-keyboard navigation remains available. When supplied, the trigger focus handle
-is restored after mouse selection.
-
-```rust
-use gpui::px;
-use guic_components::{Select, SelectMenuWidth};
-
-let select = Select::new("time-mode")
-    .width(px(160.))
-    .menu_width(SelectMenuWidth::MinTriggerWidth)
-    .max_menu_height(px(240.));
-```
-
-The default trigger fills available width. Menu policies are MatchTrigger,
-Content, Fixed(Pixels), and MinTriggerWidth. Non-finite explicit dimensions are
-ignored. Content width remains constrained by the viewport.
+Select also keeps its menu outside normal layout. See [Select](components/select.md)
+for menu sizing, placement, and controlled open state.
 
 ## Focus lifecycle
 
 `guic_core::OverlayFocus` provides focus after mounting and restoration on a
-controlled open-to-closed transition. It forwards child geometry unchanged and
-cancels pending focus when the lifecycle generation changes. Keep the wrapper
+controlled open-to-closed transition. Keep the wrapper
 rendered with `open(false)` on close; simply removing it cannot run restoration.
 
 Dialog and Popover expose `.autofocus_target(handle)` and `.restore_focus(bool)`.
@@ -98,70 +74,9 @@ A non-dismissible top overlay prevents generic dismissal of lower overlays.
 wrapping at both ends and a fallback when there are no tab stops. Dialog and
 managed overlays with `traps_focus` use it. Child handles must be tab stops;
 TextInput and the core controls register interactive handles accordingly.
-This is a keyboard boundary, not a restriction on explicit application `focus()`
-calls. Nested portal and accessibility behavior still require native validation.
+Explicit application `focus()` calls can move focus outside the trap.
 
 Menu supports `.open(bool)`, `.autofocus(bool)`, and `.restore_focus(bool)`.
 Keep the closed Menu mounted for restoration. ContextMenu automatically focuses
 its supplied menu handle after mounting and restores previous focus on closure.
-Root keeps its release subscription alive and does not re-autofocus an already
-mounted lower overlay when a higher overlay closes.
-
-## TreeView
-
-`max_height` limits the whole TreeView, including title and decoration.
-Small trees remain intrinsic. Larger trees scroll in the remaining body space.
-Remove application-side header subtraction only after checking the application's
-layout on the target platforms.
-
-## Dock
-
-- New runtime splits default to 50:50. Set
-  `DockLayout::initial_split_ratio(ratio)` to configure future splits.
-- `Dock::split_limits(DockSplitLimits)` configures pointer and rendered split limits.
-  The default minimum is 80px per child with a 1..999 sanity range. Handle width
-  is excluded from available space. The renderer recomputes limits from actual
-  bounds on every layout, including window resizing. When both minimums cannot fit,
-  use 50:50 without changing the persisted preferred ratio.
-- Each normalized layout split has a persistent `id`. `DockLayout::new` and
-  `from_json` assign missing IDs and resolve duplicates without taking IDs from
-  existing splits. ID allocation state is serialized.
-- Renderer resize commands include the exact split ID through
-  `DockSplitResize::split_id`. The legacy stack-based constructor and resize
-  methods remain available; use exact IDs for nested trees.
-- `DockDensity::Compact` reduces root/pane padding and tab padding.
-  `show_pin_actions(false)` hides tab and stack pin controls.
-  `render_tab` replaces label content while retaining selection and drag behavior.
-  `show_stack_actions(false)` independently hides built-in stack actions.
-  `CloseButtonVisibility` supports Always, Hover, Selected, HoverOrSelected, and
-  Never. Hover policies reserve the action space to avoid shifting labels.
-  `render_tab_actions` replaces built-in tab actions; `render_stack_header`
-  replaces the full header, including its tab strip. Hosts own behavior in custom
-  action/header elements.
-- `DockLayout::close_policy(DockClosePolicy::ProtectPinned)` prevents pinned tabs
-  from being closed directly or through a stack close. The default AllowPinned
-  preserves the previous meaning of pinning as ordering only. All close commands
-  applied to the layout obey this policy. Moving a tab is not a close operation.
-
-Serialized layouts gain split IDs, an allocation counter, a default split ratio,
-and a close policy. Older JSON remains accepted through `from_json`. Direct Rust
-`DockNode::Split` construction must include `id` (an empty ID is assigned during
-layout normalization). Pattern matches can use `..` for new fields.
-
-### Transfer ownership
-
-Native drag payloads carry `source_dock_id` and `source_window_id`. Direct struct
-literals must initialize these new optional fields; None denotes a legacy local
-command. Cross-Dock/window UI drops emit `DockCommand::TransferTab` containing
-source ownership, destination ownership, and the drop target.
-
-`DockLayout::apply` deliberately returns false for TransferTab. The host must
-validate source liveness and destination availability, approve the transfer, move
-application resources, rebind resource notifications, and then update both
-layouts atomically. A rejected transfer leaves the source untouched. This change
-provides transfer intent; native cross-window drag transport still needs smoke
-validation. `DockLayout::transfer_tab_to` atomically updates two host-resolved
-layouts, rejecting stale sources/destinations and duplicate tab IDs. It preserves
-pinned identity. Apply it to layout clones while preparing resource transfer, then
-install both clones only after resource movement succeeds. Roll back application
-resources if their transfer fails; layout validation alone cannot roll them back.
+Closing a higher overlay does not re-autofocus an already mounted lower overlay.

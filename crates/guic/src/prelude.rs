@@ -77,9 +77,9 @@ pub use guic_components::{
 };
 #[cfg(feature = "dock")]
 pub use guic_components::{
-    Dock, DockAxis, DockCommand, DockDragPayload, DockDropTarget, DockDropZone, DockLayout,
-    DockNode, DockPlacement, DockSplitResize, DockStackSelection, DockTab, DockTabSelection,
-    DockTabs,
+    Dock, DockAxis, DockCommand, DockDensity, DockDragPayload, DockDropTarget, DockDropZone,
+    DockFocusIndicator, DockLayout, DockNode, DockPlacement, DockSplitResize, DockStackSelection,
+    DockTab, DockTabSelection, DockTabs,
 };
 #[cfg(feature = "markdown")]
 pub use guic_components::{HtmlFragment, Markdown};

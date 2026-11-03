@@ -1,18 +1,10 @@
 # DataView
 
-## Purpose
-
 Render a controlled collection as either a dense list or a card-style grid.
-
-## Import
 
 ```rust
 use guic::prelude::{DataView, DataViewItem, DataViewLayout};
-```
 
-## Basic Usage
-
-```rust
 DataView::new("release-areas")
     .layout(DataViewLayout::Grid)
     .selected("runtime")
@@ -29,8 +21,6 @@ DataView::new("release-areas")
         let _ = id;
     })
 ```
-
-## Notes
 
 `DataView` is host-managed. The application owns selection and updates the
 selected item id after `on_select` fires. Use `DataTable` when comparison across

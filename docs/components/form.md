@@ -29,7 +29,7 @@ Form::new("account")
                 "Enter a valid email address",
             ),
     )
-    .action(Button::new("save", "Save"));
+    .action(Button::new("Save").id("save"));
 ```
 
 The host owns validation timing, focus movement, and submission. Use stable

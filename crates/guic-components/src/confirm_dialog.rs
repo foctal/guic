@@ -178,6 +178,7 @@ impl RenderOnce for ConfirmDialog {
         };
 
         let footer = div()
+            .flex_shrink_0()
             .flex()
             .flex_wrap()
             .justify_end()
@@ -186,6 +187,7 @@ impl RenderOnce for ConfirmDialog {
             .child(confirm_button);
 
         let mut card = div()
+            .occlude()
             .id(self.id.clone())
             .accessibility(
                 AccessibilityProps::new(Role::AlertDialog)
@@ -209,6 +211,7 @@ impl RenderOnce for ConfirmDialog {
             .gap_4()
             .child(
                 div()
+                    .flex_shrink_0()
                     .text_size(px(theme.typography.text_lg))
                     .text_color(theme.foreground())
                     .child(self.title),
@@ -220,6 +223,7 @@ impl RenderOnce for ConfirmDialog {
         if let Some(message) = self.message {
             card = card.child(
                 div()
+                    .flex_shrink_0()
                     .text_size(px(theme.typography.text_sm))
                     .text_color(theme.muted_foreground())
                     .child(message),
@@ -230,6 +234,7 @@ impl RenderOnce for ConfirmDialog {
 
         let scrim_id = format!("{}-scrim", self.id);
         let mut scrim = div()
+            .occlude()
             .id(SharedString::from(scrim_id))
             .debug_selector(|| "guic-confirm-dialog-scrim".to_owned())
             .absolute()

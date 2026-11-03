@@ -1,6 +1,6 @@
 use gpui::{
-    App, IntoElement, ParentElement as _, RenderOnce, SharedString, Styled as _, StyledText,
-    Window, div,
+    App, IntoElement, ParentElement as _, Pixels, RenderOnce, SharedString, Styled as _,
+    StyledText, Window, div,
 };
 use guic_tokens::Theme;
 
@@ -10,6 +10,7 @@ pub struct Label {
     text: SharedString,
     secondary: Option<SharedString>,
     muted: bool,
+    secondary_text_size: Option<Pixels>,
 }
 
 impl Label {
@@ -19,12 +20,22 @@ impl Label {
             text: text.into(),
             secondary: None,
             muted: false,
+            secondary_text_size: None,
         }
     }
 
     /// Appends a secondary text fragment.
     pub fn secondary(mut self, text: impl Into<SharedString>) -> Self {
         self.secondary = Some(text.into());
+        self
+    }
+
+    /// Sets secondary text size independently. By default it inherits the main size.
+    #[must_use]
+    pub fn secondary_text_size(mut self, size: Pixels) -> Self {
+        if f32::from(size).is_finite() && size > gpui::px(0.) {
+            self.secondary_text_size = Some(size);
+        }
         self
     }
 
@@ -46,14 +57,54 @@ impl RenderOnce for Label {
 
         let mut root = div().text_color(color).child(StyledText::new(self.text));
         if let Some(secondary) = self.secondary {
-            root = root.child(
-                div()
-                    .ml_1()
-                    .text_color(theme.muted_foreground())
-                    .child(StyledText::new(secondary)),
-            );
+            let mut secondary = div()
+                .ml_1()
+                .text_color(theme.muted_foreground())
+                .child(StyledText::new(secondary));
+            if let Some(size) = self.secondary_text_size {
+                secondary = secondary.text_size(size);
+            }
+            root = root.child(secondary);
         }
 
         root
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{Context, InteractiveElement as _, Render, TestAppContext, px};
+
+    struct Harness;
+    impl Render for Harness {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .text_size(px(32.))
+                .line_height(gpui::relative(1.5))
+                .flex()
+                .flex_col()
+                .child(
+                    div()
+                        .debug_selector(|| "inherited-label".into())
+                        .child(Label::new("Main").secondary("Detail")),
+                )
+                .child(
+                    div().debug_selector(|| "compact-label".into()).child(
+                        Label::new("Main")
+                            .secondary("Detail")
+                            .secondary_text_size(px(12.)),
+                    ),
+                )
+        }
+    }
+    #[gpui::test]
+    fn secondary_typography_can_change_without_shrinking_primary_text(cx: &mut TestAppContext) {
+        cx.update(guic_tokens::init);
+        let (_, cx) = cx.add_window_view(|_, _| Harness);
+        let inherited = cx.debug_bounds("inherited-label").expect("inherited label");
+        let compact = cx.debug_bounds("compact-label").expect("compact label");
+        assert_eq!(inherited.size.height, px(96.));
+        assert_eq!(compact.size.height, px(66.));
     }
 }

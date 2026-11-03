@@ -68,7 +68,7 @@ impl RenderOnce for VirtualList {
 ///
 /// These metrics let host code compute the visible window for a large dataset
 /// without instantiating GPUI elements, which is useful for subsystems such as
-/// [`crate::DataTable`] and [`crate::TreeView`] that own their own scroll state.
+/// `DataTable` and `TreeView` that own their own scroll state.
 ///
 /// # Example
 ///

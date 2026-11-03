@@ -1,55 +1,30 @@
 # Accessibility
 
-GUIC components must expose the same semantic information that a native control
-would expose: role, accessible name, interactive state, keyboard reachability,
-focus behavior, and token-driven contrast.
+GUIC uses GPUI's AccessKit integration to expose control roles, labels, and
+state. Keyboard behavior is described on each [component page](components.md).
 
-## Platform Mapping
+## Metadata
 
-`guic-core` provides `AccessibilityProps`, `Role`, and
-`AccessibilityElementExt`. Components apply these props to GPUI stateful
-elements so platform accessibility nodes receive:
+`guic_core::AccessibilityProps` and `AccessibilityElementExt` map roles, labels,
+descriptions, selection, expansion, checked state, and numeric values/ranges to
+GPUI accessibility nodes. The `disabled` field is retained in GUIC metadata but
+is not forwarded by this adapter. Components enforce disabled interaction
+separately.
 
-- role mappings through AccessKit roles
-- accessible labels through `aria_label`
-- selected state through `aria_selected`
-- expanded state through `aria_expanded`
-- checked/toggled state through `aria_toggled`
+For application controls:
 
-GPUI currently maps GUIC roles, labels, descriptions, selected, expanded,
-checked/toggled, and numeric range state. `disabled` remains in
-`AccessibilityProps` so components can keep complete metadata and map it once
-the platform surface exposes the corresponding setter.
+- Give icon-only controls an accessible label with `.label(...)` or
+  `.accessible_label(...)`, as supported by the component.
+- Use stable IDs for repeated controls and retain application-owned focus handles.
+- Keep controlled selection, expansion, and checked state in sync with callbacks.
+- Preserve keyboard access when replacing a component's content or actions.
+- Review text and focus contrast when supplying custom themes.
 
-## Component Requirements
+For custom components, apply `AccessibilityProps` through
+`AccessibilityElementExt` to the stateful element representing the control.
+Use visible text as its accessible name when possible.
 
-Every interactive component must satisfy these requirements before it is marked
-implemented:
-
-- It has a semantic role or a documented reason for being decorative.
-- It has an accessible name from visible text, a label builder, or stable host
-  metadata.
-- Its selected, expanded, checked, or toggled state is reflected when relevant.
-- Pointer-only behavior has a keyboard path when the control can receive focus.
-- Disabled controls do not emit actions and visually communicate the disabled
-  state.
-- Text and state indicators use theme tokens with adequate contrast in light,
-  dark, and high-contrast themes.
-
-## Review Gates
-
-Accessibility review is required for these component groups:
-
-- Overlays and dialogs: role, focus trap behavior, dismiss intent, and readable
-  title/description.
-- Menus and menubars: menu/menu-item roles, keyboard close behavior, disabled
-  rows, and stable activation labels.
-- Tables and trees: table/tree roles, row or item names, selection state, and
-  expansion state.
-- Forms: labels, keyboard activation, current value/state, and disabled
-  behavior.
-
-Automated tests should cover role mapping, state metadata, keyboard activation,
-and host callback behavior where GPUI test support can observe it. Manual
-review should verify screen-reader output and high-contrast rendering on target
-platforms.
+Test keyboard navigation, focus restoration, and screen-reader output on each
+target platform. Metadata alone does not establish screen-reader compatibility.
+See [focus behavior](component-behavior.md#focus-lifecycle),
+[theming](theming.md), and the [platform checklist](platform-smoke.md).

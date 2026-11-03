@@ -1,20 +1,12 @@
 # MultiSelect
 
-## Purpose
-
 A controlled multi-selection dropdown. Mirrors `Select` but allows several
 options to be active at once; selected options render as chips in the trigger
 and each dropdown row toggles its membership.
 
-## Import
-
 ```rust
 use guic::prelude::{MultiSelect, SelectItem};
-```
 
-## Basic Usage
-
-```rust
 MultiSelect::new("labels")
     .placeholder("Select labels")
     .items(vec![

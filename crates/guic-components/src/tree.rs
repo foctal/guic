@@ -469,7 +469,11 @@ pub struct TreeView {
     focus_handle: Option<FocusHandle>,
     row_height: f32,
     viewport: Option<TreeViewport>,
+    scroll_handle: Option<gpui::ScrollHandle>,
     max_height: Option<f32>,
+    height: Option<f32>,
+    fill_height: bool,
+    body_only: bool,
 }
 
 impl TreeView {
@@ -488,7 +492,11 @@ impl TreeView {
             focus_handle: None,
             row_height: 36.0,
             viewport: None,
+            scroll_handle: None,
             max_height: None,
+            height: None,
+            fill_height: false,
+            body_only: false,
         }
     }
 
@@ -567,7 +575,9 @@ impl TreeView {
         self
     }
 
-    /// Sets the expected row height used for virtualization math.
+    /// Sets the rendered row pitch in logical pixels (minimum 24).
+    /// Rows have no additional vertical gap, so virtualization uses the same pitch.
+    /// Use 24 for compact inspector trees. Long labels stay on one line.
     #[must_use]
     pub fn row_height(mut self, row_height: f32) -> Self {
         if row_height.is_finite() {
@@ -583,6 +593,14 @@ impl TreeView {
         self
     }
 
+    /// Tracks the internal body scroll position for externally managed virtualization.
+    /// Read this handle's vertical offset when constructing [`TreeViewport`].
+    #[must_use]
+    pub fn track_scroll(mut self, handle: gpui::ScrollHandle) -> Self {
+        self.scroll_handle = Some(handle);
+        self
+    }
+
     /// Caps the whole TreeView outer height, including its title, padding, and borders.
     /// Small trees remain intrinsic; overflowing rows scroll inside the remaining space.
     #[must_use]
@@ -590,6 +608,33 @@ impl TreeView {
         if max_height.is_finite() {
             self.max_height = Some(max_height.max(0.0));
         }
+        self
+    }
+
+    /// Sets the whole outer height, including title and chrome. Only the body scrolls.
+    /// A previously configured maximum height still applies.
+    #[must_use]
+    pub fn height(mut self, height: f32) -> Self {
+        if height.is_finite() {
+            self.height = Some(height.max(0.0));
+            self.fill_height = false;
+        }
+        self
+    }
+
+    /// Fills a parent with an allocated height. Only the body scrolls.
+    #[must_use]
+    pub fn fill_height(mut self) -> Self {
+        self.fill_height = true;
+        self.height = None;
+        self
+    }
+
+    /// Omits the outer border, background, and padding for application-owned panels.
+    /// An explicitly supplied title is retained.
+    #[must_use]
+    pub fn body_only(mut self, body_only: bool) -> Self {
+        self.body_only = body_only;
         self
     }
 
@@ -868,6 +913,19 @@ impl RenderOnce for TreeView {
             .flex_col()
             .gap_2();
 
+        root = root.min_h_0().min_w_0();
+        if self.body_only {
+            root = root.border_0().p_0().bg(gpui::transparent_black());
+        }
+        if let Some(max_height) = self.max_height {
+            root = root.max_h(px(max_height)).overflow_hidden();
+        }
+        if let Some(height) = self.height {
+            root = root.h(px(height)).overflow_hidden();
+        } else if self.fill_height {
+            root = root.h_full().overflow_hidden();
+        }
+
         if let Some(handle) = focus_handle {
             root = root.key_context("GuicTreeView").track_focus(&handle);
         }
@@ -946,13 +1004,12 @@ impl RenderOnce for TreeView {
         }
 
         if let Some(title) = &self.title {
-            root = root.child(Label::new(title.clone()).muted(true));
-        }
-
-        if self.nodes.is_empty() {
-            return root
-                .child(Label::new(self.empty_label.clone()).muted(true))
-                .into_any_element();
+            root = root.child(
+                div()
+                    .debug_selector(|| format!("guic-tree-title-{}", self.id))
+                    .flex_shrink_0()
+                    .child(Label::new(title.clone()).muted(true)),
+            );
         }
 
         let mut visible_node_refs = Vec::with_capacity(visible_nodes.len());
@@ -967,10 +1024,14 @@ impl RenderOnce for TreeView {
             visible_node_ids: shared_visible_node_ids,
             selected_node_ids: shared_selected_node_ids,
             theme: theme.clone(),
+            row_height: self.row_height,
         };
-        let mut rows = div().w_full().flex().flex_col().gap_1();
+        let mut rows = div().w_full().flex_shrink_0().flex().flex_col();
+        if self.nodes.is_empty() {
+            rows = rows.child(Label::new(self.empty_label.clone()).muted(true));
+        }
         if top_spacer > 0.0 {
-            rows = rows.child(div().w_full().h(px(top_spacer)));
+            rows = rows.child(div().w_full().h(px(top_spacer)).flex_shrink_0());
         }
         for (node, depth) in visible_node_refs
             .into_iter()
@@ -980,20 +1041,25 @@ impl RenderOnce for TreeView {
             rows = rows.child(render_node_row(node, depth, context.clone()));
         }
         if bottom_spacer > 0.0 {
-            rows = rows.child(div().w_full().h(px(bottom_spacer)));
+            rows = rows.child(div().w_full().h(px(bottom_spacer)).flex_shrink_0());
         }
 
-        let body = if let Some(max_height) = self.max_height {
-            root = root.max_h(px(max_height)).overflow_hidden();
-            div()
-                .id(format!("{}-scroll", self.id))
-                .w_full()
-                .min_h_0()
-                .overflow_y_scroll()
-                .child(rows)
-        } else {
-            div().id(format!("{}-body", self.id)).w_full().child(rows)
-        };
+        let mut body = div()
+            .id(format!("{}-body", self.id))
+            .debug_selector(|| format!("guic-tree-body-{}", self.id))
+            .w_full()
+            .min_w_0()
+            .min_h_0()
+            .child(rows);
+        if self.max_height.is_some() || self.height.is_some() || self.fill_height {
+            body = body.overflow_y_scroll();
+        }
+        if self.height.is_some() || self.fill_height {
+            body = body.flex_1();
+        }
+        if let Some(handle) = self.scroll_handle {
+            body = body.track_scroll(&handle);
+        }
         root.child(body).into_any_element()
     }
 }
@@ -1007,6 +1073,7 @@ fn render_node_row(node: &TreeNode, depth: usize, context: TreeRenderContext) ->
         visible_node_ids,
         selected_node_ids,
         theme,
+        row_height,
     } = context;
     let has_children = node.has_children();
     let marker = if node.loading {
@@ -1046,7 +1113,11 @@ fn render_node_row(node: &TreeNode, depth: usize, context: TreeRenderContext) ->
         .w_full()
         .pl(px(depth as f32 * 16.0))
         .pr_2()
-        .py_2()
+        .h(px(row_height))
+        .flex_shrink_0()
+        .overflow_hidden()
+        .text_size(px(theme.typography.text_md))
+        .line_height(gpui::relative(1.5))
         .rounded(px(theme.radius.md))
         .flex()
         .items_center()
@@ -1059,6 +1130,11 @@ fn render_node_row(node: &TreeNode, depth: usize, context: TreeRenderContext) ->
         .child({
             let marker_cell = div()
                 .w(px(20.0))
+                .h(px(20.0))
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .justify_center()
                 .text_color(theme.muted_foreground())
                 .child(marker);
             if has_children {
@@ -1070,7 +1146,10 @@ fn render_node_row(node: &TreeNode, depth: usize, context: TreeRenderContext) ->
                             move || format!("guic-tree-toggle-{node_id}")
                         })
                         .cursor_pointer()
-                        .on_click(move |_, window, cx| handler(&node_id, window, cx))
+                        .on_click(move |_, window, cx| {
+                            handler(&node_id, window, cx);
+                            cx.stop_propagation();
+                        })
                         .into_any_element()
                 } else {
                     marker_cell.into_any_element()
@@ -1113,7 +1192,13 @@ fn render_node_row(node: &TreeNode, depth: usize, context: TreeRenderContext) ->
                 }
                 children.push(checkbox.into_any_element());
             }
-            children.push(Label::new(node.label.clone()).into_any_element());
+            children.push(
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .child(node.label.clone())
+                    .into_any_element(),
+            );
             children
         });
 
@@ -1167,6 +1252,7 @@ struct TreeRenderContext {
     visible_node_ids: Rc<Vec<SharedString>>,
     selected_node_ids: Rc<Vec<SharedString>>,
     theme: Theme,
+    row_height: f32,
 }
 
 fn collect_visible_nodes(node: &TreeNode, depth: usize, nodes: &mut Vec<VisibleTreeNode>) {
@@ -1495,6 +1581,25 @@ mod tests {
                         }
                     })),
             )
+        }
+    }
+
+    #[gpui::test]
+    fn disclosure_cells_stay_centered_and_do_not_select_rows(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            guic_core::init(cx);
+            guic_tokens::init(cx);
+            crate::init(cx);
+        });
+        let (view, cx) = cx.add_window_view(|_, cx| TreeHarness::new(cx));
+        for scale in [1.0, 1.25, 2.0] {
+            cx.simulate_scale_factor_change(scale);
+            let row = cx.debug_bounds("guic-tree-row-root").expect("row");
+            let marker = cx.debug_bounds("guic-tree-toggle-root").expect("marker");
+            assert_eq!(marker.size, gpui::size(gpui::px(20.), gpui::px(20.)));
+            assert_eq!(marker.center().y, row.center().y);
+            cx.simulate_click(marker.center(), Modifiers::none());
+            view.update(cx, |view, _| assert_eq!(view.selected_node, "child"));
         }
     }
 

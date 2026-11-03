@@ -1,19 +1,13 @@
 # Dock
 
-## Purpose
+Enable the `dock` feature on `guic`.
 
 Render split-panel workspace layouts with stacked tabs and serializable layout
 state.
 
-## Import
-
 ```rust
 use guic::prelude::{Dock, DockCommand, DockLayout, DockNode, DockPlacement, DockTab, DockTabs};
-```
 
-## Basic Usage
-
-```rust
 let layout = DockLayout::new(DockNode::horizontal(
     DockNode::Tabs(DockTabs::new(
         "sidebar",
@@ -49,7 +43,7 @@ let json = layout.to_json()?;
 let restored = DockLayout::from_json(&json)?;
 ```
 
-## Host-Managed Movement
+## Moving tabs
 
 ```rust
 layout.insert_tab("editor", DockTab::new("terminal", "Terminal", "zsh"));
@@ -75,7 +69,7 @@ layout.split_stack_with_moved_tab(
 `DockLayout::stack_ids` returns stack ids in layout order for command palettes,
 focus traversal, and persistence tooling.
 
-## Host-Managed Close Operations
+## Closing tabs
 
 ```rust
 layout.close_tab("editor", "preview");
@@ -145,9 +139,75 @@ layout.pin_tab("editor", "main", true);
 layout.pin_stack("editor", true);
 ```
 
-## Notes
+The host owns persistence and applies commands. Keep live terminal, editor, and
+chart entities outside the serialized layout, using stable stack and tab IDs.
 
-The dock is a controlled component: the host owns layout persistence and applies
-commands. This keeps live terminal, editor, and chart entities outside the
-serializable layout model while preserving stable stack and tab identifiers.
-The serializable layout includes focused-stack state.
+## Layout and presentation
+
+- New runtime splits default to 50:50. Set
+  `DockLayout::initial_split_ratio(ratio)` to configure future splits.
+- `Dock::split_limits(DockSplitLimits)` configures pointer and rendered split limits.
+  The default minimum is 80 logical pixels per child. Handle width
+  is excluded from available space. The renderer recomputes limits from actual
+  bounds on every layout, including window resizing. When both minimums cannot fit,
+  use 50:50 without changing the persisted preferred ratio.
+- Each normalized layout split has a persistent `id`. `DockLayout::new` and
+  `from_json` assign missing IDs and resolve duplicates without taking IDs from
+  existing splits. ID allocation state is serialized.
+- Renderer resize commands include the exact split ID through
+  `DockSplitResize::split_id`. The legacy stack-based constructor and resize
+  methods remain available; use exact IDs for nested trees.
+- `DockDensity::Compact` reduces root/pane padding and tab padding.
+  `show_pin_actions(false)` hides tab and stack pin controls.
+  `render_tab` replaces label content while retaining selection and drag behavior.
+  `show_stack_actions(false)` independently hides built-in stack actions.
+  `CloseButtonVisibility` supports Always, Hover, Selected, HoverOrSelected, and
+  Never. Hover policies reserve the action space to avoid shifting labels.
+  `render_tab_actions` replaces built-in tab actions; `render_stack_header`
+  replaces the full header, including its tab strip. Hosts own behavior in custom
+  action/header elements.
+- `DockLayout::close_policy(DockClosePolicy::ProtectPinned)` prevents pinned tabs
+  from being closed directly or through a stack close. The default AllowPinned
+  allows pinned tabs to close. All close commands
+  applied to the layout obey this policy. Moving a tab is not a close operation.
+
+Serialized layouts include split IDs, an allocation counter, a default split
+ratio, and a close policy. `from_json` accepts older JSON with defaults for these
+fields. Direct `DockNode::Split` construction must include `id` (an empty ID is assigned during
+layout normalization). Pattern matches can use `..` for new fields.
+
+### Transfer ownership
+
+Drag payloads carry `source_dock_id` and `source_window_id`. Direct struct
+literals must initialize these optional fields; `None` denotes a local
+command. Cross-Dock/window UI drops emit `DockCommand::TransferTab` containing
+source ownership, destination ownership, and the drop target.
+
+`DockLayout::apply` returns false for `TransferTab`. The host must
+validate source liveness and destination availability, approve the transfer, move
+application resources, rebind resource notifications, and then update both
+layouts atomically. A rejected transfer leaves the source untouched.
+
+`DockLayout::transfer_tab_to` updates two layouts together, rejecting stale sources/destinations and duplicate tab IDs. It preserves
+pinned identity. Apply it to layout clones while preparing resource transfer, then
+install both clones only after resource movement succeeds. Roll back application
+resources if their transfer fails; layout validation alone cannot roll them back.
+
+## Compact panes
+
+```rust
+use gpui::px;
+use guic::prelude::{DockDensity, DockFocusIndicator};
+
+Dock::new("workspace", layout)
+    .density(DockDensity::Compact)
+    .focus_indicator(DockFocusIndicator::ActiveTab)
+    .leaf_padding(px(0.))
+    .leaf_border(false)
+```
+
+The default focus indicator is a pane border. `ActiveTab` uses a primary
+underline for the focused stack and a muted underline for other stacks' selected
+tabs. Borderless leaves also use tab indication. `leaf_padding` overrides the
+density's default padding; drag targets remain visible independently of borders.
+These presentation settings do not change serialized layouts.

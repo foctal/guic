@@ -1,29 +1,22 @@
 # InputOtp
 
-## Purpose
-
 Render a controlled one-time-code slot input.
-
-## Import
 
 ```rust
 use guic::prelude::InputOtp;
-```
 
-## Basic Usage
-
-```rust
 InputOtp::new("login-code")
     .length(6)
     .value("123456")
     .masked(false)
+    .focusable(handle)
     .on_change(|value, _, _| {
         let _ = value;
     })
 ```
 
-## Notes
-
-`InputOtp` is host-managed. The application owns the value and updates it after
-`on_change` fires. The current surface provides stable slot rendering plus
-clear/backspace intents; direct text capture can be layered on top by the host.
+The application stores the value received through `on_change` and passes it
+back on the next render. With a focus handle, typing appends non-whitespace
+characters, Backspace removes the last character, and Delete/Escape clears the
+value. Length is limited to 1–12 slots. This control handles key events; it does
+not provide the IME and clipboard integration of `TextInput`.

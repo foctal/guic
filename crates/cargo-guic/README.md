@@ -16,22 +16,20 @@ operation.
 `universal-apple-darwin`. `updater keygen` and `updater prepare` generate signed
 update feeds for applications using the optional `guic::updater` API.
 
-After the initial crates.io publication, install with Rust 1.95 or newer and
-your platform's native build tools:
+Install released versions with Rust 1.95 or newer and your platform's native
+build tools:
 
 ```sh
 cargo install cargo-guic --locked
 cargo guic --help
 ```
 
-`--locked` is currently required: `cargo-packager 0.11.8` depends on
-`zip 0.6`, whose releases are all yanked. The packaged lockfile retains the
-resolved version; installation without `--locked` fails dependency resolution.
+Use `--locked` to retain the packaged dependency versions. See the
+[dependency policy](https://github.com/foctal/guic/blob/main/docs/dependency-policy.md#cargo-guic-backend)
+for resolution constraints and known advisories.
 
-Before publication, install from the repository root with
-`cargo install --path crates/cargo-guic --locked`. For CLI development:
+To install from source, run from the repository root:
 
 ```sh
-cargo run -p cargo-guic -- --help
-cargo test -p cargo-guic --locked
+cargo install --path crates/cargo-guic --locked
 ```

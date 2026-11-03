@@ -25,6 +25,9 @@ struct DockRenderHandlers {
     focused_stack_id: Option<SharedString>,
     split_limits: DockSplitLimits,
     density: DockDensity,
+    focus_indicator: DockFocusIndicator,
+    leaf_padding: Option<Pixels>,
+    leaf_border: bool,
     show_pin_actions: bool,
     show_stack_actions: bool,
     close_button_visibility: CloseButtonVisibility,
@@ -85,6 +88,17 @@ pub enum DockDensity {
     Comfortable,
     /// Compact tab chrome for dense desktop workspaces.
     Compact,
+}
+
+/// Where the focused stack is indicated. Layout serialization is unaffected.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum DockFocusIndicator {
+    /// Highlight the complete pane border (the default presentation).
+    #[default]
+    Pane,
+    /// Underline the selected tab: primary for the focused stack, muted otherwise.
+    /// Custom complete headers own their focus indication.
+    ActiveTab,
 }
 
 /// Visibility of built-in tab close controls. Hidden controls retain their space.
@@ -1507,7 +1521,7 @@ fn placement_for_drop_zone(zone: DockDropZone) -> DockPlacement {
     }
 }
 
-/// A production-oriented dock surface with split panels and stacked tabs.
+/// A controlled workspace with split panels and stacked tabs.
 ///
 /// # Example
 ///
@@ -1532,6 +1546,9 @@ fn placement_for_drop_zone(zone: DockDropZone) -> DockPlacement {
 pub struct Dock {
     split_limits: DockSplitLimits,
     density: DockDensity,
+    focus_indicator: DockFocusIndicator,
+    leaf_padding: Option<Pixels>,
+    leaf_border: bool,
     show_pin_actions: bool,
     show_stack_actions: bool,
     close_button_visibility: CloseButtonVisibility,
@@ -1558,6 +1575,9 @@ impl Dock {
             layout,
             split_limits: DockSplitLimits::default(),
             density: DockDensity::default(),
+            focus_indicator: DockFocusIndicator::default(),
+            leaf_padding: None,
+            leaf_border: true,
             show_pin_actions: true,
             show_stack_actions: true,
             close_button_visibility: CloseButtonVisibility::Always,
@@ -1583,6 +1603,31 @@ impl Dock {
     #[must_use]
     pub fn density(mut self, density: DockDensity) -> Self {
         self.density = density;
+        self
+    }
+
+    /// Chooses the focused-stack indicator without replacing tab interactions.
+    #[must_use]
+    pub fn focus_indicator(mut self, indicator: DockFocusIndicator) -> Self {
+        self.focus_indicator = indicator;
+        self
+    }
+
+    /// Overrides leaf padding, including zero for edge-to-edge content.
+    /// By default padding follows density (4 or 12 logical pixels).
+    #[must_use]
+    pub fn leaf_padding(mut self, padding: Pixels) -> Self {
+        if f32::from(padding).is_finite() {
+            self.leaf_padding = Some(padding.max(px(0.)));
+        }
+        self
+    }
+
+    /// Shows or hides the leaf border. Borderless panes use active-tab focus indication.
+    /// Drag-target feedback remains visible independently of this setting.
+    #[must_use]
+    pub fn leaf_border(mut self, visible: bool) -> Self {
+        self.leaf_border = visible;
         self
     }
 
@@ -1851,6 +1896,9 @@ impl RenderOnce for Dock {
                 focused_stack_id: self.layout.focused_stack_id.clone(),
                 split_limits: self.split_limits,
                 density: self.density,
+                focus_indicator: self.focus_indicator,
+                leaf_padding: self.leaf_padding,
+                leaf_border: self.leaf_border,
                 show_pin_actions: self.show_pin_actions,
                 show_stack_actions: self.show_stack_actions,
                 close_button_visibility: self.close_button_visibility,
@@ -2067,6 +2115,9 @@ fn render_split_handle(
 
 fn render_tabs_leaf(tabs: DockTabs, theme: &Theme, handlers: DockRenderHandlers) -> AnyElement {
     let active = tabs.active().cloned();
+    let focused = handlers.focused_stack_id.as_ref() == Some(&tabs.id);
+    let tab_focus =
+        handlers.focus_indicator == DockFocusIndicator::ActiveTab || !handlers.leaf_border;
     let mut tab_strip = div()
         .id(format!("guic-dock-tab-strip-{}", tabs.id))
         .debug_selector({
@@ -2109,6 +2160,18 @@ fn render_tabs_leaf(tabs: DockTabs, theme: &Theme, handlers: DockRenderHandlers)
             } else {
                 px(8.)
             });
+
+        if tab_focus {
+            chip = chip.border_b_2().border_color(if selected {
+                if focused {
+                    theme.primary()
+                } else {
+                    theme.muted_foreground()
+                }
+            } else {
+                gpui::transparent_black()
+            });
+        }
 
         let mut label = div()
             .id(format!("guic-dock-tab-{}-{}", tabs.id, tab.id))
@@ -2375,7 +2438,6 @@ fn render_tabs_leaf(tabs: DockTabs, theme: &Theme, handlers: DockRenderHandlers)
     );
 
     let group = SharedString::from(format!("guic-dock-drop-{}", tabs.id));
-    let focused = handlers.focused_stack_id.as_ref() == Some(&tabs.id);
     let mut leaf = div()
         .debug_selector({
             let stack_id = tabs.id.clone();
@@ -2390,17 +2452,19 @@ fn render_tabs_leaf(tabs: DockTabs, theme: &Theme, handlers: DockRenderHandlers)
         .overflow_hidden()
         .rounded(px(theme.radius.md))
         .border_1()
-        .border_color(if focused {
+        .border_color(if focused && !tab_focus {
             theme.primary()
         } else {
             theme.border()
         })
         .bg(theme.background())
-        .p(if handlers.density == DockDensity::Compact {
-            px(4.)
-        } else {
-            px(12.)
-        })
+        .p(handlers.leaf_padding.unwrap_or_else(|| {
+            if handlers.density == DockDensity::Compact {
+                px(4.)
+            } else {
+                px(12.)
+            }
+        }))
         .flex()
         .flex_col()
         .gap_3()
@@ -2419,6 +2483,10 @@ fn render_tabs_leaf(tabs: DockTabs, theme: &Theme, handlers: DockRenderHandlers)
                 .overflow_hidden()
                 .child(body),
         );
+
+    if !handlers.leaf_border {
+        leaf = leaf.border_0();
+    }
 
     if let Some(handler) = handlers.on_command {
         for zone in [
@@ -2459,6 +2527,10 @@ fn render_drop_zone(
     };
     let mut target = div()
         .id(format!("guic-dock-drop-{stack_id}-{zone_name}"))
+        .debug_selector({
+            let stack_id = stack_id.clone();
+            move || format!("guic-dock-drop-{stack_id}-{zone_name}")
+        })
         .invisible()
         .absolute()
         .rounded(px(theme.radius.md))
@@ -2566,6 +2638,7 @@ mod tests {
     struct DockHarness {
         layout: DockLayout,
         focus_handle: FocusHandle,
+        compact: bool,
     }
 
     impl DockHarness {
@@ -2573,6 +2646,7 @@ mod tests {
             Self {
                 layout: sample_layout(),
                 focus_handle: cx.focus_handle(),
+                compact: false,
             }
         }
     }
@@ -2585,6 +2659,22 @@ mod tests {
         ) -> impl gpui::IntoElement {
             div().size_full().p_4().child(
                 Dock::new("dock-harness", self.layout.clone())
+                    .leaf_border(!self.compact)
+                    .leaf_padding(if self.compact { px(0.) } else { px(12.) })
+                    .focus_indicator(if self.compact {
+                        super::DockFocusIndicator::ActiveTab
+                    } else {
+                        super::DockFocusIndicator::Pane
+                    })
+                    .render_tab_body(|selection, _| {
+                        div()
+                            .size_full()
+                            .debug_selector({
+                                let id = selection.stack_id().clone();
+                                move || format!("test-dock-body-{id}")
+                            })
+                            .into_any_element()
+                    })
                     .on_command(cx.listener(|this, command: &super::DockCommand, _, cx| {
                         this.layout.apply(command);
                         cx.notify();
@@ -3179,6 +3269,92 @@ mod tests {
         cx.debug_bounds("guic-dock-tab-strip-overflow")
             .expect("overflow tab strip should render");
         assert!(expected_handle.max_offset().x > px(0.0));
+    }
+
+    #[gpui::test]
+    fn borderless_zero_padding_dock_preserves_selection_focus_and_drag_targets(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            guic_core::init(cx);
+            guic_tokens::init(cx);
+            crate::init(cx);
+        });
+        let (view, cx) = cx.add_window_view(|_, cx| {
+            let mut view = DockHarness::new(cx);
+            view.compact = true;
+            view
+        });
+        let pane = cx.debug_bounds("guic-dock-leaf-sidebar").expect("pane");
+        let body = cx.debug_bounds("test-dock-body-sidebar").expect("body");
+        assert_eq!(pane.left(), body.left());
+        assert_eq!(pane.right(), body.right());
+        assert_eq!(pane.bottom(), body.bottom());
+        let tab = cx
+            .debug_bounds("guic-dock-tab-sidebar-search")
+            .expect("tab");
+        cx.simulate_click(tab.center(), Modifiers::none());
+        view.update(cx, |view, _| {
+            assert_eq!(
+                view.layout
+                    .active_selection_in("sidebar")
+                    .expect("selection")
+                    .tab_id()
+                    .as_ref(),
+                "search"
+            );
+            assert_eq!(
+                view.layout.focused_stack_id().map(AsRef::as_ref),
+                Some("sidebar")
+            );
+            let json = view.layout.to_json().expect("serialize");
+            assert_eq!(DockLayout::from_json(&json).expect("restore"), view.layout);
+        });
+        let window = cx.window_handle();
+        cx.dispatch_keystroke(window, Keystroke::parse("ctrl-tab").expect("key"));
+        view.update(cx, |view, _| {
+            assert_eq!(
+                view.layout
+                    .active_selection_in("sidebar")
+                    .expect("selection")
+                    .tab_id()
+                    .as_ref(),
+                "files"
+            )
+        });
+        let source = cx
+            .debug_bounds("guic-dock-tab-sidebar-files")
+            .expect("drag source");
+        let destination = cx
+            .debug_bounds("guic-dock-leaf-editor")
+            .expect("destination");
+        cx.simulate_mouse_down(source.center(), gpui::MouseButton::Left, Modifiers::none());
+        cx.simulate_mouse_move(
+            source.center() + gpui::point(px(12.), px(0.)),
+            gpui::MouseButton::Left,
+            Modifiers::none(),
+        );
+        cx.simulate_mouse_move(
+            destination.center(),
+            gpui::MouseButton::Left,
+            Modifiers::none(),
+        );
+        assert!(cx.debug_bounds("guic-dock-drop-editor-center").is_some());
+        cx.simulate_mouse_up(
+            destination.center(),
+            gpui::MouseButton::Left,
+            Modifiers::none(),
+        );
+        view.update(cx, |view, _| {
+            assert_eq!(
+                view.layout
+                    .active_selection_in("editor")
+                    .expect("drop selection")
+                    .tab_id()
+                    .as_ref(),
+                "files"
+            )
+        });
     }
 
     #[gpui::test]

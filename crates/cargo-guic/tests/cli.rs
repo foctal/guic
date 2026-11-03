@@ -967,17 +967,21 @@ fn windows_resources_require_handshake_and_embed_version() -> Result<()> {
         dir.path(),
         &["build", "-p", "app", "--no-bundle", "--unlocked"],
     )?)?;
-    let script = dir.path().join("inspect.ps1");
-    fs::write(
-        &script,
-        "param([string]$Binary)\n(Get-Item -LiteralPath $Binary).VersionInfo | Select-Object FileVersion,CompanyName | ConvertTo-Json\n",
-    )?;
+    // Inspect metadata without relying on the user's PowerShell script execution policy.
     let output = Command::new("powershell.exe")
-        .args(["-NoProfile", "-NonInteractive", "-File"])
-        .arg(script)
-        .arg(record["snapshot_path"].as_str().context("snapshot")?)
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "(Get-Item -LiteralPath $env:GUIC_TEST_BINARY).VersionInfo | Select-Object FileVersion,CompanyName | ConvertTo-Json",
+        ])
+        .env("GUIC_TEST_BINARY", record["snapshot_path"].as_str().context("snapshot")?)
         .output()?;
-    assert!(output.status.success());
+    assert!(
+        output.status.success(),
+        "PowerShell inspection failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let version: Value = serde_json::from_slice(&output.stdout)?;
     assert_eq!(version["FileVersion"], "1.2.3");
     assert_eq!(version["CompanyName"], "Fixture Company");

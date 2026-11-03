@@ -1,19 +1,11 @@
 # TreeSelect
 
-## Purpose
-
 Pick one value from a hierarchical tree while keeping the selected value visible
 in a compact select trigger.
 
-## Import
-
 ```rust
 use guic::prelude::{TreeSelect, TreeSelectNode};
-```
 
-## Basic Usage
-
-```rust
 TreeSelect::new("project-file")
     .expanded(true)
     .selected("main")
@@ -28,8 +20,6 @@ TreeSelect::new("project-file")
         let _ = id;
     })
 ```
-
-## Notes
 
 `TreeSelect` is controlled by the host. It renders expanded branches from the
 node model and emits selected node ids, but it does not mutate the tree itself.

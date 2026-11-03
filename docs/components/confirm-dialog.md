@@ -1,20 +1,12 @@
 # ConfirmDialog
 
-## Purpose
-
 A focused confirmation modal for yes/no decisions. Unlike the general `Dialog`,
 it always renders confirm and cancel actions and styles the confirm button
 destructively when `danger` is set.
 
-## Import
-
 ```rust
 use guic::prelude::ConfirmDialog;
-```
 
-## Basic Usage
-
-```rust
 ConfirmDialog::new("delete-confirm")
     .open(is_open)
     .title("Delete project?")

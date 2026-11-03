@@ -5,14 +5,14 @@ use guic_tokens::Theme;
 
 use crate::Label;
 
-/// A summarized metric card for dashboards and gallery layouts.
+/// A metric value with a title and optional supporting detail.
 ///
 /// # Example
 ///
 /// ```no_run
 /// use guic_components::MetricCard;
 ///
-/// let card = MetricCard::new("Components", "22").detail("v0.1 baseline");
+/// let card = MetricCard::new("Requests", "12,480").detail("+8.2% from last month");
 /// ```
 #[derive(gpui::IntoElement)]
 pub struct MetricCard {

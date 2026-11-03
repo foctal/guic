@@ -1,32 +1,20 @@
 # Tabs
 
-## Purpose
-
 Switch between multiple related content panels while preserving a compact
 navigation surface.
 
-## Import
-
 ```rust
 use guic::prelude::{TabItem, Tabs};
-```
 
-## Basic Usage
-
-```rust
 Tabs::new("settings-tabs").items(vec![
     TabItem::new("general", "General"),
     TabItem::new("account", "Account"),
 ])
 ```
 
-## Keyboard Behavior
+## Keyboard
 
-Keyboard navigation is still pending. The current implementation provides the
-selection API and pointer interaction needed to exercise tab layouts in stories
-and examples.
-
-## Theming Behavior
-
-Selected-state color, underline, spacing, and height derive from the active
-theme tokens.
+With `on_select` set, enabled tabs participate in tab navigation. Arrow keys
+request the previous/next enabled tab, wrapping at the ends. Home/End requests
+the first/last enabled tab; Enter/Space activates the focused tab. Store the
+requested index and pass it back through `selected`.
