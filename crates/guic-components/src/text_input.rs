@@ -10,7 +10,7 @@ use gpui::{
 use guic_core::{AccessibilityElementExt as _, AccessibilityProps, Role, ValueChange};
 use guic_icons::{Icon, IconName};
 use guic_tokens::Theme;
-use std::{ops::Range, rc::Rc};
+use std::{collections::VecDeque, ops::Range, rc::Rc};
 use unicode_segmentation::UnicodeSegmentation;
 
 actions!(
@@ -52,6 +52,10 @@ actions!(
         Cut,
         /// Copies the selected text.
         Copy,
+        /// Undoes the last edit or IME composition.
+        Undo,
+        /// Reapplies the last undone edit.
+        Redo,
     ]
 );
 
@@ -88,11 +92,53 @@ pub struct TextInput {
     selected_range: Range<usize>,
     selection_reversed: bool,
     marked_range: Option<Range<usize>>,
+    composition_start: Option<InputSnapshot>,
+    undo: VecDeque<InputSnapshot>,
+    redo: VecDeque<InputSnapshot>,
     last_layout: Option<TextLayoutState>,
     preferred_x: Option<Pixels>,
     last_bounds: Option<Bounds<Pixels>>,
     is_selecting: bool,
     on_change: Option<TextChangeHandler>,
+}
+
+// Bound retained text as well as the number of edits. Large inputs must not
+// multiply their memory use by the full snapshot count.
+const HISTORY_LIMIT: usize = 100;
+const HISTORY_BYTES: usize = 4 * 1024 * 1024;
+
+struct InputSnapshot {
+    value: String,
+    selection: Range<usize>,
+    reversed: bool,
+}
+
+fn push_history(history: &mut VecDeque<InputSnapshot>, snapshot: InputSnapshot) {
+    history.push_back(snapshot);
+    let mut bytes = history.iter().map(|item| item.value.len()).sum::<usize>();
+    while history.len() > HISTORY_LIMIT || bytes > HISTORY_BYTES {
+        if let Some(oldest) = history.pop_front() {
+            bytes -= oldest.value.len();
+        }
+    }
+}
+
+// Native ranges may exceed the document or land inside a surrogate pair.
+// Round to the following scalar boundary, and clamp to the available text.
+fn utf16_offset(text: &str, offset: usize) -> usize {
+    let mut units = 0;
+    for (index, ch) in text.char_indices() {
+        if units >= offset {
+            return index;
+        }
+        units += ch.len_utf16();
+    }
+    text.len()
+}
+
+fn utf16_range(text: &str, range: &Range<usize>) -> Range<usize> {
+    let start = utf16_offset(text, range.start);
+    start..utf16_offset(text, range.end).max(start)
 }
 
 impl EventEmitter<ValueChange<String>> for TextInput {}
@@ -154,6 +200,9 @@ impl TextInput {
             selected_range: 0..0,
             selection_reversed: false,
             marked_range: None,
+            composition_start: None,
+            undo: VecDeque::new(),
+            redo: VecDeque::new(),
             last_layout: None,
             preferred_x: None,
             last_bounds: None,
@@ -179,10 +228,31 @@ impl TextInput {
     /// Replaces the current value.
     #[must_use]
     pub fn value(mut self, value: impl Into<String>) -> Self {
-        self.value = self.normalize_inserted_text(&value.into());
+        self.reset_value(value.into());
+        self
+    }
+
+    /// Replaces the value of a retained input entity without emitting a change event.
+    ///
+    /// Programmatic replacement resets selection to the end and clears composition
+    /// and undo/redo history. Use this for form resets or application-owned updates.
+    pub fn set_value(&mut self, value: impl Into<String>, cx: &mut Context<Self>) {
+        self.reset_value(value.into());
+        cx.notify();
+    }
+
+    fn reset_value(&mut self, value: String) {
+        self.value = self.normalize_inserted_text(&value);
         let cursor = self.value.len();
         self.selected_range = cursor..cursor;
-        self
+        self.selection_reversed = false;
+        self.marked_range = None;
+        self.composition_start = None;
+        self.undo.clear();
+        self.redo.clear();
+        self.last_layout = None;
+        self.preferred_x = None;
+        self.is_selecting = false;
     }
 
     /// Sets the size of the text field.
@@ -197,6 +267,21 @@ impl TextInput {
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
+    }
+
+    /// Changes whether a retained input entity accepts user edits.
+    ///
+    /// Disabling commits the current composition to local history and ends mouse
+    /// selection. Programmatic updates through [`Self::set_value`] remain allowed.
+    pub fn set_disabled(&mut self, disabled: bool, cx: &mut Context<Self>) {
+        if self.disabled != disabled {
+            if disabled {
+                self.finish_composition();
+                self.is_selecting = false;
+            }
+            self.disabled = disabled;
+            cx.notify();
+        }
     }
 
     /// Makes the field fill the available width.
@@ -341,17 +426,31 @@ impl TextInput {
     }
 
     fn backspace(&mut self, _: &Backspace, window: &mut Window, cx: &mut Context<Self>) {
-        if self.selected_range.is_empty() {
-            self.select_to(self.previous_boundary(self.cursor_offset()), cx);
+        if self.disabled {
+            return;
         }
-        self.replace_text_in_range(None, "", window, cx);
+        let range = self.marked_range.clone().unwrap_or_else(|| {
+            if self.selected_range.is_empty() {
+                self.previous_boundary(self.cursor_offset())..self.cursor_offset()
+            } else {
+                self.selected_range.clone()
+            }
+        });
+        self.replace_text_in_range(Some(self.range_to_utf16(&range)), "", window, cx);
     }
 
     fn delete(&mut self, _: &Delete, window: &mut Window, cx: &mut Context<Self>) {
-        if self.selected_range.is_empty() {
-            self.select_to(self.next_boundary(self.cursor_offset()), cx);
+        if self.disabled {
+            return;
         }
-        self.replace_text_in_range(None, "", window, cx);
+        let range = self.marked_range.clone().unwrap_or_else(|| {
+            if self.selected_range.is_empty() {
+                self.cursor_offset()..self.next_boundary(self.cursor_offset())
+            } else {
+                self.selected_range.clone()
+            }
+        });
+        self.replace_text_in_range(Some(self.range_to_utf16(&range)), "", window, cx);
     }
 
     fn on_mouse_down(
@@ -391,6 +490,9 @@ impl TextInput {
     }
 
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
+        if self.disabled {
+            return;
+        }
         if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
             let normalized = self.normalize_inserted_text(&text);
             self.replace_text_in_range(None, &normalized, window, cx);
@@ -406,6 +508,9 @@ impl TextInput {
     }
 
     fn cut(&mut self, _: &Cut, window: &mut Window, cx: &mut Context<Self>) {
+        if self.disabled {
+            return;
+        }
         if !self.selected_range.is_empty() {
             cx.write_to_clipboard(ClipboardItem::new_string(
                 self.value[self.selected_range.clone()].to_string(),
@@ -463,21 +568,6 @@ impl TextInput {
         cx.notify();
     }
 
-    fn offset_from_utf16(&self, offset: usize) -> usize {
-        let mut utf8_offset = 0;
-        let mut utf16_count = 0;
-
-        for ch in self.value.chars() {
-            if utf16_count >= offset {
-                break;
-            }
-            utf16_count += ch.len_utf16();
-            utf8_offset += ch.len_utf8();
-        }
-
-        utf8_offset
-    }
-
     fn offset_to_utf16(&self, offset: usize) -> usize {
         let mut utf16_offset = 0;
         let mut utf8_count = 0;
@@ -498,7 +588,7 @@ impl TextInput {
     }
 
     fn range_from_utf16(&self, range_utf16: &Range<usize>) -> Range<usize> {
-        self.offset_from_utf16(range_utf16.start)..self.offset_from_utf16(range_utf16.end)
+        utf16_range(&self.value, range_utf16)
     }
 
     fn previous_boundary(&self, offset: usize) -> usize {
@@ -548,18 +638,77 @@ impl TextInput {
 
     fn normalize_inserted_text(&self, text: &str) -> String {
         match self.kind {
-            TextInputKind::TextArea => text.to_owned(),
+            TextInputKind::TextArea => text.replace("\r\n", "\n").replace('\r', "\n"),
             TextInputKind::Text | TextInputKind::Search | TextInputKind::Password => {
-                text.replace('\n', " ")
+                text.replace("\r\n", " ").replace(['\r', '\n'], " ")
             }
         }
     }
 
     fn emit_change(&self, previous: String, window: &mut Window, cx: &mut Context<Self>) {
+        if previous == self.value {
+            return;
+        }
         if let Some(on_change) = &self.on_change {
             (on_change)(self.value.as_str(), window, cx);
         }
         cx.emit(ValueChange::new(previous, self.value.clone()));
+    }
+
+    fn snapshot(&self) -> InputSnapshot {
+        InputSnapshot {
+            value: self.value.clone(),
+            selection: self.selected_range.clone(),
+            reversed: self.selection_reversed,
+        }
+    }
+
+    fn record_edit(&mut self, before: InputSnapshot) {
+        if before.value != self.value {
+            push_history(&mut self.undo, before);
+            self.redo.clear();
+        }
+    }
+
+    fn finish_composition(&mut self) {
+        self.marked_range = None;
+        if let Some(before) = self.composition_start.take() {
+            self.record_edit(before);
+        }
+    }
+
+    fn restore(&mut self, snapshot: InputSnapshot, window: &mut Window, cx: &mut Context<Self>) {
+        let previous = std::mem::replace(&mut self.value, snapshot.value);
+        self.selected_range = snapshot.selection;
+        self.selection_reversed = snapshot.reversed;
+        self.preferred_x = None;
+        self.last_layout = None;
+        self.emit_change(previous, window, cx);
+        cx.notify();
+    }
+
+    fn undo(&mut self, _: &Undo, window: &mut Window, cx: &mut Context<Self>) {
+        if self.disabled {
+            return;
+        }
+        self.finish_composition();
+        if let Some(before) = self.undo.pop_back() {
+            let current = self.snapshot();
+            push_history(&mut self.redo, current);
+            self.restore(before, window, cx);
+        }
+    }
+
+    fn redo(&mut self, _: &Redo, window: &mut Window, cx: &mut Context<Self>) {
+        if self.disabled {
+            return;
+        }
+        self.finish_composition();
+        if let Some(after) = self.redo.pop_back() {
+            let current = self.snapshot();
+            push_history(&mut self.undo, current);
+            self.restore(after, window, cx);
+        }
     }
 
     fn computed_line_height(&self, text_size: Pixels) -> Pixels {
@@ -648,10 +797,13 @@ impl EntityInputHandler for TextInput {
 
     fn selected_text_range(
         &mut self,
-        _ignore_disabled_input: bool,
+        ignore_disabled_input: bool,
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<UTF16Selection> {
+        if self.disabled && !ignore_disabled_input {
+            return None;
+        }
         Some(UTF16Selection {
             range: self.range_to_utf16(&self.selected_range),
             reversed: self.selection_reversed,
@@ -668,8 +820,36 @@ impl EntityInputHandler for TextInput {
             .map(|range| self.range_to_utf16(range))
     }
 
-    fn unmark_text(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {
-        self.marked_range = None;
+    fn unmark_text(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.finish_composition();
+        cx.notify();
+    }
+
+    fn accepts_text_input(&self, _window: &mut Window, _cx: &mut Context<Self>) -> bool {
+        !self.disabled
+    }
+
+    fn text_length_utf16(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<usize> {
+        Some(self.value.encode_utf16().count())
+    }
+
+    fn set_selected_text_range(
+        &mut self,
+        range_utf16: Range<usize>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.disabled {
+            return;
+        }
+        self.selected_range = self.range_from_utf16(&range_utf16);
+        self.selection_reversed = false;
+        self.preferred_x = None;
+        cx.notify();
     }
 
     fn replace_text_in_range(
@@ -679,6 +859,13 @@ impl EntityInputHandler for TextInput {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.disabled {
+            return;
+        }
+        let before = self
+            .composition_start
+            .take()
+            .unwrap_or_else(|| self.snapshot());
         self.preferred_x = None;
         let range = range_utf16
             .as_ref()
@@ -693,6 +880,8 @@ impl EntityInputHandler for TextInput {
         let cursor = range.start + replacement.len();
         self.selected_range = cursor..cursor;
         self.marked_range.take();
+        self.selection_reversed = false;
+        self.record_edit(before);
         self.emit_change(previous, window, cx);
         cx.notify();
     }
@@ -705,6 +894,12 @@ impl EntityInputHandler for TextInput {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.disabled {
+            return;
+        }
+        if self.composition_start.is_none() {
+            self.composition_start = Some(self.snapshot());
+        }
         self.preferred_x = None;
         let range = range_utf16
             .as_ref()
@@ -723,13 +918,21 @@ impl EntityInputHandler for TextInput {
         }
         self.selected_range = new_selected_range_utf16
             .as_ref()
-            .map(|range_utf16| self.range_from_utf16(range_utf16))
+            .map(|range_utf16| {
+                let raw = utf16_range(new_text, range_utf16);
+                self.normalize_inserted_text(&new_text[..raw.start]).len()
+                    ..self.normalize_inserted_text(&new_text[..raw.end]).len()
+            })
             .map(|new_range| new_range.start + range.start..new_range.end + range.start)
             .unwrap_or_else(|| {
                 let cursor = range.start + replacement.len();
                 cursor..cursor
             });
 
+        self.selection_reversed = false;
+        if replacement.is_empty() {
+            self.finish_composition();
+        }
         self.emit_change(previous, window, cx);
         cx.notify();
     }
@@ -994,10 +1197,9 @@ impl Element for TextInputElement {
             window.paint_quad(cursor);
         }
 
-        self.input.update(cx, |input, cx| {
+        self.input.update(cx, |input, _cx| {
             input.last_layout = Some(layout);
             input.last_bounds = Some(bounds);
-            cx.notify();
         });
     }
 }
@@ -1046,29 +1248,35 @@ impl Render for TextInput {
             .hover({
                 let hover = theme.secondary().opacity(0.25);
                 move |style: gpui::StyleRefinement| style.bg(hover)
-            })
-            .on_action(cx.listener(Self::backspace))
-            .on_action(cx.listener(Self::delete))
-            .on_action(cx.listener(Self::up))
-            .on_action(cx.listener(Self::down))
-            .on_action(cx.listener(Self::select_up))
-            .on_action(cx.listener(Self::select_down))
-            .on_action(cx.listener(Self::left))
-            .on_action(cx.listener(Self::right))
-            .on_action(cx.listener(Self::select_left))
-            .on_action(cx.listener(Self::select_right))
-            .on_action(cx.listener(Self::select_all))
-            .on_action(cx.listener(Self::home))
-            .on_action(cx.listener(Self::end))
-            .on_action(cx.listener(Self::newline))
-            .on_action(cx.listener(Self::show_character_palette))
-            .on_action(cx.listener(Self::paste))
-            .on_action(cx.listener(Self::cut))
-            .on_action(cx.listener(Self::copy))
-            .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
-            .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
-            .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
-            .on_mouse_move(cx.listener(Self::on_mouse_move));
+            });
+
+        if !self.disabled {
+            field = field
+                .on_action(cx.listener(Self::undo))
+                .on_action(cx.listener(Self::redo))
+                .on_action(cx.listener(Self::backspace))
+                .on_action(cx.listener(Self::delete))
+                .on_action(cx.listener(Self::up))
+                .on_action(cx.listener(Self::down))
+                .on_action(cx.listener(Self::select_up))
+                .on_action(cx.listener(Self::select_down))
+                .on_action(cx.listener(Self::left))
+                .on_action(cx.listener(Self::right))
+                .on_action(cx.listener(Self::select_left))
+                .on_action(cx.listener(Self::select_right))
+                .on_action(cx.listener(Self::select_all))
+                .on_action(cx.listener(Self::home))
+                .on_action(cx.listener(Self::end))
+                .on_action(cx.listener(Self::newline))
+                .on_action(cx.listener(Self::show_character_palette))
+                .on_action(cx.listener(Self::paste))
+                .on_action(cx.listener(Self::cut))
+                .on_action(cx.listener(Self::copy))
+                .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
+                .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
+                .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
+                .on_mouse_move(cx.listener(Self::on_mouse_move));
+        }
 
         if self.full_width {
             field = field.w_full();
@@ -1158,9 +1366,29 @@ pub(crate) fn init_key_bindings(cx: &mut App) {
                 Cut,
                 Some("GuicTextInput"),
             ),
+            KeyBinding::new(
+                if cfg!(target_os = "macos") {
+                    "cmd-z"
+                } else {
+                    "ctrl-z"
+                },
+                Undo,
+                Some("GuicTextInput"),
+            ),
+            KeyBinding::new(
+                if cfg!(target_os = "macos") {
+                    "cmd-shift-z"
+                } else {
+                    "ctrl-shift-z"
+                },
+                Redo,
+                Some("GuicTextInput"),
+            ),
             KeyBinding::new("home", Home, Some("GuicTextInput")),
             KeyBinding::new("end", End, Some("GuicTextInput")),
         ]);
+        #[cfg(not(target_os = "macos"))]
+        cx.bind_keys([KeyBinding::new("ctrl-y", Redo, Some("GuicTextInput"))]);
         #[cfg(target_os = "macos")]
         cx.bind_keys([KeyBinding::new(
             "ctrl-cmd-space",
@@ -1175,6 +1403,273 @@ pub(crate) fn init_key_bindings(cx: &mut App) {
 mod tests {
     use super::*;
     use gpui::{Keystroke, TestAppContext, VisualContext as _};
+
+    fn init(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            guic_core::init(cx);
+            guic_tokens::init(cx);
+            crate::init(cx);
+        });
+    }
+
+    #[gpui::test]
+    fn painting_does_not_notify_observers(cx: &mut TestAppContext) {
+        init(cx);
+        let (input, cx) = cx.add_window_view(|_, cx| TextInput::new("idle", cx).value("idle"));
+        let notifications = Rc::new(std::cell::Cell::new(0));
+        let observed = notifications.clone();
+        let _subscription =
+            cx.update(|_, cx| cx.observe(&input, move |_, _| observed.set(observed.get() + 1)));
+        for _ in 0..3 {
+            cx.draw(
+                point(px(0.0), px(0.0)),
+                gpui::size(px(400.0), px(100.0)),
+                |_, _| input.clone().into_any_element(),
+            );
+        }
+        assert_eq!(notifications.get(), 0);
+    }
+
+    #[gpui::test]
+    #[allow(
+        clippy::reversed_empty_ranges,
+        reason = "Exercise malformed native input ranges"
+    )]
+    fn native_ranges_and_normalized_composition_stay_in_bounds(cx: &mut TestAppContext) {
+        init(cx);
+        let (input, cx) = cx.add_window_view(|_, cx| TextInput::new("ime", cx).value("prefix"));
+        cx.update(|window, cx| {
+            input.update(cx, |input, cx| {
+                input.replace_and_mark_text_in_range(None, "a\r\n日本", Some(3..4), window, cx);
+                assert_eq!(input.current_value(), "prefixa 日本");
+                assert_eq!(input.selected_range, 8..11);
+                input.replace_and_mark_text_in_range(None, "🙂", Some(1..usize::MAX), window, cx);
+                assert_eq!(input.selected_range, 10..10);
+                input.unmark_text(window, cx);
+                let mut actual = None;
+                assert_eq!(
+                    input.text_for_range(usize::MAX..0, &mut actual, window, cx),
+                    Some(String::new())
+                );
+                assert_eq!(actual, Some(8..8));
+                input.set_selected_text_range(6..usize::MAX, window, cx);
+                assert_eq!(input.selected_range, 6..10);
+                assert_eq!(input.text_length_utf16(window, cx), Some(8));
+                input.replace_text_in_range(Some(usize::MAX..0), "!", window, cx);
+                assert_eq!(input.current_value(), "prefix🙂!");
+            });
+        });
+    }
+
+    #[gpui::test]
+    fn undo_groups_composition_and_preserves_selection(cx: &mut TestAppContext) {
+        init(cx);
+        let (input, cx) = cx.add_window_view(|_, cx| TextInput::new("ime", cx).value("abc"));
+        cx.update(|window, cx| {
+            input.update(cx, |input, cx| {
+                input.selected_range = 1..3;
+                input.selection_reversed = true;
+                input.replace_and_mark_text_in_range(None, "n", Some(1..1), window, cx);
+                input.replace_and_mark_text_in_range(None, "日本", Some(2..2), window, cx);
+                input.replace_text_in_range(None, "日本", window, cx);
+                assert_eq!(input.undo.len(), 1);
+                assert!(!input.selection_reversed);
+                input.undo(&Undo, window, cx);
+                assert_eq!(input.current_value(), "abc");
+                assert_eq!(input.selected_range, 1..3);
+                assert!(input.selection_reversed);
+                input.redo(&Redo, window, cx);
+                assert_eq!(input.current_value(), "a日本");
+                assert_eq!(input.selected_range, 7..7);
+                input.undo(&Undo, window, cx);
+                input.replace_text_in_range(None, "x", window, cx);
+                input.redo(&Redo, window, cx);
+                assert_eq!(input.current_value(), "ax");
+            });
+        });
+    }
+
+    #[gpui::test]
+    fn cancelled_composition_preserves_redo_and_unmark_commits(cx: &mut TestAppContext) {
+        init(cx);
+        let (input, cx) = cx.add_window_view(|_, cx| TextInput::new("ime", cx));
+        cx.update(|window, cx| {
+            input.update(cx, |input, cx| {
+                input.replace_text_in_range(None, "first", window, cx);
+                input.undo(&Undo, window, cx);
+                input.replace_and_mark_text_in_range(None, "n", Some(1..1), window, cx);
+                input.replace_and_mark_text_in_range(None, "", None, window, cx);
+                input.redo(&Redo, window, cx);
+                assert_eq!(input.current_value(), "first");
+                input.replace_and_mark_text_in_range(None, "日本", None, window, cx);
+                input.unmark_text(window, cx);
+                input.undo(&Undo, window, cx);
+                assert_eq!(input.current_value(), "first");
+            });
+        });
+    }
+
+    #[gpui::test]
+    fn native_undo_redo_shortcuts_restore_grapheme_deletion(cx: &mut TestAppContext) {
+        init(cx);
+        let text = "a👨‍👩‍👧‍👦";
+        let (input, cx) = cx.add_window_view(|_, cx| TextInput::new("edit", cx).value(text));
+        cx.update(|window, cx| input.read(cx).focus_handle.clone().focus(window, cx));
+        let modifier = if cfg!(target_os = "macos") {
+            "cmd"
+        } else {
+            "ctrl"
+        };
+        let window = cx.window_handle();
+        for (key, expected) in [
+            ("backspace".to_owned(), "a"),
+            (format!("{modifier}-z"), text),
+            (format!("{modifier}-shift-z"), "a"),
+        ] {
+            cx.dispatch_keystroke(window, Keystroke::parse(&key).expect("shortcut"));
+            input.update(cx, |input, _| {
+                assert_eq!(input.current_value(), expected);
+                assert_eq!(input.selected_range, expected.len()..expected.len());
+            });
+        }
+    }
+
+    #[gpui::test]
+    fn disabled_input_rejects_native_and_action_edits(cx: &mut TestAppContext) {
+        init(cx);
+        let (input, cx) = cx.add_window_view(|_, cx| {
+            TextInput::new("disabled", cx)
+                .value("original")
+                .disabled(true)
+        });
+        cx.update(|window, cx| {
+            cx.write_to_clipboard(ClipboardItem::new_string("clipboard".into()));
+            input.update(cx, |input, cx| {
+                input.selected_range = 0..8;
+                input.replace_text_in_range(None, "changed", window, cx);
+                input.replace_and_mark_text_in_range(None, "marked", None, window, cx);
+                input.set_selected_text_range(0..0, window, cx);
+                input.cut(&Cut, window, cx);
+                input.paste(&Paste, window, cx);
+                input.backspace(&Backspace, window, cx);
+                input.delete(&Delete, window, cx);
+                input.undo(&Undo, window, cx);
+                input.redo(&Redo, window, cx);
+                assert_eq!(input.current_value(), "original");
+                assert_eq!(input.selected_range, 0..8);
+                assert!(!input.accepts_text_input(window, cx));
+                assert!(input.selected_text_range(false, window, cx).is_none());
+                assert!(input.selected_text_range(true, window, cx).is_some());
+                assert!(input.undo.is_empty());
+                assert_eq!(
+                    cx.read_from_clipboard()
+                        .and_then(|item| item.text())
+                        .as_deref(),
+                    Some("clipboard")
+                );
+            });
+        });
+    }
+
+    #[gpui::test]
+    fn line_endings_and_noop_edits(cx: &mut TestAppContext) {
+        init(cx);
+        for kind in [TextInputKind::Text, TextInputKind::TextArea] {
+            let changes = Rc::new(std::cell::Cell::new(0));
+            let observed = changes.clone();
+            let (input, cx) = cx.add_window_view(|_, cx| {
+                TextInput::with_kind("lines", kind, cx)
+                    .on_change(move |_, _, _| observed.set(observed.get() + 1))
+            });
+            cx.update(|window, cx| {
+                input.update(cx, |input, cx| {
+                    input.replace_text_in_range(None, "a\r\nb\rc\n", window, cx);
+                    let expected = if kind == TextInputKind::TextArea {
+                        "a\nb\nc\n"
+                    } else {
+                        "a b c "
+                    };
+                    assert_eq!(input.current_value(), expected);
+                    input.replace_text_in_range(None, "", window, cx);
+                    input.delete(&Delete, window, cx);
+                    assert_eq!(changes.get(), 1);
+                    assert_eq!(input.undo.len(), 1);
+                });
+            });
+        }
+    }
+
+    #[test]
+    fn history_is_bounded_by_count_and_text_bytes() {
+        let snapshot = |value: String| InputSnapshot {
+            value,
+            selection: 0..0,
+            reversed: false,
+        };
+        let mut history = VecDeque::new();
+        for _ in 0..HISTORY_LIMIT + 5 {
+            push_history(&mut history, snapshot("small".into()));
+        }
+        assert_eq!(history.len(), HISTORY_LIMIT);
+        push_history(&mut history, snapshot("a".repeat(HISTORY_BYTES)));
+        assert_eq!(history.len(), 1);
+        push_history(&mut history, snapshot("b".repeat(HISTORY_BYTES + 1)));
+        assert!(history.is_empty());
+    }
+
+    #[gpui::test]
+    fn retained_input_updates_reset_history_without_emitting_changes(cx: &mut TestAppContext) {
+        init(cx);
+        let changes = Rc::new(std::cell::Cell::new(0));
+        let observed = changes.clone();
+        let (input, cx) = cx.add_window_view(|_, cx| {
+            TextInput::new("form", cx)
+                .value("initial")
+                .on_change(move |_, _, _| observed.set(observed.get() + 1))
+        });
+        cx.update(|window, cx| {
+            input.update(cx, |input, cx| {
+                let focus = input.focus_handle.clone();
+                input.replace_and_mark_text_in_range(None, "pending", None, window, cx);
+                input.set_disabled(true, cx);
+                assert!(input.marked_range.is_none());
+                assert_eq!(input.undo.len(), 1);
+                input.set_value("reset\r\nvalue", cx);
+                assert_eq!(input.current_value(), "reset value");
+                assert_eq!(input.selected_range, 11..11);
+                assert!(input.undo.is_empty());
+                assert!(input.redo.is_empty());
+                assert_eq!(input.focus_handle, focus);
+                assert_eq!(changes.get(), 1);
+                input.set_disabled(false, cx);
+                input.replace_text_in_range(None, "!", window, cx);
+                assert_eq!(input.current_value(), "reset value!");
+                assert_eq!(changes.get(), 2);
+            });
+        });
+    }
+
+    #[gpui::test]
+    fn composition_selection_is_relative_to_replacement(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            guic_core::init(cx);
+            guic_tokens::init(cx);
+            crate::init(cx);
+        });
+        let (input, cx) = cx.add_window_view(|_, cx| TextInput::new("ime", cx).value("🙂"));
+        cx.update(|window, cx| {
+            input.update(cx, |input, cx| {
+                input.replace_and_mark_text_in_range(None, "a", Some(1..1), window, cx);
+                assert_eq!(input.current_value(), "🙂a");
+                assert_eq!(input.selected_range, 5..5);
+                input.replace_and_mark_text_in_range(None, "日本", Some(1..2), window, cx);
+                assert_eq!(input.selected_range, 7..10);
+                input.replace_text_in_range(None, "日本語", window, cx);
+                assert_eq!(input.current_value(), "🙂日本語");
+                assert_eq!(input.selected_range, 13..13);
+            });
+        });
+    }
 
     #[gpui::test]
     fn native_editing_shortcuts_copy_cut_and_paste(cx: &mut TestAppContext) {
