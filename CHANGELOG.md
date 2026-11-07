@@ -4,6 +4,85 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+### Added
+
+- Prepare large native and clipboard pastes asynchronously, with ordered follow-up
+  edits, queued clipboard/history commands, a responsive IME composition context,
+  progress feedback, and stale-result rejection on host replacement or closure.
+
+- Add `EditorSession::clear_history()` and bounded background release of large
+  retired history batches, including redo invalidation and session destruction.
+
+- Virtualize long non-wrapped editor lines horizontally using indexed grapheme
+  segments, keeping selection, caret reveal, and IME geometry aligned.
+- Share cancellable syntax analysis and byte/grapheme/UTF-16 checkpoints across
+  editor snapshots and reflow. Painting borrows cached syntax ranges without
+  scanning or copying whole logical lines.
+
+- Run large editor measurements and width/font reflow in cancellable background
+  jobs, with bounded initial previews, stale-result rejection, and scroll/caret
+  preservation. Release replaced layout metadata off the UI thread.
+
+- Add opt-in CodeEditor soft wrapping with Unicode break opportunities, grapheme
+  fallback, visual-row navigation, and shared selection/IME geometry.
+- Add draggable editor overflow scrollbars, track paging, outside drag capture,
+  and logical viewport anchoring on resize.
+- Share large editor buffers and history through persistent line chunks; index
+  native UTF-16 ranges and cache incremental wrap metadata. Add direct `line()`
+  and `iter_lines()` access while preserving `lines()` compatibility.
+
+- Add native IME composition to CodeEditor, with marked-text decoration and one
+  committed host edit per composition; preserve composition across host redraws.
+- Add glyph-based editor hit testing, text-span selection, double/triple-click
+  selection, two-axis wheel scrolling, and automatic primary-caret reveal.
+- Retain editor viewport state, shape visible rows only, and preserve the preferred
+  horizontal position during vertical navigation.
+
+- Add bounded TextInput undo/redo with native shortcuts, selection restoration,
+  and one history entry per IME composition.
+- Add `TextInput::set_value` and `set_disabled` for updating retained entities
+  without replacing focus handles. Programmatic value changes reset history and
+  do not emit user-edit callbacks.
+- Implement native text selection updates and UTF-16 document-length queries.
+
+### Fixed
+
+- Avoid waiting on background position-index initialization and repeating large
+  text comparisons when controlled hosts accept prepared edits. Release unused
+  prepared snapshots off the foreground thread.
+
+- Partition large new Unicode position indexes across up to four workers at
+  verified grapheme boundaries. Preserve synchronous paste/IME ordering and
+  fall back to serial indexing when workers cannot be created.
+
+- Preserve per-line position indexes and unchanged syntax caches through edits,
+  chunk rebuilding, and undo/redo. Update long-line positions around replacement
+  boundaries, including line splits, joins, and Unicode cluster changes.
+- Normalize pasted line endings once, avoid whole-document intermediate strings
+  for native replacement, and derive multi-cursor paste positions from byte ranges.
+  Keep the caret after an inserted combining mark when it joins the preceding text.
+
+- Keep editor candidate geometry current before repaint, preserve grapheme cursor
+  bounds after combining-character insertion, and normalize CRLF/CR to LF.
+- Avoid repeatedly allocating the remaining line while classifying editor syntax,
+  and wire editor undo/redo commands in the gallery.
+
+- Convert IME selection offsets relative to the replacement text, including
+  supplementary Unicode characters and normalized line endings; clamp malformed
+  or oversized native ranges to valid text boundaries.
+- Reject native edits and editing actions on disabled text inputs, normalize
+  CRLF and CR line endings, and suppress unchanged-value notifications.
+- Stop scheduling another render from TextInput painting, allowing idle inputs
+  to remain idle.
+
+### Migration notes
+
+- Keep a stable CodeEditor ID to retain composition and scrolling. `visible_lines`
+  now defines a fixed-height viewport; `first_line` initializes or repositions it
+  when that option changes. IME preedit updates stay local until committed.
+- EditorBuffer now normalizes line endings to LF. Preserve file newline conventions
+  in the application's save layer when required.
+
 ## 0.5.0 - 2026-11-03
 
 ### Changed

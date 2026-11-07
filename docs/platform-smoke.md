@@ -64,3 +64,60 @@ from this checklist, together with:
   timeout, piped output, and nonzero exit handling.
 - Exercise final OS quit/logoff separately from application-managed guarded quit;
   GPUI's final quit hook has a bounded cleanup deadline and cannot veto shutdown.
+
+## Editor input and viewport
+
+- In the gallery editor, compose and cancel Japanese, Chinese, or Korean text
+  after emoji and in the middle of a selection. Candidate windows must follow
+  the caret after vertical/horizontal scrolling and display-scale changes.
+- Commit a composition, undo once, and redo; intermediate preedit text must not
+  appear as separate history entries. Switch focus during composition and verify
+  that the committed result is delivered once.
+- Click and drag across combining characters, emoji, tabs, and multiple lines.
+  Check Shift+click, double-click words, triple-click lines, and selection direction.
+- Scroll long and wide documents, navigate with arrows and Page Up/Down, and shrink
+  the document while scrolled. Verify primary-caret reveal and fixed line numbers.
+- Confirm that the input remains idle when no event occurs, and exercise copying
+  from an editor that has a focus handle but no editing callbacks.
+
+- Enable editor soft wrapping, narrow and widen the window, and select across wrap
+  boundaries containing CJK text, combining marks, emoji sequences, and tabs.
+  Verify visual-row arrows, Home/End, Page Up/Down, and composition candidate bounds.
+- Drag vertical and horizontal scrollbar thumbs beyond the editor, release outside,
+  and click the tracks. Selection and composition must remain unchanged. Repeat in
+  a read-only editor and after shrinking the document until bars disappear.
+- Open 100,000 logical lines and a long single line. Measure initial layout,
+  resizing, repeated edits near the end, scrolling, undo/redo, and retained memory.
+  Separate background layout completion from UI input latency and idle frames.
+- Resize repeatedly while a large document is still being measured. Type, compose,
+  scroll, replace the document, and close the editor during pending reflow. Verify
+  that the latest text/width wins, scroll anchors remain stable, cancelled work
+  stops, and no old caret or IME bounds appear over replacement text.
+
+- Disable soft wrapping and scroll to the middle and end of a very long line.
+  Check fixed line numbers, strings/comments beginning offscreen, tabs, combining
+  marks, emoji, selection across segment boundaries, vertical preferred-column
+  movement, IME candidate placement, and undo/redo after editing near the end.
+
+- Paste large CRLF documents and single long Unicode lines into the beginning,
+  middle, and end of existing text. Undo/redo repeatedly while layout is pending,
+  then type again. Check text, selection, native UTF-16 ranges, and the latest
+  layout; include combining marks joining adjacent text and newline split/join.
+  Record input-to-frame latency and history-eviction memory costs separately from
+  model benchmark times.
+
+- Paste a large mixed Unicode single line, then immediately start and commit an
+  IME composition. Check the native selection, candidate placement, and separate
+  undo steps. Clear history, branch after undo, lower the history limit, and close
+  a large session; verify live shared views remain valid and memory is eventually
+  released. Measure disposal submission separately from background completion.
+
+- During a large asynchronous paste, keep typing, use Backspace/Enter, start an
+  IME composition, and scroll with the wheel and scrollbars. Check the temporary
+  composition indicator, native candidate geometry, final input order, and
+  separate undo steps. Repeat paste → undo → redo → typing and copy → cut → paste
+  before preparation finishes. Change the clipboard after requesting a paste.
+- Replace or disable the editor while a paste is pending, and close it while a
+  queued history command is waiting for a frame. No stale edit may publish after
+  cancellation. Verify that cancelling/unmarking a staged composition and losing
+  focus preserve the documented commit behavior on each native input method.
