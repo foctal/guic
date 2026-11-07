@@ -51,6 +51,7 @@ smallvec = "1"
 thiserror = "2"
 tracing = "0.1"
 unicode-segmentation = "1"
+unicode-linebreak = "0.1.5"
 wry = "0.53.3"
 
 [patch.crates-io]

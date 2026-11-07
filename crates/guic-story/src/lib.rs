@@ -1463,9 +1463,24 @@ impl StoryRoot {
         let editor = CodeEditor::new("gallery-code-editor", self.editor_session.buffer().clone())
             .selections(self.editor_session.selections().to_vec())
             .focusable(self.editor_focus.clone())
-            .options(CodeEditorOptions::default().visible_lines(8))
+            .options(
+                CodeEditorOptions::default()
+                    .visible_lines(8)
+                    .soft_wrap(true),
+            )
             .on_edit(cx.listener(|this, edit: &EditorEdit, _, cx| {
                 this.editor_session.apply(edit.clone());
+                cx.notify();
+            }))
+            .on_command(cx.listener(|this, command, _, cx| {
+                match command {
+                    guic::editor::EditorCommand::Undo => {
+                        this.editor_session.undo();
+                    }
+                    guic::editor::EditorCommand::Redo => {
+                        this.editor_session.redo();
+                    }
+                }
                 cx.notify();
             }));
 
