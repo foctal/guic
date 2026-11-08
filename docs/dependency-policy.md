@@ -41,10 +41,6 @@ and GUIC validates each update as one platform and accessibility baseline. The
 Use the crates.io runtime family without GPUI Git patches. Native integration
 checks are listed in the [platform smoke checklist](platform-smoke.md).
 
-`scripts/release-check.sh` rejects local/Git runtime overrides and mixed
-runtime-family versions through `cargo run -p xtask --locked -- runtime-source`.
-The unrelated `quick-xml` compatibility patch remains necessary.
-
 ## cargo-guic Backend
 
 CLI installation currently requires `--locked`: `cargo-packager 0.11.8` depends
