@@ -183,3 +183,14 @@ DataTable::new("builds")
 
 Custom cell and row-action renderers return elements. Keep state changes in
 component event handlers and supply the updated state on the next render.
+
+## Sharing large datasets
+
+Build `DataTableRows::new(rows)` when data or selection changes, retain it in the
+host, and pass `.shared_rows(rows.clone())` on each render. Cloning this model
+shares the immutable rows and precomputed identifiers. Rendering and per-row
+handlers do not rebuild or copy the complete ID list. The existing `.rows(vec)`
+API remains available, but constructs a new index each time it is called.
+
+This avoids metadata scans during scrolling; it does not make initial dataset
+construction or an application-owned full dataset replacement asynchronous.
