@@ -6,6 +6,23 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Select rectangular ranges with Shift+Alt-drag across shaped display rows,
+  including soft wrapping, short lines, multiple cursors, and pending paste
+  selection rebasing through queued edits and undo/redo. Route edits over many
+  selections through the ordered background queue.
+
+- Expose disabled accessibility semantics without additional layout or focus nodes,
+  numeric control actions, and password/multiline text roles and editable values.
+- Add editable numeric fields, calendar month/year navigation with local-date
+  defaults, shared indexed table data, and lazily measured variable-height lists.
+- Add application-owned translation catalogs, a native application/window facade,
+  styled Markdown inline content, and link activation handlers.
+- Continue editor drag selection and scrolling while the pointer is stationary
+  outside the viewport, render secondary cursors, and offer configurable cursor
+  blinking that pauses during composition.
+- Read basic input clipboard text asynchronously with ordered commands, an IME
+  draft, rebased pointer selections, and cancellation on authoritative changes.
+
 - Read editor clipboard text asynchronously and preview pointer selections during
   pending pastes, preserving input order and rebasing selections through edits
   and queued undo/redo.
@@ -57,6 +74,9 @@ All notable changes to this project will be documented in this file.
   0.6.0 crates.
 
 ### Fixed
+
+- Prevent PasswordInput Copy and Cut actions from exposing the masked value
+  through the clipboard, while preserving paste and undo behavior.
 
 - Avoid waiting on background position-index initialization and repeating large
   text comparisons when controlled hosts accept prepared edits. Release unused
