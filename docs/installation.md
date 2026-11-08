@@ -46,3 +46,16 @@ optional WebView integration:
 
 Applications that do not enable the `webview` feature do not need WebKit at
 runtime. See [Platform Support](platform-support.md) for the validation matrix.
+
+## Development facade
+
+The development checkout also supports a single `guic` dependency. Its default
+`application` feature selects the native platform backend, and `guic::gpui`
+re-exports the matching runtime. Import it as `gpui` when using GPUI action macros
+or derives. `guic::application()` creates the application;
+`guic::open_window(cx, options, builder)` initializes GUIC and wraps the content
+entity in `Root`. The hello-world example demonstrates this setup.
+
+With `default-features = false`, opt into `application` for the backend helper,
+or continue supplying a platform and constructing `Root` yourself. The existing
+explicit runtime dependencies and initialization API remain supported.

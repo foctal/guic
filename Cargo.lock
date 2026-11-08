@@ -2871,6 +2871,7 @@ dependencies = [
 name = "guic"
 version = "0.5.0"
 dependencies = [
+ "anyhow",
  "cargo-packager-updater",
  "guic-assets",
  "guic-charts",
@@ -2878,6 +2879,7 @@ dependencies = [
  "guic-core",
  "guic-editor",
  "guic-gpui",
+ "guic-gpui-platform",
  "guic-icons",
  "guic-macros",
  "guic-native",
@@ -2922,6 +2924,7 @@ dependencies = [
 name = "guic-components"
 version = "0.5.0"
 dependencies = [
+ "chrono",
  "guic-core",
  "guic-gpui",
  "guic-icons",
@@ -2994,8 +2997,6 @@ name = "guic-example-hello-world"
 version = "0.1.0"
 dependencies = [
  "guic",
- "guic-gpui",
- "guic-gpui-platform",
 ]
 
 [[package]]

@@ -29,6 +29,39 @@
 
 pub mod prelude;
 
+/// The matching GPUI runtime, re-exported for single-dependency applications.
+/// Import `guic::gpui` as `gpui` when using GPUI derives or action macros.
+pub use gpui;
+
+/// Creates an application using the native backend for the current OS.
+///
+/// The default `application` feature enables this helper. Call [`open_window`]
+/// in the application's run callback to initialize GUIC and mount its root.
+#[cfg(all(
+    feature = "application",
+    any(target_os = "macos", target_os = "linux", target_os = "windows")
+))]
+pub fn application() -> gpui::Application {
+    gpui_platform::application()
+}
+
+/// Initializes GUIC and opens a window with theme, overlays, and focus handling.
+///
+/// Existing applications can continue to construct [`core::Root`] themselves.
+/// Keep a clone of the content entity in the builder if it is needed later.
+pub fn open_window<V: gpui::Render>(
+    cx: &mut gpui::App,
+    options: gpui::WindowOptions,
+    build: impl FnOnce(&mut gpui::Window, &mut gpui::App) -> gpui::Entity<V>,
+) -> anyhow::Result<gpui::WindowHandle<core::Root>> {
+    use gpui::AppContext as _;
+    init(cx);
+    cx.open_window(options, |window, cx| {
+        let view = build(window, cx);
+        cx.new(|cx| core::Root::new(view, window, cx))
+    })
+}
+
 /// Signed in-app updates for macOS app bundles, Windows NSIS, and Linux AppImage.
 ///
 /// Enable the `updater` feature. Run blocking network and installation operations

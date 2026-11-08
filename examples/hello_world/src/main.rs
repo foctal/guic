@@ -2,6 +2,7 @@ use gpui::{
     AppContext as _, Bounds, Context, IntoElement, ParentElement as _, Render, Styled as _, Window,
     WindowBounds, WindowOptions, div, px, size,
 };
+use guic::gpui;
 use guic::prelude::{Alert, Badge, Button, Label, Progress, Separator, Spinner};
 
 struct AppView;
@@ -51,9 +52,7 @@ impl Render for AppView {
 }
 
 fn main() {
-    gpui_platform::application().run(|cx: &mut gpui::App| {
-        guic::init(cx);
-
+    guic::application().run(|cx: &mut gpui::App| {
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                 None,
@@ -67,10 +66,7 @@ fn main() {
             ..Default::default()
         };
 
-        cx.open_window(options, |window, cx| {
-            let app = cx.new(|_| AppView);
-            cx.new(|cx| guic::core::Root::new(app, window, cx))
-        })
-        .expect("failed to open hello world window");
+        guic::open_window(cx, options, |_, cx| cx.new(|_| AppView))
+            .expect("failed to open hello world window");
     })
 }
