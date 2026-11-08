@@ -4,14 +4,17 @@ use gpui::{
     Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable, GlobalElementId,
     InspectorElementId, InteractiveElement as _, IntoElement, KeyBinding, LayoutId, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement as _, Pixels, Point,
-    Render, SharedString, Style, Styled as _, TextAlign, TextRun, UTF16Selection, UnderlineStyle,
-    Window, WrappedLine, actions, div, fill, point, px,
+    Render, SharedString, StatefulInteractiveElement as _, Style, Styled as _, TextAlign, TextRun,
+    UTF16Selection, UnderlineStyle, Window, WrappedLine, actions, div, fill, point, px,
 };
 use guic_core::{AccessibilityElementExt as _, AccessibilityProps, Role, ValueChange};
 use guic_icons::{Icon, IconName};
 use guic_tokens::Theme;
 use std::{collections::VecDeque, ops::Range, rc::Rc};
 use unicode_segmentation::UnicodeSegmentation;
+
+mod pending;
+use pending::{PendingAction, PendingInput};
 
 actions!(
     guic_text_input,
@@ -80,6 +83,8 @@ pub enum TextInputKind {
 
 /// A native text input component backed by GPUI's input handler.
 pub struct TextInput {
+    pending: Option<PendingInput>,
+    input_generation: u64,
     id: SharedString,
     kind: TextInputKind,
     focus_handle: FocusHandle,
@@ -111,6 +116,8 @@ struct InputSnapshot {
     value: String,
     selection: Range<usize>,
     reversed: bool,
+    // Inverse replacements in edit order; restore applies them in reverse.
+    inverse_edits: Vec<(Range<usize>, usize)>,
 }
 
 fn push_history(history: &mut VecDeque<InputSnapshot>, snapshot: InputSnapshot) {
@@ -183,6 +190,8 @@ impl TextInput {
 
     fn with_kind(id: impl Into<SharedString>, kind: TextInputKind, cx: &mut Context<Self>) -> Self {
         Self {
+            pending: None,
+            input_generation: 0,
             id: id.into(),
             kind,
             focus_handle: cx.focus_handle().tab_stop(true),
@@ -242,6 +251,7 @@ impl TextInput {
     }
 
     fn reset_value(&mut self, value: String) {
+        self.cancel_pending_input();
         self.value = self.normalize_inserted_text(&value);
         let cursor = self.value.len();
         self.selected_range = cursor..cursor;
@@ -262,6 +272,14 @@ impl TextInput {
         self
     }
 
+    /// Updates the size of a retained field without resetting text or history.
+    pub fn set_size(&mut self, size: ComponentSize, cx: &mut Context<Self>) {
+        if self.size != size {
+            self.size = size;
+            cx.notify();
+        }
+    }
+
     /// Sets the disabled state.
     #[must_use]
     pub fn disabled(mut self, disabled: bool) -> Self {
@@ -276,6 +294,7 @@ impl TextInput {
     pub fn set_disabled(&mut self, disabled: bool, cx: &mut Context<Self>) {
         if self.disabled != disabled {
             if disabled {
+                self.cancel_pending_input();
                 self.finish_composition();
                 self.is_selecting = false;
             }
@@ -336,7 +355,10 @@ impl TextInput {
         }
     }
 
-    fn left(&mut self, _: &Left, _: &mut Window, cx: &mut Context<Self>) {
+    fn left(&mut self, _: &Left, window: &mut Window, cx: &mut Context<Self>) {
+        if self.defer_input_action(PendingAction::Left, window, cx) {
+            return;
+        }
         if self.selected_range.is_empty() {
             self.move_to(self.previous_boundary(self.cursor_offset()), cx);
         } else {
@@ -344,7 +366,10 @@ impl TextInput {
         }
     }
 
-    fn right(&mut self, _: &Right, _: &mut Window, cx: &mut Context<Self>) {
+    fn right(&mut self, _: &Right, window: &mut Window, cx: &mut Context<Self>) {
+        if self.defer_input_action(PendingAction::Right, window, cx) {
+            return;
+        }
         if self.selected_range.is_empty() {
             self.move_to(self.next_boundary(self.selected_range.end), cx);
         } else {
@@ -383,41 +408,71 @@ impl TextInput {
         self.preferred_x = Some(x);
     }
 
-    fn up(&mut self, _: &Up, _: &mut Window, cx: &mut Context<Self>) {
+    fn up(&mut self, _: &Up, window: &mut Window, cx: &mut Context<Self>) {
+        if self.defer_input_action(PendingAction::Up, window, cx) {
+            return;
+        }
         self.vertical(false, false, cx);
     }
-    fn down(&mut self, _: &Down, _: &mut Window, cx: &mut Context<Self>) {
+    fn down(&mut self, _: &Down, window: &mut Window, cx: &mut Context<Self>) {
+        if self.defer_input_action(PendingAction::Down, window, cx) {
+            return;
+        }
         self.vertical(true, false, cx);
     }
-    fn select_up(&mut self, _: &SelectUp, _: &mut Window, cx: &mut Context<Self>) {
+    fn select_up(&mut self, _: &SelectUp, window: &mut Window, cx: &mut Context<Self>) {
+        if self.defer_input_action(PendingAction::SelectUp, window, cx) {
+            return;
+        }
         self.vertical(false, true, cx);
     }
-    fn select_down(&mut self, _: &SelectDown, _: &mut Window, cx: &mut Context<Self>) {
+    fn select_down(&mut self, _: &SelectDown, window: &mut Window, cx: &mut Context<Self>) {
+        if self.defer_input_action(PendingAction::SelectDown, window, cx) {
+            return;
+        }
         self.vertical(true, true, cx);
     }
 
-    fn select_left(&mut self, _: &SelectLeft, _: &mut Window, cx: &mut Context<Self>) {
+    fn select_left(&mut self, _: &SelectLeft, window: &mut Window, cx: &mut Context<Self>) {
+        if self.defer_input_action(PendingAction::SelectLeft, window, cx) {
+            return;
+        }
         self.select_to(self.previous_boundary(self.cursor_offset()), cx);
     }
 
-    fn select_right(&mut self, _: &SelectRight, _: &mut Window, cx: &mut Context<Self>) {
+    fn select_right(&mut self, _: &SelectRight, window: &mut Window, cx: &mut Context<Self>) {
+        if self.defer_input_action(PendingAction::SelectRight, window, cx) {
+            return;
+        }
         self.select_to(self.next_boundary(self.cursor_offset()), cx);
     }
 
-    fn select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
+    fn select_all(&mut self, _: &SelectAll, window: &mut Window, cx: &mut Context<Self>) {
+        if self.defer_input_action(PendingAction::SelectAll, window, cx) {
+            return;
+        }
         self.move_to(0, cx);
         self.select_to(self.value.len(), cx);
     }
 
-    fn home(&mut self, _: &Home, _: &mut Window, cx: &mut Context<Self>) {
+    fn home(&mut self, _: &Home, window: &mut Window, cx: &mut Context<Self>) {
+        if self.defer_input_action(PendingAction::Home, window, cx) {
+            return;
+        }
         self.move_to(0, cx);
     }
 
-    fn end(&mut self, _: &End, _: &mut Window, cx: &mut Context<Self>) {
+    fn end(&mut self, _: &End, window: &mut Window, cx: &mut Context<Self>) {
+        if self.defer_input_action(PendingAction::End, window, cx) {
+            return;
+        }
         self.move_to(self.value.len(), cx);
     }
 
     fn newline(&mut self, _: &Newline, window: &mut Window, cx: &mut Context<Self>) {
+        if self.defer_input_action(PendingAction::Newline, window, cx) {
+            return;
+        }
         if self.kind == TextInputKind::TextArea {
             self.replace_text_in_range(None, "\n", window, cx);
         } else {
@@ -426,6 +481,9 @@ impl TextInput {
     }
 
     fn backspace(&mut self, _: &Backspace, window: &mut Window, cx: &mut Context<Self>) {
+        if self.defer_input_action(PendingAction::Backspace, window, cx) {
+            return;
+        }
         if self.disabled {
             return;
         }
@@ -440,6 +498,9 @@ impl TextInput {
     }
 
     fn delete(&mut self, _: &Delete, window: &mut Window, cx: &mut Context<Self>) {
+        if self.defer_input_action(PendingAction::Delete, window, cx) {
+            return;
+        }
         if self.disabled {
             return;
         }
@@ -463,20 +524,46 @@ impl TextInput {
         let handle = self.focus_handle(cx);
         window.focus(&handle, cx);
 
+        let offset = self.index_for_mouse_position(event.position);
         if event.modifiers.shift {
-            self.select_to(self.index_for_mouse_position(event.position), cx);
+            self.select_to(offset, cx);
+        } else if event.click_count >= 3 {
+            let start = self.value[..offset]
+                .rfind('\n')
+                .map_or(0, |index| index + 1);
+            let end = self.value[offset..]
+                .find('\n')
+                .map_or(self.value.len(), |index| offset + index + 1);
+            self.move_to(start, cx);
+            self.select_to(end, cx);
+        } else if event.click_count == 2 {
+            let (start, text) = self
+                .value
+                .split_word_bound_indices()
+                .find(|(start, word)| *start <= offset && offset < start + word.len())
+                .unwrap_or((offset, ""));
+            let end = start + text.len();
+            self.move_to(start, cx);
+            self.select_to(end, cx);
         } else {
-            self.move_to(self.index_for_mouse_position(event.position), cx);
+            self.move_to(offset, cx);
         }
+        self.drain_pending_input(window, cx);
     }
 
     fn on_mouse_up(&mut self, _: &MouseUpEvent, _window: &mut Window, _: &mut Context<Self>) {
         self.is_selecting = false;
     }
 
-    fn on_mouse_move(&mut self, event: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn on_mouse_move(
+        &mut self,
+        event: &MouseMoveEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.is_selecting {
             self.select_to(self.index_for_mouse_position(event.position), cx);
+            self.drain_pending_input(window, cx);
         }
     }
 
@@ -493,13 +580,17 @@ impl TextInput {
         if self.disabled {
             return;
         }
-        if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-            let normalized = self.normalize_inserted_text(&text);
-            self.replace_text_in_range(None, &normalized, window, cx);
-        }
+        let read = cx.read_text_from_clipboard_async();
+        self.queue_paste(read, window, cx);
     }
 
-    fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
+    fn copy(&mut self, _: &Copy, window: &mut Window, cx: &mut Context<Self>) {
+        if self.defer_input_action(PendingAction::Copy, window, cx) {
+            return;
+        }
+        if self.kind == TextInputKind::Password {
+            return;
+        }
         if !self.selected_range.is_empty() {
             cx.write_to_clipboard(ClipboardItem::new_string(
                 self.value[self.selected_range.clone()].to_string(),
@@ -508,7 +599,10 @@ impl TextInput {
     }
 
     fn cut(&mut self, _: &Cut, window: &mut Window, cx: &mut Context<Self>) {
-        if self.disabled {
+        if self.defer_input_action(PendingAction::Cut, window, cx) {
+            return;
+        }
+        if self.disabled || self.kind == TextInputKind::Password {
             return;
         }
         if !self.selected_range.is_empty() {
@@ -520,6 +614,9 @@ impl TextInput {
     }
 
     fn move_to(&mut self, offset: usize, cx: &mut Context<Self>) {
+        if self.queue_pointer(offset..offset, false, cx) {
+            return;
+        }
         self.preferred_x = None;
         self.selection_reversed = false;
         self.selected_range = offset..offset;
@@ -555,6 +652,16 @@ impl TextInput {
     }
 
     fn select_to(&mut self, offset: usize, cx: &mut Context<Self>) {
+        if let Some(pending) = self.pending.as_ref().filter(|pending| !pending.replaying) {
+            let (range, reversed) = pending
+                .pointer
+                .clone()
+                .unwrap_or((self.selected_range.clone(), self.selection_reversed));
+            let anchor = if reversed { range.end } else { range.start };
+            self.queue_pointer(anchor.min(offset)..anchor.max(offset), offset < anchor, cx);
+            return;
+        }
+
         self.preferred_x = None;
         if self.selection_reversed {
             self.selected_range.start = offset;
@@ -660,6 +767,7 @@ impl TextInput {
             value: self.value.clone(),
             selection: self.selected_range.clone(),
             reversed: self.selection_reversed,
+            inverse_edits: Vec::new(),
         }
     }
 
@@ -678,6 +786,11 @@ impl TextInput {
     }
 
     fn restore(&mut self, snapshot: InputSnapshot, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(pending) = &mut self.pending {
+            for (range, inserted) in snapshot.inverse_edits.iter().rev() {
+                pending.rebase(range, *inserted);
+            }
+        }
         let previous = std::mem::replace(&mut self.value, snapshot.value);
         self.selected_range = snapshot.selection;
         self.selection_reversed = snapshot.reversed;
@@ -688,24 +801,42 @@ impl TextInput {
     }
 
     fn undo(&mut self, _: &Undo, window: &mut Window, cx: &mut Context<Self>) {
+        if self.defer_input_action(PendingAction::Undo, window, cx) {
+            return;
+        }
         if self.disabled {
             return;
         }
         self.finish_composition();
         if let Some(before) = self.undo.pop_back() {
-            let current = self.snapshot();
+            let mut current = self.snapshot();
+            current.inverse_edits = before
+                .inverse_edits
+                .iter()
+                .rev()
+                .map(|(range, inserted)| (range.start..range.start + inserted, range.len()))
+                .collect();
             push_history(&mut self.redo, current);
             self.restore(before, window, cx);
         }
     }
 
     fn redo(&mut self, _: &Redo, window: &mut Window, cx: &mut Context<Self>) {
+        if self.defer_input_action(PendingAction::Redo, window, cx) {
+            return;
+        }
         if self.disabled {
             return;
         }
         self.finish_composition();
         if let Some(after) = self.redo.pop_back() {
-            let current = self.snapshot();
+            let mut current = self.snapshot();
+            current.inverse_edits = after
+                .inverse_edits
+                .iter()
+                .rev()
+                .map(|(range, inserted)| (range.start..range.start + inserted, range.len()))
+                .collect();
             push_history(&mut self.undo, current);
             self.restore(after, window, cx);
         }
@@ -790,6 +921,11 @@ impl EntityInputHandler for TextInput {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<String> {
+        if let Some(pending) = &self.pending {
+            let range = utf16_range(&pending.text, &range_utf16);
+            actual_range.replace(pending.units(&range));
+            return Some(pending.text[range].to_owned());
+        }
         let range = self.range_from_utf16(&range_utf16);
         actual_range.replace(self.range_to_utf16(&range));
         Some(self.value[range].to_string())
@@ -804,6 +940,12 @@ impl EntityInputHandler for TextInput {
         if self.disabled && !ignore_disabled_input {
             return None;
         }
+        if let Some(pending) = &self.pending {
+            return Some(UTF16Selection {
+                range: pending.units(&pending.selected),
+                reversed: false,
+            });
+        }
         Some(UTF16Selection {
             range: self.range_to_utf16(&self.selected_range),
             reversed: self.selection_reversed,
@@ -815,12 +957,21 @@ impl EntityInputHandler for TextInput {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<Range<usize>> {
+        if let Some(pending) = &self.pending {
+            return pending.marked.as_ref().map(|range| pending.units(range));
+        }
         self.marked_range
             .as_ref()
             .map(|range| self.range_to_utf16(range))
     }
 
     fn unmark_text(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.pending.is_some() {
+            self.commit_pending_text();
+            self.drain_pending_input(_window, cx);
+            cx.notify();
+            return;
+        }
         self.finish_composition();
         cx.notify();
     }
@@ -834,6 +985,9 @@ impl EntityInputHandler for TextInput {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<usize> {
+        if let Some(pending) = &self.pending {
+            return Some(pending.text.encode_utf16().count());
+        }
         Some(self.value.encode_utf16().count())
     }
 
@@ -844,6 +998,11 @@ impl EntityInputHandler for TextInput {
         cx: &mut Context<Self>,
     ) {
         if self.disabled {
+            return;
+        }
+        if let Some(pending) = &mut self.pending {
+            pending.selected = utf16_range(&pending.text, &range_utf16);
+            cx.notify();
             return;
         }
         self.selected_range = self.range_from_utf16(&range_utf16);
@@ -862,7 +1021,22 @@ impl EntityInputHandler for TextInput {
         if self.disabled {
             return;
         }
-        let before = self
+
+        if self
+            .pending
+            .as_ref()
+            .is_some_and(|pending| !pending.replaying)
+        {
+            let normalized = self.normalize_inserted_text(new_text);
+            if let Some(pending) = &mut self.pending {
+                pending.replace(range_utf16, &normalized, None, false);
+            }
+            self.commit_pending_text();
+            self.drain_pending_input(window, cx);
+            cx.notify();
+            return;
+        }
+        let mut before = self
             .composition_start
             .take()
             .unwrap_or_else(|| self.snapshot());
@@ -873,6 +1047,14 @@ impl EntityInputHandler for TextInput {
             .or(self.marked_range.clone())
             .unwrap_or(self.selected_range.clone());
         let replacement = self.normalize_inserted_text(new_text);
+        if self.value[range.clone()] != replacement {
+            before
+                .inverse_edits
+                .push((range.start..range.start + replacement.len(), range.len()));
+            if let Some(pending) = &mut self.pending {
+                pending.rebase(&range, replacement.len());
+            }
+        }
 
         let previous = self.value.clone();
         self.value =
@@ -897,6 +1079,33 @@ impl EntityInputHandler for TextInput {
         if self.disabled {
             return;
         }
+
+        if self
+            .pending
+            .as_ref()
+            .is_some_and(|pending| !pending.replaying)
+        {
+            let normalized = self.normalize_inserted_text(new_text);
+            let selection = new_selected_range_utf16.map(|range: Range<usize>| {
+                let raw = utf16_range(new_text, &range);
+                self.normalize_inserted_text(&new_text[..raw.start])
+                    .encode_utf16()
+                    .count()
+                    ..self
+                        .normalize_inserted_text(&new_text[..raw.end])
+                        .encode_utf16()
+                        .count()
+            });
+            if let Some(pending) = &mut self.pending {
+                pending.replace(range_utf16, &normalized, selection, true);
+            }
+            if normalized.is_empty() {
+                self.commit_pending_text();
+                self.drain_pending_input(window, cx);
+            }
+            cx.notify();
+            return;
+        }
         if self.composition_start.is_none() {
             self.composition_start = Some(self.snapshot());
         }
@@ -907,6 +1116,16 @@ impl EntityInputHandler for TextInput {
             .or(self.marked_range.clone())
             .unwrap_or(self.selected_range.clone());
         let replacement = self.normalize_inserted_text(new_text);
+        if self.value[range.clone()] != replacement {
+            if let Some(before) = &mut self.composition_start {
+                before
+                    .inverse_edits
+                    .push((range.start..range.start + replacement.len(), range.len()));
+            }
+            if let Some(pending) = &mut self.pending {
+                pending.rebase(&range, replacement.len());
+            }
+        }
 
         let previous = self.value.clone();
         self.value =
@@ -945,7 +1164,11 @@ impl EntityInputHandler for TextInput {
         _cx: &mut Context<Self>,
     ) -> Option<Bounds<Pixels>> {
         let last_layout = self.last_layout.as_ref()?;
-        let range = self.range_from_utf16(&range_utf16);
+        let range = if self.pending.is_some() {
+            self.cursor_offset()..self.cursor_offset()
+        } else {
+            self.range_from_utf16(&range_utf16)
+        };
         let display_start = self.actual_to_display_offset(range.start);
         let display_end = self.actual_to_display_offset(range.end);
         let start = last_layout.display_position_for_index(display_start)?;
@@ -968,6 +1191,9 @@ impl EntityInputHandler for TextInput {
         let bounds = self.last_bounds?;
         let last_layout = self.last_layout.as_ref()?;
         let local = bounds.localize(&point)?;
+        if let Some(pending) = &self.pending {
+            return Some(pending.units(&pending.selected).end);
+        }
         let display_index = last_layout.closest_display_index_for_position(local);
         Some(self.offset_to_utf16(self.display_to_actual_offset(display_index)))
     }
@@ -1090,10 +1316,22 @@ impl Element for TextInputElement {
             .expect("text input layout should shape");
         let layout = TextLayoutState::new(lines.into_vec(), line_height);
 
-        let cursor_index = input.actual_to_display_offset(input.cursor_offset());
-        let selected_start = input.actual_to_display_offset(input.selected_range.start);
-        let selected_end = input.actual_to_display_offset(input.selected_range.end);
-        let (selection, cursor) = if input.selected_range.is_empty() {
+        let preview_selection = input
+            .pending
+            .as_ref()
+            .and_then(|pending| pending.pointer.as_ref())
+            .map(|(range, _)| range)
+            .unwrap_or(&input.selected_range);
+        let cursor_offset = input
+            .pending
+            .as_ref()
+            .and_then(|pending| pending.pointer.as_ref())
+            .map(|(range, reversed)| if *reversed { range.start } else { range.end })
+            .unwrap_or_else(|| input.cursor_offset());
+        let cursor_index = input.actual_to_display_offset(cursor_offset);
+        let selected_start = input.actual_to_display_offset(preview_selection.start);
+        let selected_end = input.actual_to_display_offset(preview_selection.end);
+        let (selection, cursor) = if preview_selection.is_empty() {
             let cursor_pos = layout
                 .display_position_for_index(cursor_index)
                 .unwrap_or(point(px(0.0), px(0.0)));
@@ -1222,10 +1460,14 @@ impl Render for TextInput {
         let mut field = div()
             .id(self.id.clone())
             .debug_selector(|| format!("guic-text-input-{}", self.id))
-            .accessibility(
-                AccessibilityProps::new(Role::TextInput)
-                    .label(accessible_label)
-                    .disabled(self.disabled),
+            .accessible(
+                AccessibilityProps::new(match self.kind {
+                    TextInputKind::Password => Role::PasswordInput,
+                    TextInputKind::TextArea => Role::MultilineTextInput,
+                    _ => Role::TextInput,
+                })
+                .label(accessible_label)
+                .disabled(self.disabled),
             )
             .key_context("GuicTextInput")
             .track_focus(&self.focus_handle(cx).tab_stop(!self.disabled))
@@ -1250,8 +1492,23 @@ impl Render for TextInput {
                 move |style: gpui::StyleRefinement| style.bg(hover)
             });
 
+        field = field.aria_placeholder(self.placeholder.clone());
+        if self.kind != TextInputKind::Password {
+            field = field.aria_value(self.value.clone());
+        }
         if !self.disabled {
             field = field
+                .on_a11y_action(gpui::accesskit::Action::SetValue, {
+                    let input = cx.entity().downgrade();
+                    move |data, window, cx| {
+                        if let Some(gpui::accesskit::ActionData::Value(value)) = data {
+                            let _ = input.update(cx, |input, cx| {
+                                let end = input.value.encode_utf16().count();
+                                input.replace_text_in_range(Some(0..end), value, window, cx);
+                            });
+                        }
+                    }
+                })
                 .on_action(cx.listener(Self::undo))
                 .on_action(cx.listener(Self::redo))
                 .on_action(cx.listener(Self::backspace))
@@ -1278,6 +1535,21 @@ impl Render for TextInput {
                 .on_mouse_move(cx.listener(Self::on_mouse_move));
         }
 
+        if let Some(pending) = &self.pending {
+            let preview = if self.kind == TextInputKind::Password {
+                "*".repeat(pending.text.graphemes(true).take(64).count())
+            } else {
+                pending.text.chars().take(64).collect()
+            };
+            field = field.child(
+                gpui::div()
+                    .text_color(theme.muted_foreground())
+                    .child(format!(
+                        "{} {preview}",
+                        guic_core::translate(cx, "input.pasting", "Pasting...")
+                    )),
+            );
+        }
         if self.full_width {
             field = field.w_full();
         }
@@ -1605,6 +1877,7 @@ mod tests {
             value,
             selection: 0..0,
             reversed: false,
+            inverse_edits: Vec::new(),
         };
         let mut history = VecDeque::new();
         for _ in 0..HISTORY_LIMIT + 5 {
@@ -1672,6 +1945,54 @@ mod tests {
     }
 
     #[gpui::test]
+    fn password_shortcuts_preserve_clipboard_and_allow_paste(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            guic_core::init(cx);
+            guic_tokens::init(cx);
+            crate::init(cx);
+            cx.write_to_clipboard(ClipboardItem::new_string("replacement".into()));
+        });
+        let secret = "private-\u{65e5}\u{672c}-\u{1f642}";
+        let (input, cx) =
+            cx.add_window_view(|_, cx| TextInput::password("password-clipboard", cx).value(secret));
+        cx.update(|window, cx| input.read(cx).focus_handle.clone().focus(window, cx));
+        let modifier = if cfg!(target_os = "macos") {
+            "cmd"
+        } else {
+            "ctrl"
+        };
+        let window = cx.window_handle();
+        for key in ["a", "c", "x"] {
+            cx.dispatch_keystroke(
+                window,
+                Keystroke::parse(&format!("{modifier}-{key}")).expect("editing shortcut"),
+            );
+            cx.update(|_, cx| {
+                assert_eq!(input.read(cx).current_value(), secret);
+                assert_eq!(input.read(cx).selected_range, 0..secret.len());
+                assert_eq!(
+                    cx.read_from_clipboard()
+                        .and_then(|item| item.text())
+                        .as_deref(),
+                    Some("replacement"),
+                );
+            });
+        }
+        cx.dispatch_keystroke(
+            window,
+            Keystroke::parse(&format!("{modifier}-v")).expect("paste shortcut"),
+        );
+        cx.run_until_parked();
+        cx.update(|_, cx| assert_eq!(input.read(cx).current_value(), "replacement"));
+        cx.dispatch_keystroke(
+            window,
+            Keystroke::parse(&format!("{modifier}-z")).expect("undo shortcut"),
+        );
+        cx.run_until_parked();
+        cx.update(|_, cx| assert_eq!(input.read(cx).current_value(), secret));
+    }
+
+    #[gpui::test]
     fn native_editing_shortcuts_copy_cut_and_paste(cx: &mut TestAppContext) {
         cx.update(|cx| {
             guic_core::init(cx);
@@ -1729,6 +2050,7 @@ mod tests {
                 window,
                 Keystroke::parse(&format!("{modifier}-v")).expect("test value should be available"),
             );
+            cx.run_until_parked();
             cx.update(|_, cx| {
                 assert_eq!(
                     input.read(cx).current_value(),

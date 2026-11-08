@@ -60,3 +60,12 @@ cx.bind_keys([gpui::KeyBinding::new(
 
 Single-line inputs propagate `Newline` so a containing command palette can
 handle submission. Multiline inputs insert a newline.
+
+Clipboard text is acquired asynchronously. Input and history commands received
+while a read is pending replay in order, and clicks show a selection preview
+whose offsets are rebased through the preceding edits. Native composition uses
+a small temporary context until the paste completes; its committed text remains
+one history entry. Empty clipboard reads do not erase selections. `set_value`
+and disabling the field cancel pending input so stale clipboard results cannot
+replace application-owned state. Text storage, shaping, and history snapshots
+remain synchronous; use `CodeEditor` for large documents.
