@@ -20,11 +20,11 @@ pub use guic_core::{
     ApplicationMenuService, CancellationToken, CloseReason, CommandRegistrationError,
     CommandRouter, CommandScope, CommandSpec, CredentialService, DeepLink, DeepLinkService,
     DroppedItem, FileDialogFilter, FileDialogRequest, FileDialogService, FocusDirection,
-    InstanceDisposition, JsonStore, LoadSource, NativeCapabilities, NativeCapability,
+    InstanceDisposition, JsonStore, LoadSource, Localization, NativeCapabilities, NativeCapability,
     NativeCommand, NativeMenuItem, NativeServices, NotificationRequest, NotificationService,
     NotificationUrgency, OverlayId, OverlayKind, PersistenceError, Recovered, Root, SecretValue,
     ServiceError, ServiceErrorKind, ServiceFuture, SingleInstanceService, TrayDefinition,
-    TrayService, UpdateInfo, UpdateService,
+    TrayService, UpdateInfo, UpdateService, set_locale, translate,
 };
 pub use guic_tokens::{Theme, ThemeContextExt, ThemeRegistry};
 pub use guic_tokens::{ThemeController, ThemePreference};
@@ -64,7 +64,7 @@ pub use guic_components::{
     Splitter, SplitterAxis, Step, Stepper, Switch, TabItem, TabMenu, Tabs, Tag, TagVariant,
     TextArea, TextInput, TextInputKind, TieredMenu, Timeline, TimelineEvent, Toast, ToastPlacement,
     ToastStack, ToastVariant, Toolbar, Tooltip, TreeSelect, TreeSelectNode, TreeTable,
-    TreeTableColumn, TreeTableRow, ValidationIssue, ValidationSeverity, VirtualList,
+    TreeTableColumn, TreeTableRow, ValidationIssue, ValidationSeverity, VariableList, VirtualList,
     VirtualListMetrics,
 };
 
@@ -72,8 +72,8 @@ pub use guic_components::{
 pub use guic_components::{
     DataColumn, DataColumnAlign, DataColumnPin, DataColumnResize, DataRow, DataTable,
     DataTableCell, DataTableColumnViewport, DataTableNavigation, DataTableNavigationOutcome,
-    DataTableSelection, DataTableSelectionIntent, DataTableSelectionMode, DataTableState,
-    DataTableViewport, SortDirection, TableSort, VisibleDataColumn, VisibleDataRow,
+    DataTableRows, DataTableSelection, DataTableSelectionIntent, DataTableSelectionMode,
+    DataTableState, DataTableViewport, SortDirection, TableSort, VisibleDataColumn, VisibleDataRow,
 };
 #[cfg(feature = "dock")]
 pub use guic_components::{

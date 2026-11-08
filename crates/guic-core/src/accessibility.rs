@@ -116,7 +116,8 @@ impl AccessibilityProps {
     /// Returns true when at least one platform-backed state is set.
     #[must_use]
     pub fn has_platform_state(&self) -> bool {
-        self.label.is_some()
+        self.disabled
+            || self.label.is_some()
             || self.description.is_some()
             || self.selected.is_some()
             || self.expanded.is_some()
@@ -144,6 +145,10 @@ pub enum Role {
     Radio,
     /// A text input.
     TextInput,
+    /// A masked text input.
+    PasswordInput,
+    /// A multi-line text input.
+    MultilineTextInput,
     /// A slider.
     Slider,
     /// A binary switch.
@@ -202,6 +207,8 @@ impl Role {
             Self::Checkbox => gpui::Role::CheckBox,
             Self::Radio => gpui::Role::RadioButton,
             Self::TextInput => gpui::Role::TextInput,
+            Self::PasswordInput => gpui::Role::PasswordInput,
+            Self::MultilineTextInput => gpui::Role::MultilineTextInput,
             Self::Slider => gpui::Role::Slider,
             Self::Switch => gpui::Role::Switch,
             Self::SpinButton => gpui::Role::SpinButton,
@@ -232,6 +239,22 @@ impl Role {
 pub trait AccessibilityElementExt: Sized {
     /// Applies role, label, and supported state metadata to the platform node.
     fn accessibility(self, props: AccessibilityProps) -> Self;
+
+    /// Applies all metadata, including disabled semantics, without adding a node.
+    ///
+    /// Prefer this method for new elements. The original `accessibility` method
+    /// retains its concrete return type for source compatibility, but GPUI 0.6
+    /// cannot attach disabled semantics through its fluent API alone.
+    fn accessible(self, props: AccessibilityProps) -> AccessibleElement<Self>
+    where
+        Self: gpui::Element,
+    {
+        let disabled = props.disabled;
+        AccessibleElement {
+            inner: self.accessibility(props),
+            disabled,
+        }
+    }
 }
 
 impl<T> AccessibilityElementExt for T
@@ -239,7 +262,9 @@ where
     T: gpui::StatefulInteractiveElement,
 {
     fn accessibility(mut self, props: AccessibilityProps) -> Self {
-        self = self.role(props.role.to_gpui());
+        if props.role != Role::Generic {
+            self = self.role(props.role.to_gpui());
+        }
         if let Some(label) = props.label {
             self = self.aria_label(label);
         }
@@ -272,9 +297,132 @@ where
     }
 }
 
+/// An element that preserves layout, focus, and events while exposing disabled semantics.
+pub struct AccessibleElement<E> {
+    inner: E,
+    disabled: bool,
+}
+
+impl<E: gpui::Element> gpui::IntoElement for AccessibleElement<E> {
+    type Element = Self;
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl<E: gpui::InteractiveElement> gpui::InteractiveElement for AccessibleElement<E> {
+    fn interactivity(&mut self) -> &mut gpui::Interactivity {
+        self.inner.interactivity()
+    }
+}
+impl<E: gpui::StatefulInteractiveElement> gpui::StatefulInteractiveElement
+    for AccessibleElement<E>
+{
+}
+impl<E: gpui::Styled> gpui::Styled for AccessibleElement<E> {
+    fn style(&mut self) -> &mut gpui::StyleRefinement {
+        self.inner.style()
+    }
+}
+impl<E: gpui::ParentElement> gpui::ParentElement for AccessibleElement<E> {
+    fn extend(&mut self, elements: impl IntoIterator<Item = gpui::AnyElement>) {
+        self.inner.extend(elements);
+    }
+}
+impl<E: gpui::Element> gpui::Element for AccessibleElement<E> {
+    type RequestLayoutState = E::RequestLayoutState;
+    type PrepaintState = E::PrepaintState;
+    fn id(&self) -> Option<gpui::ElementId> {
+        self.inner.id()
+    }
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        self.inner.source_location()
+    }
+    fn request_layout(
+        &mut self,
+        id: Option<&gpui::GlobalElementId>,
+        inspector: Option<&gpui::InspectorElementId>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) -> (gpui::LayoutId, Self::RequestLayoutState) {
+        self.inner.request_layout(id, inspector, window, cx)
+    }
+    fn prepaint(
+        &mut self,
+        id: Option<&gpui::GlobalElementId>,
+        inspector: Option<&gpui::InspectorElementId>,
+        bounds: gpui::Bounds<gpui::Pixels>,
+        layout: &mut Self::RequestLayoutState,
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) -> Self::PrepaintState {
+        self.inner
+            .prepaint(id, inspector, bounds, layout, window, cx)
+    }
+    fn paint(
+        &mut self,
+        id: Option<&gpui::GlobalElementId>,
+        inspector: Option<&gpui::InspectorElementId>,
+        bounds: gpui::Bounds<gpui::Pixels>,
+        layout: &mut Self::RequestLayoutState,
+        prepaint: &mut Self::PrepaintState,
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) {
+        self.inner
+            .paint(id, inspector, bounds, layout, prepaint, window, cx);
+    }
+    fn a11y_role(&self) -> Option<gpui::Role> {
+        self.inner.a11y_role()
+    }
+    fn write_a11y_info(&self, node: &mut gpui::accesskit::Node) {
+        self.inner.write_a11y_info(node);
+        if self.disabled {
+            node.set_disabled();
+        }
+    }
+    fn a11y_synthetic_children(
+        &mut self,
+        prepaint: &mut Self::PrepaintState,
+        builder: &mut gpui::A11ySubtreeBuilder,
+    ) {
+        self.inner.a11y_synthetic_children(prepaint, builder);
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{AccessibilityProps, Role};
+    use super::{AccessibilityElementExt as _, AccessibilityProps, Role};
+
+    #[test]
+    fn disabled_semantics_preserve_the_original_node() {
+        use gpui::{Element as _, InteractiveElement as _, ParentElement as _, Styled as _};
+        for disabled in [false, true] {
+            let element = gpui::div()
+                .id("control")
+                .accessible(
+                    AccessibilityProps::new(Role::Button)
+                        .label("Save")
+                        .disabled(disabled),
+                )
+                .p_2()
+                .child("Save");
+            let mut node = gpui::accesskit::Node::new(element.a11y_role().expect("role"));
+            element.write_a11y_info(&mut node);
+            assert_eq!(node.role(), gpui::Role::Button);
+            assert_eq!(node.label(), Some("Save"));
+            assert_eq!(node.is_disabled(), disabled);
+            assert!(gpui::Element::id(&element).is_some());
+        }
+        assert!(
+            AccessibilityProps::default()
+                .disabled(true)
+                .has_platform_state()
+        );
+        let _ = gpui::div()
+            .id("generic")
+            .accessibility(AccessibilityProps::default());
+    }
 
     #[test]
     fn roles_map_to_platform_roles() {
