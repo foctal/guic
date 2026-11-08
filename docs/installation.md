@@ -25,6 +25,12 @@ a pinned Git revision and keep the matching runtime versions:
 guic = { git = "https://github.com/foctal/guic", rev = "<commit>" }
 ```
 
+The current development checkout uses the published `guic-gpui` and
+`guic-gpui-platform` 0.6.0 crates. When using this checkout, change the `gpui`
+version and every target-specific `gpui_platform` version above to `=0.6.0`,
+preserving their feature lists. No sibling runtime checkout or runtime patch
+is needed. Keep the 0.5.0 runtime pins when using the published GUIC 0.5.0 release.
+
 Do not use a moving branch for reproducible builds. GUIC `0.5.x` is a preview;
 enable only the subsystem features the application needs and review
 [API Stability](api-stability.md) before upgrading.

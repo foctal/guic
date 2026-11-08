@@ -6,6 +6,12 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Read editor clipboard text asynchronously and preview pointer selections during
+  pending pastes, preserving input order and rebasing selections through edits
+  and queued undo/redo.
+- Configure Windows native-menu and WebView example windows through the runtime's
+  per-window composition API instead of mutating process-wide environment variables.
+
 - Prepare large native and clipboard pastes asynchronously, with ordered follow-up
   edits, queued clipboard/history commands, a responsive IME composition context,
   progress feedback, and stale-result rejection on host replacement or closure.
@@ -44,6 +50,11 @@ All notable changes to this project will be documented in this file.
   without replacing focus handles. Programmatic value changes reset history and
   do not emit user-edit callbacks.
 - Implement native text selection updates and UTF-16 document-length queries.
+
+### Changed
+
+- Update the pinned runtime and platform family to the published `guic-gpui`
+  0.6.0 crates.
 
 ### Fixed
 

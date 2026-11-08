@@ -29,17 +29,21 @@ cargo deny check
 
 ## guic-gpui Registry Dependency
 
-The runtime dependency is `guic-gpui` 0.5.0 and uses the dependency alias `gpui`, keeping
+The runtime dependency is `guic-gpui` 0.6.0 and uses the dependency alias `gpui`, keeping
 existing Rust imports source-compatible. Native applications depend on
-`guic-gpui-platform` 0.5.0 through the alias `gpui_platform`, with
+`guic-gpui-platform` 0.6.0 through the alias `gpui_platform`, with
 target-specific renderer features.
 
 The versions are exact because the forked crate family is released in lockstep
 and GUIC validates each update as one platform and accessibility baseline. The
-0.5.0 release requires Rust 1.95, which is also GUIC's MSRV.
+0.6.0 release requires Rust 1.95, which is also GUIC's MSRV.
 
 Use the crates.io runtime family without GPUI Git patches. Native integration
 checks are listed in the [platform smoke checklist](platform-smoke.md).
+
+`scripts/release-check.sh` rejects local/Git runtime overrides and mixed
+runtime-family versions through `cargo run -p xtask --locked -- runtime-source`.
+The unrelated `quick-xml` compatibility patch remains necessary.
 
 ## cargo-guic Backend
 
