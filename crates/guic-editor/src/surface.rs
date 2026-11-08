@@ -12,8 +12,10 @@ use guic_core::{AccessibilityElementExt as _, AccessibilityProps, Role};
 
 mod reflow;
 mod transaction;
-use transaction::{ASYNC_BYTES, PendingEdit, Work};
+use transaction::{ASYNC_BYTES, ASYNC_SELECTIONS, PendingEdit, Work};
+mod rectangle;
 mod scrollbar;
+use rectangle::RectangleAnchor;
 use reflow::PendingReflow;
 mod wrap;
 use scrollbar::{Axis, BAR_SIZE, Scrollbar};
@@ -40,10 +42,16 @@ pub(super) struct EditorSurface {
     reveal: bool,
     reveal_after_reflow: bool,
     selecting: bool,
+    rectangle_anchor: Option<RectangleAnchor>,
+    rectangle_heads: Vec<(usize, bool)>,
+    drag_position: Option<Point<Pixels>>,
+    drag_task: Option<gpui::Task<()>>,
     scrollbar_drag: Option<(Axis, f32)>,
     preferred_x: Option<Pixels>,
     upstream: bool,
     layout: Option<Viewport>,
+    caret_visible: bool,
+    caret_task: Option<gpui::Task<()>>,
     blur: Option<Subscription>,
     subscribed_focus: Option<FocusHandle>,
 }
@@ -70,10 +78,16 @@ impl EditorSurface {
             reveal: false,
             reveal_after_reflow: false,
             selecting: false,
+            rectangle_anchor: None,
+            rectangle_heads: Vec::new(),
+            drag_position: None,
+            drag_task: None,
             scrollbar_drag: None,
             preferred_x: None,
             upstream: false,
             layout: None,
+            caret_visible: true,
+            caret_task: None,
             blur: None,
             subscribed_focus: None,
         }
@@ -94,6 +108,11 @@ impl EditorSurface {
             .as_ref()
             .is_some_and(|p| p.accept_host_result);
         if buffer_changed || selection_changed {
+            self.rectangle_heads.clear();
+            self.rectangle_anchor = None;
+            self.selecting = false;
+            self.drag_task = None;
+            self.drag_position = None;
             if !command_result {
                 self.cancel_edits();
             } else if let Some(pending) = &mut self.pending_edit {
@@ -125,7 +144,12 @@ impl EditorSurface {
             self.blur = props.focus_handle.as_ref().map(|handle| {
                 cx.on_blur(handle, window, |this, window, cx| {
                     this.finish_composition(window, cx);
+                    this.caret_task = None;
+                    this.caret_visible = true;
                     this.selecting = false;
+                    this.rectangle_anchor = None;
+                    this.drag_task = None;
+                    this.drag_position = None;
                     this.scrollbar_drag = None;
                     cx.notify();
                 })
@@ -135,8 +159,16 @@ impl EditorSurface {
         if self.props.options.soft_wrap != props.options.soft_wrap {
             self.reveal = true;
         }
+        let reset_caret = buffer_changed
+            || selection_changed
+            || self.props.options.cursor_blink != props.options.cursor_blink
+            || self.props.focus_handle != props.focus_handle;
         self.props = props;
+        if reset_caret {
+            self.reset_caret(window, cx);
+        }
         if !self.editable() {
+            self.drag_task = None;
             self.cancel_edits();
         }
         if !self.editable() && self.composition.is_some() {
@@ -147,6 +179,52 @@ impl EditorSurface {
             self.marked = None;
             self.composing_selection = None;
         }
+    }
+
+    fn reset_caret(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.caret_task = None;
+        self.caret_visible = true;
+        if !self.props.options.cursor_blink
+            || !self
+                .props
+                .focus_handle
+                .as_ref()
+                .is_some_and(|focus| focus.is_focused(window))
+        {
+            return;
+        }
+        self.caret_task = Some(cx.spawn_in(window, async move |entity, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(500))
+                    .await;
+                let active = entity
+                    .update_in(cx, |state, window, cx| {
+                        if !state
+                            .props
+                            .focus_handle
+                            .as_ref()
+                            .is_some_and(|focus| focus.is_focused(window))
+                        {
+                            state.caret_task = None;
+                            state.caret_visible = true;
+                            return false;
+                        }
+                        let composing = state.marked.is_some()
+                            || state
+                                .pending_edit
+                                .as_ref()
+                                .is_some_and(|pending| pending.draft.marked.is_some());
+                        state.caret_visible = composing || !state.caret_visible;
+                        cx.notify();
+                        true
+                    })
+                    .unwrap_or(false);
+                if !active {
+                    break;
+                }
+            }
+        }));
     }
 
     fn editable(&self) -> bool {
@@ -195,8 +273,10 @@ impl EditorSurface {
         if self.edit == edit {
             return;
         }
+        self.reset_caret(window, cx);
         let before = std::mem::replace(&mut self.edit, edit);
         if before.buffer != self.edit.buffer {
+            self.rectangle_heads.clear();
             self.max_width = px(0.0);
         }
         self.reveal = true;
@@ -218,6 +298,14 @@ impl EditorSurface {
     }
 
     fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if self
+            .pending_edit
+            .as_ref()
+            .is_none_or(|pending| !pending.replaying)
+        {
+            self.end_pointer_selection();
+        }
+        self.reset_caret(window, cx);
         // Printable characters belong to the platform input handler. Consuming
         // key_char here bypasses IME and can insert the same text twice.
         let key = event.keystroke.key.as_str();
@@ -285,6 +373,26 @@ impl EditorSurface {
                 cx.stop_propagation();
             }
             return;
+        }
+        if !replaying && self.editable() && self.edit.selections.len() >= ASYNC_SELECTIONS {
+            let work = if command && matches!(key, "c" | "x") {
+                Some(Work::Clipboard {
+                    sequence: 1,
+                    cut: key == "x",
+                })
+            } else if !command && matches!(key, "backspace" | "delete" | "enter" | "tab") {
+                Some(Work::EditKey(event.clone()))
+            } else {
+                None
+            };
+            if let Some(work) = work {
+                self.enqueue_edit(work, window, cx);
+                if command && let Some(pending) = &mut self.pending_edit {
+                    pending.clipboard_sequence = 1;
+                }
+                cx.stop_propagation();
+                return;
+            }
         }
         let navigation = matches!(
             key,
@@ -417,6 +525,8 @@ impl EditorSurface {
     }
 
     fn mouse_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        self.rectangle_heads.clear();
+        self.rectangle_anchor = None;
         if let Some(layout) = &self.layout {
             for bar in &layout.scrollbars {
                 if bar.track.contains(&event.position) {
@@ -465,9 +575,15 @@ impl EditorSurface {
         } else if self.props.on_cursor.is_none() {
             return;
         }
+        self.reset_caret(window, cx);
         let Some(position) = self.hit_position(event.position, window, cx) else {
             return;
         };
+        if event.modifiers.alt && event.modifiers.shift {
+            self.begin_rectangle(position, event.position, window, cx);
+            cx.stop_propagation();
+            return;
+        }
         let selection = if event.modifiers.shift {
             EditorSelection::new(self.pointer_selection().anchor, position)
         } else if event.click_count >= 3 {
@@ -528,32 +644,81 @@ impl EditorSurface {
         if !self.selecting {
             return;
         }
+        self.drag_position = Some(event.position);
+        self.drag_selection(event.position, window, cx);
+        let outside = self
+            .layout
+            .as_ref()
+            .is_some_and(|layout| !layout.body.contains(&event.position));
+        if !outside {
+            self.drag_task = None;
+        } else if self.drag_task.is_none() {
+            self.drag_task = Some(cx.spawn_in(window, async move |entity, cx| {
+                loop {
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(16))
+                        .await;
+                    let active = entity
+                        .update_in(cx, |state, window, cx| {
+                            if !state.selecting {
+                                return false;
+                            }
+                            let Some(position) = state.drag_position else {
+                                return false;
+                            };
+                            state.drag_selection(position, window, cx);
+                            true
+                        })
+                        .unwrap_or(false);
+                    if !active {
+                        break;
+                    }
+                }
+            }));
+        }
+        cx.stop_propagation();
+    }
+
+    fn drag_selection(
+        &mut self,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(layout) = &self.layout {
             let bounds = layout.body;
-            if event.position.y < bounds.top() {
-                self.scroll.y -= bounds.top() - event.position.y;
+            if position.y < bounds.top() {
+                self.scroll.y -= bounds.top() - position.y;
             }
-            if event.position.y > bounds.bottom() {
-                self.scroll.y += event.position.y - bounds.bottom();
+            if position.y > bounds.bottom() {
+                self.scroll.y += position.y - bounds.bottom();
             }
-            if event.position.x < bounds.left() {
-                self.scroll.x -= bounds.left() - event.position.x;
+            if position.x < bounds.left() {
+                self.scroll.x -= bounds.left() - position.x;
             }
-            if event.position.x > bounds.right() {
-                self.scroll.x += event.position.x - bounds.right();
+            if position.x > bounds.right() {
+                self.scroll.x += position.x - bounds.right();
             }
             self.clamp_scroll(bounds);
         }
-        if let Some(head) = self.hit_position(event.position, window, cx) {
+        if self.rectangle_anchor.is_some() {
+            self.extend_rectangle(position, window, cx);
+        } else if let Some(head) = self.hit_position(position, window, cx) {
             let selection = EditorSelection::new(self.pointer_selection().anchor, head);
             self.select_pointer(selection, window, cx);
         }
         cx.notify();
-        cx.stop_propagation();
     }
 
     fn mouse_up(&mut self, _: &MouseUpEvent, _: &mut Window, _: &mut Context<Self>) {
+        self.end_pointer_selection();
+    }
+
+    fn end_pointer_selection(&mut self) {
         self.selecting = false;
+        self.rectangle_anchor = None;
+        self.drag_position = None;
+        self.drag_task = None;
         self.scrollbar_drag = None;
     }
 
@@ -601,12 +766,21 @@ impl EditorSurface {
 }
 
 impl Render for EditorSurface {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.caret_task.is_none() {
+            self.reset_caret(window, cx);
+        }
         let theme = Theme::global(cx);
         let mut root = div()
             .id(self.props.id.clone())
             .debug_selector(|| format!("guic-code-editor-{}", self.props.id))
-            .accessibility(AccessibilityProps::new(Role::TextInput).label("Code editor"))
+            .accessible(
+                AccessibilityProps::new(Role::MultilineTextInput).label(guic_core::translate(
+                    cx,
+                    "editor.label",
+                    "Code editor",
+                )),
+            )
             .w_full()
             .relative()
             .rounded(px(theme.radius.lg))
@@ -623,16 +797,17 @@ impl Render for EditorSurface {
             .child(EditorCanvas(cx.entity()));
         if let Some(pending) = &self.pending_edit {
             let preview = pending.draft.preview();
+            let pasting = guic_core::translate(cx, "input.pasting", "Pasting...");
             let label = if preview.is_empty() {
-                "Pasting…".to_owned()
+                pasting.to_string()
             } else {
-                format!("Pasting… {preview}")
+                format!("{pasting} {preview}")
             };
             let highlights = pending.draft.marked.as_ref().and_then(|range| {
                 let start = range.start.min(preview.len());
                 let end = range.end.min(preview.len());
                 (start < end).then_some((
-                    "Pasting… ".len() + start.."Pasting… ".len() + end,
+                    pasting.len() + 1 + start..pasting.len() + 1 + end,
                     gpui::HighlightStyle {
                         underline: Some(UnderlineStyle {
                             thickness: px(1.0),
@@ -794,6 +969,9 @@ impl EntityInputHandler for EditorSurface {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.rectangle_heads.clear();
+        self.end_pointer_selection();
+        self.reset_caret(window, cx);
         if !self.editable() {
             return;
         }
@@ -832,7 +1010,7 @@ impl EntityInputHandler for EditorSurface {
             }
             return;
         }
-        if text.len() >= ASYNC_BYTES {
+        if text.len() >= ASYNC_BYTES || self.edit.selections.len() >= ASYNC_SELECTIONS {
             let work = if range.is_none() && self.composition.is_none() {
                 Work::Insert {
                     text: text.to_owned(),
@@ -883,6 +1061,9 @@ impl EntityInputHandler for EditorSurface {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.rectangle_heads.clear();
+        self.end_pointer_selection();
+        self.reset_caret(window, cx);
         if !self.editable() {
             return;
         }
@@ -937,7 +1118,7 @@ impl EntityInputHandler for EditorSurface {
         cx: &mut Context<Self>,
     ) -> Option<Bounds<Pixels>> {
         if self.pending_edit.is_some() {
-            return self.draft_bounds(range, window);
+            return self.draft_bounds(range, window, cx);
         }
         let viewport = self.layout.clone()?;
         self.update_wrap(&viewport.font, viewport.body.size.width, window, cx);
@@ -1048,6 +1229,7 @@ struct Viewport {
     rows: Vec<VisualRow>,
     selections: Vec<Bounds<Pixels>>,
     caret: Option<Bounds<Pixels>>,
+    secondary_carets: Vec<Bounds<Pixels>>,
     scrollbars: Vec<Scrollbar>,
 }
 
@@ -1371,7 +1553,7 @@ impl EditorSurface {
             .composing_selection
             .as_ref()
             .map_or_else(|| pointer_selection.is_empty(), Range::is_empty);
-        let cursor_row = self.visual_row(cursor);
+        let cursor_row = self.cursor_visual_row(0, cursor);
         if self.reveal {
             let row = self.shape_column(cursor_row, cursor.column, &font, window, cx);
             let x = row.x_for_column(cursor.column);
@@ -1420,6 +1602,8 @@ impl EditorSurface {
         self.clamp_scroll(body);
         let mut selections = Vec::new();
         let mut caret = None;
+        let mut secondary_carets = Vec::new();
+        let displayed = self.pointer_selections();
         for row in &mut rows {
             row.origin = point(
                 body.left() - self.scroll.x,
@@ -1434,16 +1618,19 @@ impl EditorSurface {
                     size(text.width(), px(LINE_HEIGHT)),
                 );
             }
-            let displayed = if self
-                .pending_edit
-                .as_ref()
-                .is_some_and(|p| p.pointer.is_some())
-            {
-                std::slice::from_ref(&pointer_selection)
-            } else {
-                &self.edit.selections
-            };
-            for selection in displayed {
+            for (index, selection) in displayed.iter().enumerate() {
+                if index > 0
+                    && selection.is_empty()
+                    && self.cursor_visual_row(index, selection.head) == row.visual
+                    && selection.head.column >= row.columns.start
+                    && (selection.head.column < row.columns.end
+                        || (row.last_in_row && selection.head.column == row.columns.end))
+                {
+                    secondary_carets.push(Bounds::new(
+                        row.origin + point(row.x_for_column(selection.head.column), px(0.0)),
+                        size(px(2.0), px(LINE_HEIGHT)),
+                    ));
+                }
                 let range = selection.ordered();
                 if selection.is_empty()
                     || row.index < range.start.line
@@ -1525,6 +1712,7 @@ impl EditorSurface {
             rows,
             selections,
             caret,
+            secondary_carets,
             scrollbars,
         }
     }
@@ -1589,6 +1777,7 @@ impl Element for EditorCanvas {
         let state = self.0.read(cx);
         let focus = state.props.focus_handle.clone();
         let editable = state.editable();
+        let caret_visible = state.caret_visible;
         let line_numbers = state.props.options.line_numbers;
         let accent = Theme::global(cx).primary();
         let scrollbar_color = Theme::global(cx).muted_foreground();
@@ -1633,10 +1822,10 @@ impl Element for EditorCanvas {
                         );
                     }
                 }
-                if focus.as_ref().is_some_and(|focus| focus.is_focused(window))
-                    && let Some(caret) = viewport.caret
-                {
-                    window.paint_quad(fill(caret, accent));
+                if caret_visible && focus.as_ref().is_some_and(|focus| focus.is_focused(window)) {
+                    for caret in viewport.caret.iter().chain(&viewport.secondary_carets) {
+                        window.paint_quad(fill(*caret, accent));
+                    }
                 }
             },
         );

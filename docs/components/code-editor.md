@@ -251,9 +251,8 @@ latency, clipboard acquisition, or background reclamation completion. Use the
 
 ## Remaining limitations
 
-The editor remains experimental. It does not yet provide timer-driven drag
-autoscroll while the pointer is stationary, a multi-cursor creation gesture,
-rectangular selection, folding, or an integrated LSP client. Constructing or
+The editor remains experimental. It does not yet provide click-to-add cursors,
+folding, or an integrated LSP client. Constructing or
 serializing the buffer and explicit uncached model queries still take synchronous
 work. Each changed logical line remains a contiguous string, so rewriting it
 copies its bytes; explicit model insertion still waits for initial indexing.
@@ -270,7 +269,36 @@ is intended for the editor's monospace layout; full contextual/bidirectional tex
 editing remains outside its current contract. Background analysis and viewport
 segmentation are not a latency guarantee for every editing or file-loading operation.
 
-The primary caret is rendered without blinking. Full accessibility text ranges,
+Full accessibility text ranges,
 bidirectional editing, and native IME behavior with real desktop input methods
 still require platform validation. Automated native-handler and rendering tests
 do not replace the [platform smoke checklist](../platform-smoke.md).
+
+Dragging outside the text viewport continues selection and scrolling on a timer
+even while the pointer is stationary. Release or blur stops the timer.
+
+Focused cursors blink at idle and remain visible during composition. Use
+`CodeEditorOptions::cursor_blink(false)` for a steady cursor. All visible collapsed
+selections draw a cursor, including secondary selections supplied by the host.
+
+## Rectangular selection
+
+Hold **Shift+Alt** and drag with the left mouse button to select a rectangle
+(on macOS, Alt is Option). Each display row contributes one selection, including
+soft-wrapped rows. A vertical drag at the same horizontal position creates
+multiple cursors. Ordinary clicks and Shift-clicks keep their existing behavior.
+
+Hit testing uses shaped text and grapheme boundaries, including tabs, emoji,
+and combining characters. Short rows clamp to their end without narrowing the
+rectangle on longer rows; no padding or virtual spaces are inserted. Ranges are
+ordered from top to bottom. Dragging outside the viewport continues scrolling;
+release, blur, or an authoritative host replacement ends the drag.
+
+Typing and pasting use the existing multiple-selection behavior: the same text
+replaces every selected range. Edits over many selections use the ordered
+background queue, including small typed replacements and deletion. Copy and cut
+join nonempty selected ranges with
+newlines. IME composition follows the native primary-selection contract and
+commits one edit; Undo restores the previous text and rectangular selections.
+During a pending paste, the rectangle is previewed immediately and all ranges
+are rebased through the queued edits and history operations before later input.

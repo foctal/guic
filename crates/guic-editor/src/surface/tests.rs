@@ -2141,3 +2141,696 @@ fn pointer_after_queued_history_tracks_unicode_snapshot_positions(cx: &mut TestA
         });
     }
 }
+
+#[gpui::test]
+fn stationary_drag_continues_scrolling_until_release(cx: &mut TestAppContext) {
+    let text = (0..200).map(|n| format!("line {n}\n")).collect::<String>();
+    let (state, cx) = surface(cx, &text, 4, Edits::default());
+    let body = state.read_with(cx, |state, _| state.layout.as_ref().expect("layout").body);
+    let start = body.origin + point(px(5.0), px(10.0));
+    let outside = point(start.x, body.bottom() + px(30.0));
+    cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_move(outside, MouseButton::Left, Modifiers::none());
+    let before = state.read_with(cx, |state, _| state.scroll.y);
+    cx.run_until_parked();
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(32));
+    cx.run_until_parked();
+    let after = state.read_with(cx, |state, _| state.scroll.y);
+    assert!(after > before);
+    cx.simulate_mouse_up(outside, MouseButton::Left, Modifiers::none());
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(64));
+    cx.run_until_parked();
+    state.read_with(cx, |state, _| {
+        assert_eq!(state.scroll.y, after);
+        assert!(state.drag_task.is_none());
+    });
+}
+
+#[gpui::test]
+fn cursor_blink_resets_for_input_and_stays_visible_during_composition(cx: &mut TestAppContext) {
+    let (state, cx) = surface(cx, "abc", 3, Edits::default());
+    focus(&state, cx);
+    cx.run_until_parked();
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(500));
+    cx.run_until_parked();
+    assert!(!state.read_with(cx, |state, _| state.caret_visible));
+    cx.update(|window, cx| {
+        state.update(cx, |state, cx| {
+            state.replace_and_mark_text_in_range(None, "n", Some(1..1), window, cx);
+            assert!(state.caret_visible);
+        })
+    });
+    cx.run_until_parked();
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(500));
+    cx.run_until_parked();
+    assert!(state.read_with(cx, |state, _| state.caret_visible));
+    cx.update(|window, cx| {
+        state.update(cx, |state, cx| {
+            state.replace_text_in_range(None, "new", window, cx);
+            let mut props = state.props.clone();
+            props.options = props.options.cursor_blink(false);
+            state.configure(props, window, cx);
+            assert!(state.caret_task.is_none());
+        })
+    });
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(2));
+    cx.run_until_parked();
+    assert!(state.read_with(cx, |state, _| state.caret_visible));
+}
+
+#[gpui::test]
+fn visible_secondary_cursors_are_drawn_and_blur_stops_blinking(cx: &mut TestAppContext) {
+    let (state, cx) = surface(cx, "abc\ndef", 3, Edits::default());
+    cx.update(|window, _| window.activate_window());
+    cx.run_until_parked();
+    focus(&state, cx);
+    cx.update(|window, cx| {
+        state.update(cx, |state, cx| {
+            state.apply(
+                EditorEdit::new(
+                    state.edit.buffer.clone(),
+                    vec![
+                        EditorSelection::cursor(EditorPosition::new(0, 1)),
+                        EditorSelection::cursor(EditorPosition::new(1, 2)),
+                    ],
+                ),
+                window,
+                cx,
+            );
+            let bounds = state.layout.as_ref().expect("layout").bounds;
+            let viewport = state.prepare(bounds, window, cx);
+            assert!(viewport.caret.is_some());
+            assert_eq!(viewport.secondary_carets.len(), 1);
+            assert!(
+                viewport.secondary_carets[0].top() > viewport.caret.expect("primary cursor").top()
+            );
+        })
+    });
+    cx.update(|window, _| window.blur());
+    cx.run_until_parked();
+    state.read_with(cx, |state, _| {
+        assert!(state.caret_task.is_none());
+        assert!(state.caret_visible);
+    });
+}
+
+fn rectangle_modifiers() -> Modifiers {
+    Modifiers {
+        alt: true,
+        shift: true,
+        ..Modifiers::none()
+    }
+}
+
+fn row_point(state: &EditorSurface, visual: usize, column: usize) -> Point<Pixels> {
+    let row = state
+        .layout
+        .as_ref()
+        .expect("layout")
+        .rows
+        .iter()
+        .find(|row| row.visual == visual && row.columns.contains(&column))
+        .expect("visible column");
+    row.origin + point(row.x_for_column(column), px(LINE_HEIGHT / 2.0))
+}
+
+#[gpui::test]
+fn rectangle_selects_shaped_rows_and_preserves_short_row_width(cx: &mut TestAppContext) {
+    let (state, cx) = surface(cx, "abcdef\nx\n012345", 5, Edits::default());
+    let (start, end, short) = state.read_with(cx, |state, _| {
+        (
+            row_point(state, 0, 4),
+            row_point(state, 2, 1),
+            row_point(state, 0, 4) + point(px(0.0), px(LINE_HEIGHT)),
+        )
+    });
+    cx.simulate_mouse_down(start, MouseButton::Left, rectangle_modifiers());
+    cx.simulate_mouse_move(end, MouseButton::Left, rectangle_modifiers());
+    cx.simulate_mouse_up(end, MouseButton::Left, rectangle_modifiers());
+    state.read_with(cx, |state, _| {
+        assert_eq!(
+            state.edit.selections,
+            vec![
+                EditorSelection::new(EditorPosition::new(0, 4), EditorPosition::new(0, 1)),
+                EditorSelection::cursor(EditorPosition::new(1, 1)),
+                EditorSelection::new(EditorPosition::new(2, 4), EditorPosition::new(2, 1)),
+            ]
+        );
+        assert!(state.rectangle_anchor.is_none());
+    });
+    // Starting past a short row must not collapse the span on longer rows.
+    cx.simulate_mouse_down(short, MouseButton::Left, rectangle_modifiers());
+    cx.simulate_mouse_move(end, MouseButton::Left, rectangle_modifiers());
+    cx.simulate_mouse_up(end, MouseButton::Left, rectangle_modifiers());
+    state.read_with(cx, |state, _| {
+        assert_eq!(state.edit.selections.len(), 2);
+        assert_eq!(
+            state.edit.selections[1].ordered(),
+            EditorPosition::new(2, 1)..EditorPosition::new(2, 4)
+        );
+    });
+}
+
+#[gpui::test]
+fn rectangle_replacement_copy_cut_and_history_preserve_all_ranges(cx: &mut TestAppContext) {
+    let original = "abcdef\n012345\nuvwxyz";
+    let edits = Edits::default();
+    let (state, cx) = surface(cx, original, 5, edits.clone());
+    let (start, end) = state.read_with(cx, |state, _| {
+        (row_point(state, 0, 1), row_point(state, 2, 3))
+    });
+    cx.simulate_mouse_down(start, MouseButton::Left, rectangle_modifiers());
+    cx.simulate_mouse_move(end, MouseButton::Left, rectangle_modifiers());
+    cx.simulate_mouse_up(end, MouseButton::Left, rectangle_modifiers());
+    let selected = state.read_with(cx, |state, _| state.edit.clone());
+    cx.update(|window, cx| {
+        state.update(cx, |state, cx| {
+            state.key_down(
+                &key(if cfg!(target_os = "macos") {
+                    "cmd-c"
+                } else {
+                    "ctrl-c"
+                }),
+                window,
+                cx,
+            );
+            assert_eq!(
+                cx.read_from_clipboard()
+                    .and_then(|item| item.text())
+                    .as_deref(),
+                Some("bc\n12\nvw")
+            );
+            state.replace_text_in_range(None, "日本", window, cx);
+            assert_eq!(state.edit.buffer.text(), "a日本def\n0日本345\nu日本xyz");
+            assert_eq!(state.edit.selections.len(), 3);
+        })
+    });
+    let replaced = state.read_with(cx, |state, _| state.edit.clone());
+    let mut session = EditorSession::new(EditorBuffer::from_text(original));
+    session.apply(selected.clone());
+    session.apply(replaced.clone());
+    assert!(session.undo());
+    assert_eq!(session.buffer().text(), original);
+    assert_eq!(session.selections(), selected.selections);
+    assert!(session.redo());
+    assert_eq!(session.buffer().text(), replaced.buffer.text());
+    assert_eq!(session.selections(), replaced.selections);
+    cx.update(|window, cx| {
+        state.update(cx, |state, cx| {
+            state.apply(selected, window, cx);
+            state.key_down(
+                &key(if cfg!(target_os = "macos") {
+                    "cmd-x"
+                } else {
+                    "ctrl-x"
+                }),
+                window,
+                cx,
+            );
+            assert_eq!(state.edit.buffer.text(), "adef\n0345\nuxyz");
+        })
+    });
+}
+
+#[gpui::test]
+fn rectangle_selection_is_rebased_while_clipboard_read_is_pending(cx: &mut TestAppContext) {
+    let (state, cx) = surface(cx, "abcdef\n012345\nuvwxyz", 5, Edits::default());
+    let (start, end) = state.read_with(cx, |state, _| {
+        (row_point(state, 0, 1), row_point(state, 2, 3))
+    });
+    let gate = cx.update(|window, cx| {
+        state.update(cx, |state, cx| {
+            state.edit.selections = vec![EditorSelection::cursor(EditorPosition::default())];
+            let (read, gate) = delayed_clipboard(cx);
+            state.enqueue_edit(Work::Paste { read, copied: None }, window, cx);
+            gate
+        })
+    });
+    cx.simulate_mouse_down(start, MouseButton::Left, rectangle_modifiers());
+    cx.simulate_mouse_move(end, MouseButton::Left, rectangle_modifiers());
+    cx.simulate_mouse_up(end, MouseButton::Left, rectangle_modifiers());
+    cx.update(|window, cx| {
+        state.update(cx, |state, cx| {
+            assert_eq!(state.edit.selections.len(), 1);
+            assert_eq!(state.pointer_selections().len(), 3);
+            let bounds = state.layout.as_ref().expect("layout").bounds;
+            assert_eq!(state.prepare(bounds, window, cx).selections.len(), 3);
+            state.replace_text_in_range(None, "X", window, cx);
+        })
+    });
+    finish_clipboard(&gate, Some("🙂\n"));
+    cx.run_until_parked();
+    state.read_with(cx, |state, _| {
+        assert_eq!(state.edit.buffer.text(), "🙂\naXdef\n0X345\nuXxyz");
+        assert_eq!(state.edit.selections.len(), 3);
+    });
+}
+
+#[gpui::test]
+fn rectangle_wraps_by_display_row_without_splitting_graphemes(cx: &mut TestAppContext) {
+    let text = "a👩‍💻e\u{301}\t日本 z ".repeat(20);
+    let (state, cx) = surface(cx, &text, 5, Edits::default());
+    cx.update(|window, cx| {
+        state.update(cx, |state, cx| {
+            state.props.options.soft_wrap = true;
+            state.pending_first_line = Some(0);
+            let viewport = prepare_at(state, 240.0, 132.0, window, cx);
+            let start = viewport.body.origin + point(px(12.0), px(10.0));
+            let end = start + point(px(47.0), px(LINE_HEIGHT * 3.0));
+            let expected: Vec<_> = (0..=3)
+                .map(|visual| {
+                    let row = state.shape_x(visual, px(12.0), &viewport.font, window, cx);
+                    let right = state.shape_x(visual, px(59.0), &viewport.font, window, cx);
+                    EditorSelection::new(
+                        EditorPosition::new(row.index, row.column_for_x(px(12.0))),
+                        EditorPosition::new(right.index, right.column_for_x(px(59.0))),
+                    )
+                })
+                .collect();
+            state.mouse_down(
+                &MouseDownEvent {
+                    position: start,
+                    modifiers: rectangle_modifiers(),
+                    ..Default::default()
+                },
+                window,
+                cx,
+            );
+            state.mouse_move(
+                &MouseMoveEvent {
+                    position: end,
+                    pressed_button: Some(MouseButton::Left),
+                    modifiers: rectangle_modifiers(),
+                },
+                window,
+                cx,
+            );
+            assert_eq!(state.edit.selections, expected);
+            assert_eq!(state.edit.selections.len(), 4);
+            for (visual, selection) in state.edit.selections.iter().enumerate() {
+                let (_, fragment) = state.wrap.as_ref().expect("wrap").fragment(visual);
+                assert!(selection.ordered().start.column >= fragment.columns.start);
+                assert!(selection.ordered().end.column <= fragment.columns.end);
+                assert_eq!(selection.anchor.line, 0);
+                assert_eq!(selection.head.line, 0);
+            }
+            state.mouse_up(&MouseUpEvent::default(), window, cx);
+            state.replace_text_in_range(None, "Z", window, cx);
+            assert_eq!(state.edit.selections.len(), 4);
+            assert_eq!(state.edit.buffer.text().matches('Z').count(), 4);
+        })
+    });
+}
+
+#[gpui::test]
+fn zero_width_rectangle_creates_cursors_and_stops_scrolling_on_release(cx: &mut TestAppContext) {
+    let text = "a👩‍💻e\u{301}z\n".repeat(200);
+    let (state, cx) = surface(cx, &text, 4, Edits::default());
+    let (start, outside) = state.read_with(cx, |state, _| {
+        let start = row_point(state, 0, 2);
+        (
+            start,
+            point(
+                start.x,
+                state.layout.as_ref().expect("layout").body.bottom() + px(30.0),
+            ),
+        )
+    });
+    cx.simulate_mouse_down(start, MouseButton::Left, rectangle_modifiers());
+    cx.simulate_mouse_move(outside, MouseButton::Left, rectangle_modifiers());
+    cx.run_until_parked();
+    let before = state.read_with(cx, |state, _| state.edit.selections.len());
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(32));
+    cx.run_until_parked();
+    let (after, scroll) = state.read_with(cx, |state, _| {
+        assert!(
+            state
+                .edit
+                .selections
+                .iter()
+                .all(|selection| selection.is_empty() && selection.head.column == 2)
+        );
+        (state.edit.selections.len(), state.scroll.y)
+    });
+    assert!(after > before);
+    cx.simulate_mouse_up(outside, MouseButton::Left, rectangle_modifiers());
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(64));
+    cx.run_until_parked();
+    state.read_with(cx, |state, _| {
+        assert_eq!(state.scroll.y, scroll);
+        assert!(state.rectangle_anchor.is_none());
+        assert!(state.drag_task.is_none());
+    });
+}
+
+#[gpui::test]
+fn rectangle_ime_commits_primary_once_and_undo_restores_the_block(cx: &mut TestAppContext) {
+    let original = "abcdef\n012345";
+    let edits = Edits::default();
+    let (state, cx) = surface(cx, original, 4, edits.clone());
+    let (start, end) = state.read_with(cx, |state, _| {
+        (row_point(state, 0, 1), row_point(state, 1, 3))
+    });
+    cx.simulate_mouse_down(start, MouseButton::Left, rectangle_modifiers());
+    cx.simulate_mouse_move(end, MouseButton::Left, rectangle_modifiers());
+    cx.simulate_mouse_up(end, MouseButton::Left, rectangle_modifiers());
+    let selected = state.read_with(cx, |state, _| state.edit.clone());
+    edits.borrow_mut().clear();
+    cx.update(|window, cx| {
+        state.update(cx, |state, cx| {
+            state.replace_and_mark_text_in_range(None, "ni", Some(2..2), window, cx);
+            state.replace_and_mark_text_in_range(None, "日本", Some(2..2), window, cx);
+            assert!(edits.borrow().is_empty());
+            state.replace_text_in_range(None, "日本語", window, cx);
+            assert_eq!(state.edit.buffer.text(), "a日本語def\n012345");
+        })
+    });
+    assert_eq!(edits.borrow().len(), 1);
+    let mut session = EditorSession::new(EditorBuffer::from_text(original));
+    session.apply(selected.clone());
+    session.apply(edits.borrow()[0].clone());
+    assert!(session.undo());
+    assert_eq!(session.buffer().text(), original);
+    assert_eq!(session.selections(), selected.selections);
+}
+
+#[gpui::test]
+fn rectangle_ranges_follow_queued_undo_and_redo(cx: &mut TestAppContext) {
+    init(cx);
+    for redo in [false, true] {
+        let (host, cx) = cx.add_window_view(|_, cx| {
+            let buffer = EditorBuffer::from_text("日本🙂tail\nabcdef");
+            AsyncControlledHarness {
+                session: EditorSession::new(buffer.clone()),
+                focus: cx.focus_handle(),
+                editor: cx.new(|_| EditorSurface::new(CodeEditor::new("async-controlled", buffer))),
+            }
+        });
+        let entity = host.read_with(cx, |host, _| host.editor.clone());
+        let gate = cx.update(|window, cx| {
+            entity.update(cx, |state, cx| {
+                let (read, gate) = delayed_clipboard(cx);
+                state.enqueue_edit(Work::Paste { read, copied: None }, window, cx);
+                let modifier = if cfg!(target_os = "macos") {
+                    "cmd"
+                } else {
+                    "ctrl"
+                };
+                state.key_down(&key(&format!("{modifier}-z")), window, cx);
+                if redo {
+                    state.key_down(&key(&format!("{modifier}-shift-z")), window, cx);
+                }
+                state.select_pointers(
+                    vec![
+                        EditorSelection::new(EditorPosition::new(0, 1), EditorPosition::new(0, 3)),
+                        EditorSelection::new(EditorPosition::new(1, 1), EditorPosition::new(1, 3)),
+                    ],
+                    window,
+                    cx,
+                );
+                state.replace_text_in_range(None, "!", window, cx);
+                gate
+            })
+        });
+        finish_clipboard(&gate, Some("先🙂\n"));
+        for _ in 0..12 {
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                window.simulate_next_frame(cx);
+                window.draw(cx).clear(cx);
+            });
+        }
+        cx.run_until_parked();
+        let expected = if redo {
+            "先🙂\n日!tail\na!def"
+        } else {
+            "日!tail\na!def"
+        };
+        host.read_with(cx, |host, _| {
+            assert_eq!(host.session.buffer().text(), expected);
+            assert_eq!(host.session.selections().len(), 2);
+        });
+        entity.read_with(cx, |state, _| assert!(state.pending_edit.is_none()));
+    }
+}
+
+#[gpui::test]
+fn rectangle_cursors_at_wrap_ends_stay_on_the_selected_display_rows(cx: &mut TestAppContext) {
+    let (state, cx) = surface(cx, &"word longerword ".repeat(60), 5, Edits::default());
+    cx.update(|window, cx| {
+        state.update(cx, |state, cx| {
+            state.props.options.soft_wrap = true;
+            state.pending_first_line = Some(0);
+            let viewport = prepare_at(state, 240.0, 132.0, window, cx);
+            let start = point(
+                viewport.body.right() - px(1.0),
+                viewport.body.top() + px(10.0),
+            );
+            let end = start + point(px(0.0), px(2.0 * LINE_HEIGHT));
+            state.mouse_down(
+                &MouseDownEvent {
+                    position: start,
+                    modifiers: rectangle_modifiers(),
+                    ..Default::default()
+                },
+                window,
+                cx,
+            );
+            state.mouse_move(
+                &MouseMoveEvent {
+                    position: end,
+                    pressed_button: Some(MouseButton::Left),
+                    modifiers: rectangle_modifiers(),
+                },
+                window,
+                cx,
+            );
+            state.mouse_up(&MouseUpEvent::default(), window, cx);
+            assert_eq!(state.edit.selections.len(), 3);
+            assert!(state.edit.selections.iter().all(EditorSelection::is_empty));
+            let viewport = prepare_at(state, 240.0, 132.0, window, cx);
+            let caret = viewport.caret.expect("primary wrap-end cursor");
+            assert_eq!(caret.top(), viewport.body.top());
+            assert_eq!(viewport.secondary_carets.len(), 2);
+            assert_eq!(
+                viewport.secondary_carets[0].top(),
+                viewport.body.top() + px(LINE_HEIGHT)
+            );
+            assert_eq!(
+                viewport.secondary_carets[1].top(),
+                viewport.body.top() + px(2.0 * LINE_HEIGHT)
+            );
+        })
+    });
+}
+
+#[gpui::test]
+fn rectangle_drag_ends_on_blur_and_host_replacement(cx: &mut TestAppContext) {
+    let (state, cx) = surface(cx, &"abcdef\n".repeat(100), 4, Edits::default());
+    cx.update(|window, _| window.activate_window());
+    cx.run_until_parked();
+    let (start, end) = state.read_with(cx, |state, _| {
+        (row_point(state, 0, 1), row_point(state, 2, 3))
+    });
+    cx.simulate_mouse_down(start, MouseButton::Left, rectangle_modifiers());
+    cx.simulate_mouse_move(end, MouseButton::Left, rectangle_modifiers());
+    cx.update(|window, _| window.blur());
+    cx.run_until_parked();
+    state.read_with(cx, |state, _| {
+        assert!(!state.selecting);
+        assert!(state.rectangle_anchor.is_none());
+    });
+    cx.simulate_mouse_down(start, MouseButton::Left, rectangle_modifiers());
+    cx.update(|window, cx| {
+        state.update(cx, |state, cx| {
+            let mut props = state.props.clone();
+            props.buffer = EditorBuffer::from_text("new");
+            state.configure(props, window, cx);
+            assert!(!state.selecting);
+            assert!(state.rectangle_anchor.is_none());
+            assert!(state.rectangle_heads.is_empty());
+        })
+    });
+}
+
+#[gpui::test]
+fn rectangle_remeasures_cached_rows_when_the_window_width_changes(cx: &mut TestAppContext) {
+    let (state, cx) = surface(cx, &"word longerword ".repeat(80), 5, Edits::default());
+    cx.update(|window, cx| {
+        state.update(cx, |state, cx| {
+            state.props.options.soft_wrap = true;
+            state.pending_first_line = Some(0);
+            let viewport = prepare_at(state, 360.0, 132.0, window, cx);
+            let start = viewport.body.origin + point(px(12.0), px(10.0));
+            let end = start + point(px(70.0), px(2.0 * LINE_HEIGHT));
+            state.mouse_down(
+                &MouseDownEvent {
+                    position: start,
+                    modifiers: rectangle_modifiers(),
+                    ..Default::default()
+                },
+                window,
+                cx,
+            );
+            state.extend_rectangle(end, window, cx);
+            let wide = state.edit.selections.clone();
+            prepare_at(state, 220.0, 132.0, window, cx);
+            state.extend_rectangle(end, window, cx);
+            assert_eq!(state.edit.selections.len(), 3);
+            assert_ne!(state.edit.selections[1], wide[1]);
+            for (visual, selection) in state.edit.selections.iter().enumerate() {
+                let (_, fragment) = state.wrap.as_ref().expect("wrap").fragment(visual);
+                assert!(selection.ordered().start.column >= fragment.columns.start);
+                assert!(selection.ordered().end.column <= fragment.columns.end);
+            }
+        })
+    });
+}
+
+#[gpui::test]
+fn rectangle_hits_long_lines_after_horizontal_scrolling(cx: &mut TestAppContext) {
+    let text = (0..3)
+        .map(|_| "abcdefghij".repeat(2000))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let (state, cx) = surface(cx, &text, 5, Edits::default());
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        state.update(cx, |state, cx| {
+            state.scroll.x = px(1200.0);
+            state.reveal = false;
+            let viewport = prepare_at(state, 300.0, 132.0, window, cx);
+            assert!(state.scroll.x > px(0.0));
+            let start = viewport.body.origin + point(px(12.0), px(10.0));
+            let end = start + point(px(45.0), px(2.0 * LINE_HEIGHT));
+            state.mouse_down(
+                &MouseDownEvent {
+                    position: start,
+                    modifiers: rectangle_modifiers(),
+                    ..Default::default()
+                },
+                window,
+                cx,
+            );
+            state.extend_rectangle(end, window, cx);
+            assert_eq!(state.edit.selections.len(), 3);
+            let expected = state.edit.selections[0].ordered();
+            assert!(expected.start.column > 100);
+            assert!(expected.end.column > expected.start.column);
+            for selection in &state.edit.selections {
+                assert_eq!(selection.ordered().start.column, expected.start.column);
+                assert_eq!(selection.ordered().end.column, expected.end.column);
+            }
+            state.mouse_up(&MouseUpEvent::default(), window, cx);
+        })
+    });
+}
+
+#[gpui::test]
+fn large_rectangle_edits_use_the_background_queue_and_keep_input_order(cx: &mut TestAppContext) {
+    let original = vec!["abc"; 256].join("\n");
+    let edits = Edits::default();
+    let (state, cx) = surface(cx, &original, 5, edits.clone());
+    cx.update(|window, cx| {
+        state.update(cx, |state, cx| {
+            state.select_pointers(
+                (0..256)
+                    .map(|line| {
+                        EditorSelection::new(
+                            EditorPosition::new(line, 0),
+                            EditorPosition::new(line, 1),
+                        )
+                    })
+                    .collect(),
+                window,
+                cx,
+            );
+            edits.borrow_mut().clear();
+            state.replace_text_in_range(None, "X", window, cx);
+            assert!(state.pending_edit.is_some());
+            assert_eq!(state.edit.buffer.text(), original);
+            state.key_down(&key("backspace"), window, cx);
+            assert!(edits.borrow().is_empty());
+        })
+    });
+    cx.run_until_parked();
+    state.read_with(cx, |state, _| {
+        assert_eq!(state.edit.buffer.text(), vec!["bc"; 256].join("\n"));
+        assert_eq!(state.edit.selections.len(), 256);
+        assert!(state.pending_edit.is_none());
+    });
+    assert_eq!(edits.borrow().len(), 2);
+    cx.update(|window, cx| {
+        state.update(cx, |state, cx| {
+            state.key_down(&key("delete"), window, cx);
+            assert!(state.pending_edit.is_some());
+            assert_eq!(state.edit.buffer.text(), vec!["bc"; 256].join("\n"));
+            state.replace_text_in_range(None, "Q", window, cx);
+        })
+    });
+    cx.run_until_parked();
+    state.read_with(cx, |state, _| {
+        assert_eq!(state.edit.buffer.text(), vec!["Qc"; 256].join("\n"));
+        assert_eq!(state.edit.selections.len(), 256);
+    });
+    cx.update(|window, cx| {
+        state.update(cx, |state, cx| {
+            state.select_pointers(
+                (0..256)
+                    .map(|line| {
+                        EditorSelection::new(
+                            EditorPosition::new(line, 0),
+                            EditorPosition::new(line, 1),
+                        )
+                    })
+                    .collect(),
+                window,
+                cx,
+            );
+            state.key_down(
+                &key(if cfg!(target_os = "macos") {
+                    "cmd-c"
+                } else {
+                    "ctrl-c"
+                }),
+                window,
+                cx,
+            );
+            assert!(state.pending_edit.is_some());
+        })
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        state.update(cx, |state, cx| {
+            assert_eq!(
+                cx.read_from_clipboard().and_then(|item| item.text()),
+                Some(vec!["Q"; 256].join("\n"))
+            );
+            assert_eq!(state.edit.buffer.text(), vec!["Qc"; 256].join("\n"));
+            state.key_down(
+                &key(if cfg!(target_os = "macos") {
+                    "cmd-x"
+                } else {
+                    "ctrl-x"
+                }),
+                window,
+                cx,
+            );
+            assert!(state.pending_edit.is_some());
+            state.replace_text_in_range(None, "!", window, cx);
+        })
+    });
+    cx.run_until_parked();
+    state.read_with(cx, |state, _| {
+        assert_eq!(state.edit.buffer.text(), vec!["!c"; 256].join("\n"));
+        assert_eq!(state.edit.selections.len(), 256);
+        assert!(state.pending_edit.is_none());
+    });
+}

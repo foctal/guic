@@ -679,6 +679,7 @@ pub struct CodeEditorOptions {
     syntax_highlighting: bool,
     soft_wrap: bool,
     scrollbars: bool,
+    cursor_blink: bool,
 }
 
 impl Default for CodeEditorOptions {
@@ -690,6 +691,7 @@ impl Default for CodeEditorOptions {
             syntax_highlighting: true,
             soft_wrap: false,
             scrollbars: true,
+            cursor_blink: true,
         }
     }
 }
@@ -729,6 +731,14 @@ impl CodeEditorOptions {
     #[must_use]
     pub fn scrollbars(mut self, scrollbars: bool) -> Self {
         self.scrollbars = scrollbars;
+        self
+    }
+
+    /// Blinks the focused cursor when idle. Enabled by default.
+    /// Disable this to keep the cursor steady, including for reduced-motion preferences.
+    #[must_use]
+    pub fn cursor_blink(mut self, cursor_blink: bool) -> Self {
+        self.cursor_blink = cursor_blink;
         self
     }
 

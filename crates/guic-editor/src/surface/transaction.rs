@@ -9,6 +9,7 @@ use std::{
 };
 
 pub(super) const ASYNC_BYTES: usize = 64 * 1024;
+pub(super) const ASYNC_SELECTIONS: usize = 128;
 
 struct PreparedEdit {
     edit: EditorEdit,
@@ -62,8 +63,7 @@ pub(super) enum Work {
         copied: Option<usize>,
     },
     Select {
-        anchor: usize,
-        head: usize,
+        selections: Vec<(usize, usize)>,
     },
     Key(KeyDownEvent),
 }
@@ -127,7 +127,7 @@ pub(super) struct PendingEdit {
     pub accept_host_result: bool,
     pub replaying: bool,
     pub clipboard_sequence: usize,
-    pub pointer: Option<(usize, usize)>,
+    pub pointer: Option<Vec<(usize, usize)>>,
     transitions: Vec<Transition>,
     clipboards: BTreeMap<usize, SharedString>,
     pub cancelled: Arc<AtomicBool>,
@@ -217,14 +217,18 @@ impl PendingEdit {
                 *offset = range.start + length;
             }
         };
-        if let Some((anchor, head)) = &mut self.pointer {
-            rebase(anchor);
-            rebase(head);
-        }
-        for work in &mut self.queue {
-            if let Work::Select { anchor, head } = work {
+        if let Some(selections) = &mut self.pointer {
+            for (anchor, head) in selections {
                 rebase(anchor);
                 rebase(head);
+            }
+        }
+        for work in &mut self.queue {
+            if let Work::Select { selections } = work {
+                for (anchor, head) in selections {
+                    rebase(anchor);
+                    rebase(head);
+                }
             }
         }
     }
@@ -251,7 +255,8 @@ impl EditorSurface {
     pub(super) fn pointer_selection(&self) -> EditorSelection {
         self.pending_edit
             .as_ref()
-            .and_then(|p| p.pointer)
+            .and_then(|p| p.pointer.as_ref())
+            .and_then(|selections| selections.first().copied())
             .map_or_else(
                 || self.edit.selections[0].clone(),
                 |(anchor, head)| {
@@ -269,19 +274,52 @@ impl EditorSurface {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.select_pointers(vec![selection], window, cx);
+    }
+
+    pub(super) fn pointer_selections(&self) -> std::borrow::Cow<'_, [EditorSelection]> {
+        if let Some(selections) = self.pending_edit.as_ref().and_then(|p| p.pointer.as_ref()) {
+            selections
+                .iter()
+                .map(|&(anchor, head)| {
+                    EditorSelection::new(
+                        byte_position(&self.edit.buffer, anchor),
+                        byte_position(&self.edit.buffer, head),
+                    )
+                })
+                .collect::<Vec<_>>()
+                .into()
+        } else {
+            self.edit.selections.as_slice().into()
+        }
+    }
+
+    pub(super) fn select_pointers(
+        &mut self,
+        selections: Vec<EditorSelection>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(pending) = &mut self.pending_edit {
-            let anchor = position_byte(&self.edit.buffer, selection.anchor);
-            let head = position_byte(&self.edit.buffer, selection.head);
-            pending.pointer = Some((anchor, head));
+            let selections = selections
+                .iter()
+                .map(|selection| {
+                    (
+                        position_byte(&self.edit.buffer, selection.anchor),
+                        position_byte(&self.edit.buffer, selection.head),
+                    )
+                })
+                .collect::<Vec<_>>();
+            pending.pointer = Some(selections.clone());
             // Coalesce drag updates only when no intervening input depends on
             // the previous selection. Preserve typing/copy/history order.
             if matches!(pending.queue.back(), Some(Work::Select { .. })) {
                 pending.queue.pop_back();
             }
-            self.enqueue_edit(Work::Select { anchor, head }, window, cx);
+            self.enqueue_edit(Work::Select { selections }, window, cx);
         } else {
             self.apply(
-                EditorEdit::new(self.edit.buffer.clone(), vec![selection]),
+                EditorEdit::new(self.edit.buffer.clone(), selections),
                 window,
                 cx,
             );
@@ -308,7 +346,7 @@ impl EditorSurface {
         if self.pending_edit.is_none() {
             self.edit_generation = self.edit_generation.wrapping_add(1);
             self.pending_edit = Some(PendingEdit::new(cx.background_executor().clone()));
-            self.selecting = false;
+            self.end_pointer_selection();
         }
         let pending = self.pending_edit.as_mut().expect("pending edits");
         pending.reveal = true;
@@ -347,7 +385,7 @@ impl EditorSurface {
             cx.notify();
             return;
         };
-        if let Work::Select { anchor, head } = work {
+        if let Work::Select { selections } = work {
             if !pending
                 .queue
                 .iter()
@@ -355,12 +393,17 @@ impl EditorSurface {
             {
                 pending.pointer = None;
             }
-            let selection = EditorSelection::new(
-                byte_position(&self.edit.buffer, anchor),
-                byte_position(&self.edit.buffer, head),
-            );
+            let selections = selections
+                .into_iter()
+                .map(|(anchor, head)| {
+                    EditorSelection::new(
+                        byte_position(&self.edit.buffer, anchor),
+                        byte_position(&self.edit.buffer, head),
+                    )
+                })
+                .collect();
             self.apply(
-                EditorEdit::new(self.edit.buffer.clone(), vec![selection]),
+                EditorEdit::new(self.edit.buffer.clone(), selections),
                 window,
                 cx,
             );
@@ -586,6 +629,9 @@ impl EditorSurface {
                             .detach();
                         return;
                     }
+                    for (range, length) in &replacements {
+                        state.rebase_rectangle_anchor(range, *length);
+                    }
                     if let Some(pending) = &mut state.pending_edit {
                         pending.working = false;
                         for (range, length) in &replacements {
@@ -631,6 +677,7 @@ impl EditorSurface {
         &self,
         range: Range<usize>,
         window: &Window,
+        cx: &App,
     ) -> Option<Bounds<Pixels>> {
         let pending = self.pending_edit.as_ref()?;
         let viewport = self.layout.as_ref()?;
@@ -639,7 +686,8 @@ impl EditorSurface {
         if byte > preview.len() {
             return None;
         }
-        let text = SharedString::from(format!("Pasting… {preview}"));
+        let pasting = guic_core::translate(cx, "input.pasting", "Pasting...");
+        let text = SharedString::from(format!("{pasting} {preview}"));
         let run = TextRun {
             len: text.len(),
             font: viewport.font.clone(),
@@ -651,7 +699,7 @@ impl EditorSurface {
         let line = window
             .text_system()
             .shape_line(text, px(FONT_SIZE), &[run], None);
-        let x = viewport.bounds.left() + px(PADDING) + line.x_for_index("Pasting… ".len() + byte);
+        let x = viewport.bounds.left() + px(PADDING) + line.x_for_index(pasting.len() + 1 + byte);
         if x > viewport.bounds.right() - px(PADDING) {
             return None;
         }
