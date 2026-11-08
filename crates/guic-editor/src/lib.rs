@@ -254,10 +254,20 @@ pub struct SyntaxToken {
 }
 
 /// A large-buffer friendly text model split by lines.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct EditorBuffer {
     lines: LineStore,
+    // Enabled only while preparing an interactive transaction. Byte changes
+    // rebase pointer selections captured against the still-visible snapshot.
+    replacements: Option<Vec<(Range<usize>, usize)>>,
 }
+
+impl PartialEq for EditorBuffer {
+    fn eq(&self, other: &Self) -> bool {
+        self.lines == other.lines
+    }
+}
+impl Eq for EditorBuffer {}
 
 impl EditorBuffer {
     /// Creates a buffer from text, normalizing CRLF and CR line endings to LF.
@@ -273,6 +283,7 @@ impl EditorBuffer {
         }
         Self {
             lines: lines.into(),
+            replacements: None,
         }
     }
 

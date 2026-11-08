@@ -182,8 +182,11 @@ to one serial pass instead of repeatedly scanning the line to find partitions.
 These helpers remain synchronous for explicit model APIs such as
 `EditorSession::insert`; the interactive surface schedules large pastes separately.
 
-Native or clipboard insertions of at least 64 KiB are prepared on GPUI's background
-executor. The surface never joins the preparation worker. Normalization, text
+OS clipboard text reads use the runtime's asynchronous desktop API. Each request
+starts when paste is invoked; results are consumed in input order even if reads
+finish out of order. An empty or unavailable clipboard leaves the selection intact.
+Native insertions of at least 64 KiB and clipboard paste preparation run on GPUI's
+background executor. The surface never joins the preparation worker. Normalization, text
 replacement, cursor/index construction, and change detection finish before the
 result is published. Verified negative snapshot comparisons prevent the controlled
 host from rescanning equally sized documents when accepting an edit. Position
@@ -196,8 +199,12 @@ clipboard commands, and undo/redo are processed in arrival order. Clipboard past
 capture their requested contents, including a preceding queued copy/cut. Undo/redo
 wait for the host to acknowledge preceding edits and render the command result
 before later input runs. Each paste and committed IME composition remains a
-separate undo transaction. Pointer selection of the document is temporarily disabled
-while its replacement is pending; keyboard navigation is queued.
+separate undo transaction. Clicks, double/triple-clicks, and drag selections preview
+immediately against the visible document. Their byte positions are rebased through
+pending edits and known undo/redo transitions before subsequent input is applied.
+Drag updates coalesce only when no intervening operation depends on them. If a host
+history result has no known position mapping, its restored selection takes precedence
+over stale queued pointer positions. Keyboard navigation remains queued.
 
 While preparation or queued input is pending, native IME queries address a small
 composition context in the indicator, not the large document. Its UTF-16 text,

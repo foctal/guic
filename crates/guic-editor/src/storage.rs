@@ -445,6 +445,9 @@ impl EditorBuffer {
         if start == end && self.lines[start][first..last] == *replacement {
             return;
         }
+        if let Some(replacements) = &mut self.replacements {
+            replacements.push((range.clone(), replacement.len()));
+        }
         let first_positions = self.lines.metadata(start).positions.get();
         let last_positions = self.lines.metadata(end).positions.get();
         let prefix = &self.lines[start][..first];

@@ -96,6 +96,8 @@ impl EditorSurface {
         if buffer_changed || selection_changed {
             if !command_result {
                 self.cancel_edits();
+            } else if let Some(pending) = &mut self.pending_edit {
+                pending.rebase_history(&self.edit.buffer, &props.buffer);
             }
             // A changed host value is authoritative. An unchanged host value must
             // not erase an in-progress composition or successive native events.
@@ -255,21 +257,8 @@ impl EditorSurface {
                 .pending_edit
                 .as_ref()
                 .and_then(|p| (p.clipboard_sequence > 0).then_some(p.clipboard_sequence));
-            let text = cx
-                .read_from_clipboard()
-                .and_then(|item| item.text())
-                .or_else(|| copied.map(|_| String::new()));
-            if let Some(text) = text {
-                if self.pending_edit.is_some() || text.len() >= ASYNC_BYTES {
-                    self.enqueue_edit(Work::Paste { text, copied }, window, cx);
-                } else {
-                    self.apply(
-                        edit_replacing_selections(&self.edit.buffer, &self.edit.selections, &text),
-                        window,
-                        cx,
-                    );
-                }
-            }
+            let read = cx.read_text_from_clipboard_async();
+            self.enqueue_edit(Work::Paste { read, copied }, window, cx);
             cx.stop_propagation();
             return;
         }
@@ -470,12 +459,6 @@ impl EditorSurface {
                 }
             }
         }
-        if self.pending_edit.is_some() {
-            // The displayed document is the last committed snapshot. Do not hit
-            // test it as if the pending replacement had already been laid out.
-            cx.stop_propagation();
-            return;
-        }
         self.finish_composition(window, cx);
         if let Some(focus) = self.props.focus_handle.clone() {
             focus.focus(window, cx);
@@ -486,7 +469,7 @@ impl EditorSurface {
             return;
         };
         let selection = if event.modifiers.shift {
-            EditorSelection::new(self.edit.selections[0].anchor, position)
+            EditorSelection::new(self.pointer_selection().anchor, position)
         } else if event.click_count >= 3 {
             let end = if position.line + 1 < self.edit.buffer.line_count() {
                 EditorPosition::new(position.line + 1, 0)
@@ -516,11 +499,7 @@ impl EditorSurface {
         self.preferred_x = None;
         self.reveal = true;
         cx.notify();
-        self.apply(
-            EditorEdit::new(self.edit.buffer.clone(), vec![selection]),
-            window,
-            cx,
-        );
+        self.select_pointer(selection, window, cx);
         cx.stop_propagation();
     }
 
@@ -566,12 +545,8 @@ impl EditorSurface {
             self.clamp_scroll(bounds);
         }
         if let Some(head) = self.hit_position(event.position, window, cx) {
-            let selection = EditorSelection::new(self.edit.selections[0].anchor, head);
-            self.apply(
-                EditorEdit::new(self.edit.buffer.clone(), vec![selection]),
-                window,
-                cx,
-            );
+            let selection = EditorSelection::new(self.pointer_selection().anchor, head);
+            self.select_pointer(selection, window, cx);
         }
         cx.notify();
         cx.stop_propagation();
@@ -1385,16 +1360,17 @@ impl EditorSurface {
                 as f32
                 * LINE_HEIGHT);
         }
+        let pointer_selection = self.pointer_selection();
         let cursor = self
             .composing_selection
             .as_ref()
-            .map_or(self.edit.selections[0].head, |range| {
+            .map_or(pointer_selection.head, |range| {
                 byte_position(&self.edit.buffer, range.end)
             });
         let selection_empty = self
             .composing_selection
             .as_ref()
-            .map_or_else(|| self.edit.selections[0].is_empty(), Range::is_empty);
+            .map_or_else(|| pointer_selection.is_empty(), Range::is_empty);
         let cursor_row = self.visual_row(cursor);
         if self.reveal {
             let row = self.shape_column(cursor_row, cursor.column, &font, window, cx);
@@ -1458,7 +1434,16 @@ impl EditorSurface {
                     size(text.width(), px(LINE_HEIGHT)),
                 );
             }
-            for selection in &self.edit.selections {
+            let displayed = if self
+                .pending_edit
+                .as_ref()
+                .is_some_and(|p| p.pointer.is_some())
+            {
+                std::slice::from_ref(&pointer_selection)
+            } else {
+                &self.edit.selections
+            };
+            for selection in displayed {
                 let range = selection.ordered();
                 if selection.is_empty()
                     || row.index < range.start.line

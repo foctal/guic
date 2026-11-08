@@ -16,6 +16,7 @@ struct PreparedEdit {
     text_changed: bool,
     selection_changed: bool,
     clipboard: Option<(usize, SharedString, String)>,
+    replacements: Vec<(Range<usize>, usize)>,
 }
 
 // A completed background task may be cancelled before its foreground waiter
@@ -57,8 +58,12 @@ pub(super) enum Work {
         cut: bool,
     },
     Paste {
-        text: String,
+        read: gpui::Task<Option<String>>,
         copied: Option<usize>,
+    },
+    Select {
+        anchor: usize,
+        head: usize,
     },
     Key(KeyDownEvent),
 }
@@ -107,6 +112,12 @@ impl Draft {
     }
 }
 
+struct Transition {
+    before: LineStore,
+    after: LineStore,
+    replacements: Vec<(Range<usize>, usize)>,
+}
+
 pub(super) struct PendingEdit {
     pub queue: VecDeque<Work>,
     pub draft: Draft,
@@ -116,6 +127,8 @@ pub(super) struct PendingEdit {
     pub accept_host_result: bool,
     pub replaying: bool,
     pub clipboard_sequence: usize,
+    pub pointer: Option<(usize, usize)>,
+    transitions: Vec<Transition>,
     clipboards: BTreeMap<usize, SharedString>,
     pub cancelled: Arc<AtomicBool>,
     task: Option<gpui::Task<()>>,
@@ -132,6 +145,8 @@ impl PendingEdit {
             accept_host_result: false,
             replaying: false,
             clipboard_sequence: 0,
+            pointer: None,
+            transitions: Vec::new(),
             clipboards: BTreeMap::new(),
             cancelled: Arc::new(AtomicBool::new(false)),
             task: None,
@@ -139,6 +154,82 @@ impl PendingEdit {
         }
     }
 }
+impl PendingEdit {
+    pub(super) fn rebase_history(&mut self, before: &EditorBuffer, after: &EditorBuffer) {
+        // History restores shared snapshots. Find a path through this pending
+        // batch's transactions, including inverse changes for queued Undo.
+        let mut frontier = VecDeque::from([(before.lines.clone(), Vec::new())]);
+        let mut visited = vec![before.lines.clone()];
+        while let Some((snapshot, path)) = frontier.pop_front() {
+            if snapshot.same_snapshot(&after.lines) {
+                let changes: Vec<_> = path
+                    .into_iter()
+                    .flat_map(|(index, forward): (usize, bool)| {
+                        let changes = &self.transitions[index].replacements;
+                        if forward {
+                            changes.clone()
+                        } else {
+                            changes
+                                .iter()
+                                .rev()
+                                .map(|(range, length)| {
+                                    (range.start..range.start + length, range.len())
+                                })
+                                .collect()
+                        }
+                    })
+                    .collect();
+                for (range, length) in changes {
+                    self.rebase_pointers(&range, length);
+                }
+                return;
+            }
+            for (index, transition) in self.transitions.iter().enumerate() {
+                let next = if snapshot.same_snapshot(&transition.before) {
+                    Some((&transition.after, true))
+                } else if snapshot.same_snapshot(&transition.after) {
+                    Some((&transition.before, false))
+                } else {
+                    None
+                };
+                if let Some((next, forward)) = next
+                    && !visited.iter().any(|seen| seen.same_snapshot(next))
+                {
+                    visited.push(next.clone());
+                    let mut path = path.clone();
+                    path.push((index, forward));
+                    frontier.push_back((next.clone(), path));
+                }
+            }
+        }
+        // History outside this batch has no position map. Preserve the host's
+        // restored selection instead of applying stale offsets to unrelated text.
+        self.pointer = None;
+        self.queue
+            .retain(|work| !matches!(work, Work::Select { .. }));
+    }
+
+    fn rebase_pointers(&mut self, range: &Range<usize>, length: usize) {
+        let rebase = |offset: &mut usize| {
+            if *offset >= range.end {
+                *offset = *offset - range.len() + length;
+            } else if *offset > range.start {
+                *offset = range.start + length;
+            }
+        };
+        if let Some((anchor, head)) = &mut self.pointer {
+            rebase(anchor);
+            rebase(head);
+        }
+        for work in &mut self.queue {
+            if let Work::Select { anchor, head } = work {
+                rebase(anchor);
+                rebase(head);
+            }
+        }
+    }
+}
+
 impl Drop for PendingEdit {
     fn drop(&mut self) {
         self.cancelled.store(true, Ordering::Relaxed);
@@ -146,6 +237,7 @@ impl Drop for PendingEdit {
             std::mem::take(&mut self.queue),
             std::mem::take(&mut self.clipboards),
             std::mem::take(&mut self.draft),
+            std::mem::take(&mut self.transitions),
         );
         self.executor
             .spawn(async move {
@@ -156,6 +248,46 @@ impl Drop for PendingEdit {
 }
 
 impl EditorSurface {
+    pub(super) fn pointer_selection(&self) -> EditorSelection {
+        self.pending_edit
+            .as_ref()
+            .and_then(|p| p.pointer)
+            .map_or_else(
+                || self.edit.selections[0].clone(),
+                |(anchor, head)| {
+                    EditorSelection::new(
+                        byte_position(&self.edit.buffer, anchor),
+                        byte_position(&self.edit.buffer, head),
+                    )
+                },
+            )
+    }
+
+    pub(super) fn select_pointer(
+        &mut self,
+        selection: EditorSelection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(pending) = &mut self.pending_edit {
+            let anchor = position_byte(&self.edit.buffer, selection.anchor);
+            let head = position_byte(&self.edit.buffer, selection.head);
+            pending.pointer = Some((anchor, head));
+            // Coalesce drag updates only when no intervening input depends on
+            // the previous selection. Preserve typing/copy/history order.
+            if matches!(pending.queue.back(), Some(Work::Select { .. })) {
+                pending.queue.pop_back();
+            }
+            self.enqueue_edit(Work::Select { anchor, head }, window, cx);
+        } else {
+            self.apply(
+                EditorEdit::new(self.edit.buffer.clone(), vec![selection]),
+                window,
+                cx,
+            );
+        }
+    }
+
     fn edit_frame(
         window: &Window,
         cx: &Context<Self>,
@@ -215,6 +347,26 @@ impl EditorSurface {
             cx.notify();
             return;
         };
+        if let Work::Select { anchor, head } = work {
+            if !pending
+                .queue
+                .iter()
+                .any(|work| matches!(work, Work::Select { .. }))
+            {
+                pending.pointer = None;
+            }
+            let selection = EditorSelection::new(
+                byte_position(&self.edit.buffer, anchor),
+                byte_position(&self.edit.buffer, head),
+            );
+            self.apply(
+                EditorEdit::new(self.edit.buffer.clone(), vec![selection]),
+                window,
+                cx,
+            );
+            self.drain_edits(window, cx);
+            return;
+        }
         if let Work::Key(event) = work {
             let history = editor_key_command(&event).is_some() && self.props.on_command.is_some();
             let generation = self.edit_generation;
@@ -279,7 +431,7 @@ impl EditorSurface {
         pending.working = true;
         let cancelled = pending.cancelled.clone();
         let generation = self.edit_generation;
-        let source = self.edit.clone();
+        let mut source = self.edit.clone();
         let guard = source.clone();
         let committed = self.composition.clone().unwrap_or_else(|| source.clone());
         let host_snapshot = self.props.buffer.clone();
@@ -289,6 +441,7 @@ impl EditorSurface {
                 return None;
             }
             let baseline = source.buffer.clone();
+            source.buffer.replacements = Some(Vec::new());
             let mut clipboard = None;
             let mut edit = match work {
                 Work::Insert { text, primary } => {
@@ -307,9 +460,20 @@ impl EditorSurface {
                     draft.replace_range(bytes, &normalize_newlines(&text));
                     edit_replacing_selections(&source.buffer, &source.selections[..1], &draft)
                 }
-                Work::Paste { text, .. } => {
-                    let text = copied_text.as_ref().map_or(text.as_str(), |s| s.as_ref());
-                    edit_replacing_selections(&source.buffer, &source.selections, text)
+                Work::Paste { read, .. } => {
+                    let text = if let Some(text) = copied_text {
+                        Some(text.to_string())
+                    } else {
+                        read.await
+                    };
+                    if cancelled.load(Ordering::Relaxed) {
+                        return None;
+                    }
+                    if let Some(text) = text.filter(|text| !text.is_empty()) {
+                        edit_replacing_selections(&source.buffer, &source.selections, &text)
+                    } else {
+                        source.clone()
+                    }
                 }
                 Work::Clipboard { sequence, cut } => {
                     let text = source
@@ -355,8 +519,11 @@ impl EditorSurface {
                     let cursor = byte_position(&buffer, range.start + replacement.len());
                     EditorEdit::new(buffer, vec![EditorSelection::cursor(cursor)])
                 }
-                Work::Key(_) => unreachable!("keys are handled on the foreground thread"),
+                Work::Key(_) | Work::Select { .. } => {
+                    unreachable!("navigation is handled on the foreground thread")
+                }
             };
+            let replacements = edit.buffer.replacements.take().unwrap_or_default();
             // Prepare position queries before publication, including long interior
             // lines of multiline pastes. This also keeps queued navigation cheap.
             for line in 0..edit.buffer.line_count() {
@@ -389,6 +556,7 @@ impl EditorSurface {
                         text_changed,
                         selection_changed,
                         clipboard,
+                        replacements,
                         guard,
                     }),
                     executor: result_executor,
@@ -403,6 +571,7 @@ impl EditorSurface {
                         text_changed,
                         selection_changed,
                         clipboard,
+                        replacements,
                         guard,
                     } = prepared.data.take().expect("prepared edit");
                     if state.edit_generation != generation
@@ -412,13 +581,23 @@ impl EditorSurface {
                     {
                         cx.background_executor()
                             .spawn(async move {
-                                drop((edit, guard, clipboard));
+                                drop((edit, guard, clipboard, replacements));
                             })
                             .detach();
                         return;
                     }
                     if let Some(pending) = &mut state.pending_edit {
                         pending.working = false;
+                        for (range, length) in &replacements {
+                            pending.rebase_pointers(range, *length);
+                        }
+                        if !replacements.is_empty() {
+                            pending.transitions.push(Transition {
+                                before: guard.buffer.lines.clone(),
+                                after: edit.buffer.lines.clone(),
+                                replacements,
+                            });
+                        }
                         if let Some((sequence, cached, text)) = clipboard {
                             pending.clipboards.insert(sequence, cached);
                             cx.write_to_clipboard(ClipboardItem::new_string(text));
@@ -507,6 +686,7 @@ mod tests {
                 text_changed: true,
                 selection_changed: true,
                 clipboard: None,
+                replacements: Vec::new(),
             }),
             executor: cx.background_executor.clone(),
         };

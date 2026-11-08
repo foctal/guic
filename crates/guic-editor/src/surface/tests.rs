@@ -1843,3 +1843,301 @@ fn closing_async_editor_cancels_pending_history_frames(cx: &mut TestAppContext) 
     cx.run_until_parked();
     assert!(cancelled.load(std::sync::atomic::Ordering::Relaxed));
 }
+
+#[derive(Default)]
+struct ClipboardGate {
+    value: Option<Option<String>>,
+    waker: Option<std::task::Waker>,
+}
+
+fn delayed_clipboard(
+    cx: &App,
+) -> (
+    gpui::Task<Option<String>>,
+    std::sync::Arc<std::sync::Mutex<ClipboardGate>>,
+) {
+    let gate = std::sync::Arc::new(std::sync::Mutex::new(ClipboardGate::default()));
+    let reader = gate.clone();
+    let read = cx
+        .background_executor()
+        .spawn(std::future::poll_fn(move |cx| {
+            let mut gate = reader.lock().expect("clipboard gate");
+            if let Some(value) = gate.value.take() {
+                std::task::Poll::Ready(value)
+            } else {
+                gate.waker = Some(cx.waker().clone());
+                std::task::Poll::Pending
+            }
+        }));
+    (read, gate)
+}
+
+fn finish_clipboard(gate: &std::sync::Mutex<ClipboardGate>, text: Option<&str>) {
+    let mut gate = gate.lock().expect("clipboard gate");
+    gate.value = Some(text.map(str::to_owned));
+    if let Some(waker) = gate.waker.take() {
+        waker.wake();
+    }
+}
+
+#[gpui::test]
+fn clipboard_transfer_wait_preserves_ime_order_and_cancellation(cx: &mut TestAppContext) {
+    let edits = Edits::default();
+    let (entity, cx) = surface(cx, "base", 3, edits.clone());
+    let gate = cx.update(|window, cx| {
+        entity.update(cx, |state, cx| {
+            state.edit.selections = vec![EditorSelection::cursor(EditorPosition::default())];
+            let (read, gate) = delayed_clipboard(cx);
+            state.enqueue_edit(Work::Paste { read, copied: None }, window, cx);
+            state.replace_and_mark_text_in_range(None, "に", Some(1..1), window, cx);
+            assert_eq!(state.marked_text_range(window, cx), Some(0..1));
+            state.replace_text_in_range(None, "日本", window, cx);
+            state.replace_text_in_range(None, "!", window, cx);
+            gate
+        })
+    });
+    cx.run_until_parked();
+    assert!(edits.borrow().is_empty());
+    finish_clipboard(&gate, Some("🙂\r\n"));
+    cx.run_until_parked();
+    assert_eq!(
+        edits.borrow().last().expect("edit").buffer.text(),
+        "🙂\n日本!base"
+    );
+    let mut session = EditorSession::new(EditorBuffer::from_text("base"));
+    for edit in edits.borrow().iter() {
+        session.apply(edit.clone());
+    }
+    for _ in 0..3 {
+        assert!(session.undo());
+    }
+    assert_eq!(session.buffer().text(), "base");
+    let gate = cx.update(|window, cx| {
+        entity.update(cx, |state, cx| {
+            let (read, gate) = delayed_clipboard(cx);
+            state.enqueue_edit(Work::Paste { read, copied: None }, window, cx);
+            let props = CodeEditor::new("test", EditorBuffer::from_text("replacement"))
+                .focusable(state.props.focus_handle.clone().expect("focus"))
+                .on_edit(|_, _, _| panic!("obsolete clipboard result"));
+            state.configure(props, window, cx);
+            gate
+        })
+    });
+    finish_clipboard(&gate, Some("obsolete"));
+    cx.run_until_parked();
+    entity.update(cx, |state, _| {
+        assert_eq!(state.edit.buffer.text(), "replacement")
+    });
+}
+
+#[gpui::test]
+fn empty_clipboard_keeps_selection_and_releases_following_input(cx: &mut TestAppContext) {
+    let edits = Edits::default();
+    let (entity, cx) = surface(cx, "hello", 3, edits.clone());
+    let gate = cx.update(|window, cx| {
+        entity.update(cx, |state, cx| {
+            state.edit.selections = vec![EditorSelection::new(
+                EditorPosition::new(0, 1),
+                EditorPosition::new(0, 4),
+            )];
+            let (read, gate) = delayed_clipboard(cx);
+            state.enqueue_edit(Work::Paste { read, copied: None }, window, cx);
+            state.replace_text_in_range(None, "!", window, cx);
+            gate
+        })
+    });
+    cx.run_until_parked();
+    finish_clipboard(&gate, None);
+    cx.run_until_parked();
+    assert_eq!(edits.borrow().len(), 1);
+    assert_eq!(edits.borrow()[0].buffer.text(), "h!o");
+}
+
+#[gpui::test]
+fn pointer_selection_is_visible_during_transfer_and_rebased_before_typing(cx: &mut TestAppContext) {
+    let edits = Edits::default();
+    let (entity, cx) = surface(cx, "one two three", 3, edits.clone());
+    let gate = cx.update(|window, cx| {
+        entity.update(cx, |state, cx| {
+            state.edit.selections = vec![EditorSelection::cursor(EditorPosition::default())];
+            let (read, gate) = delayed_clipboard(cx);
+            state.enqueue_edit(Work::Paste { read, copied: None }, window, cx);
+            let row = &state.layout.as_ref().expect("viewport").rows[0];
+            let position = row.origin + point(row.x_for_column(5), px(5.0));
+            state.mouse_down(
+                &MouseDownEvent {
+                    position,
+                    click_count: 2,
+                    ..Default::default()
+                },
+                window,
+                cx,
+            );
+            assert_eq!(
+                state.pointer_selection(),
+                EditorSelection::new(EditorPosition::new(0, 4), EditorPosition::new(0, 7))
+            );
+            let bounds = state.layout.as_ref().expect("viewport").bounds;
+            let viewport = state.prepare(bounds, window, cx);
+            assert!(!viewport.selections.is_empty());
+            assert_eq!(state.edit.selections[0].head, EditorPosition::default());
+            state.replace_text_in_range(None, "日本", window, cx);
+            gate
+        })
+    });
+    cx.run_until_parked();
+    assert!(edits.borrow().is_empty());
+    finish_clipboard(&gate, Some("🙂\n"));
+    cx.run_until_parked();
+    assert_eq!(
+        edits.borrow().last().expect("edit").buffer.text(),
+        "🙂\none 日本 three"
+    );
+    entity.update(cx, |state, _| assert!(state.pending_edit.is_none()));
+}
+
+#[gpui::test]
+fn pending_drag_rebases_across_multiple_paste_ranges(cx: &mut TestAppContext) {
+    let edits = Edits::default();
+    let (entity, cx) = surface(cx, "abcdef", 3, edits.clone());
+    let gate = cx.update(|window, cx| {
+        entity.update(cx, |state, cx| {
+            state.edit.selections = vec![
+                EditorSelection::cursor(EditorPosition::new(0, 0)),
+                EditorSelection::cursor(EditorPosition::new(0, 6)),
+            ];
+            let (read, gate) = delayed_clipboard(cx);
+            state.enqueue_edit(Work::Paste { read, copied: None }, window, cx);
+            let row = &state.layout.as_ref().expect("viewport").rows[0];
+            let start = row.origin + point(row.x_for_column(1), px(5.0));
+            let end = row.origin + point(row.x_for_column(4), px(5.0));
+            state.mouse_down(
+                &MouseDownEvent {
+                    position: start,
+                    click_count: 1,
+                    ..Default::default()
+                },
+                window,
+                cx,
+            );
+            state.mouse_move(
+                &MouseMoveEvent {
+                    position: end,
+                    pressed_button: Some(MouseButton::Left),
+                    ..Default::default()
+                },
+                window,
+                cx,
+            );
+            state.mouse_up(&MouseUpEvent::default(), window, cx);
+            assert_eq!(
+                state.pointer_selection(),
+                EditorSelection::new(EditorPosition::new(0, 1), EditorPosition::new(0, 4))
+            );
+            assert_eq!(state.pending_edit.as_ref().expect("pending").queue.len(), 1);
+            state.replace_text_in_range(None, "X", window, cx);
+            gate
+        })
+    });
+    cx.run_until_parked();
+    finish_clipboard(&gate, Some("🙂"));
+    cx.run_until_parked();
+    assert_eq!(
+        edits.borrow().last().expect("edit").buffer.text(),
+        "🙂aXef🙂"
+    );
+}
+
+#[gpui::test]
+fn clipboard_reads_complete_out_of_order_but_edits_keep_input_order(cx: &mut TestAppContext) {
+    let edits = Edits::default();
+    let (entity, cx) = surface(cx, "base", 3, edits.clone());
+    let (first, second) = cx.update(|window, cx| {
+        entity.update(cx, |state, cx| {
+            state.edit.selections = vec![EditorSelection::cursor(EditorPosition::default())];
+            let (read, first) = delayed_clipboard(cx);
+            state.enqueue_edit(Work::Paste { read, copied: None }, window, cx);
+            let (read, second) = delayed_clipboard(cx);
+            state.enqueue_edit(Work::Paste { read, copied: None }, window, cx);
+            state.replace_text_in_range(None, "!", window, cx);
+            (first, second)
+        })
+    });
+    finish_clipboard(&second, Some("B日"));
+    cx.run_until_parked();
+    assert!(edits.borrow().is_empty());
+    finish_clipboard(&first, Some("A🙂"));
+    cx.run_until_parked();
+    let mut session = EditorSession::new(EditorBuffer::from_text("base"));
+    for edit in edits.borrow().iter() {
+        session.apply(edit.clone());
+    }
+    assert_eq!(session.buffer().text(), "A🙂B日!base");
+    for _ in 0..3 {
+        assert!(session.undo());
+    }
+    assert_eq!(session.buffer().text(), "base");
+    for _ in 0..3 {
+        assert!(session.redo());
+    }
+    assert_eq!(session.buffer().text(), "A🙂B日!base");
+}
+
+#[gpui::test]
+fn pointer_after_queued_history_tracks_unicode_snapshot_positions(cx: &mut TestAppContext) {
+    init(cx);
+    for redo in [false, true] {
+        let (host, cx) = cx.add_window_view(|_, cx| {
+            let buffer = EditorBuffer::from_text("日本🙂tail");
+            AsyncControlledHarness {
+                session: EditorSession::new(buffer.clone()),
+                focus: cx.focus_handle(),
+                editor: cx.new(|_| EditorSurface::new(CodeEditor::new("async-controlled", buffer))),
+            }
+        });
+        let entity = host.read_with(cx, |host, _| host.editor.clone());
+        let gate = cx.update(|window, cx| {
+            entity.update(cx, |state, cx| {
+                let (read, gate) = delayed_clipboard(cx);
+                state.enqueue_edit(Work::Paste { read, copied: None }, window, cx);
+                let modifier = if cfg!(target_os = "macos") {
+                    "cmd"
+                } else {
+                    "ctrl"
+                };
+                state.key_down(&key(&format!("{modifier}-z")), window, cx);
+                if redo {
+                    state.key_down(&key(&format!("{modifier}-shift-z")), window, cx);
+                }
+                state.select_pointer(
+                    EditorSelection::cursor(EditorPosition::new(0, 2)),
+                    window,
+                    cx,
+                );
+                state.replace_text_in_range(None, "!", window, cx);
+                gate
+            })
+        });
+        finish_clipboard(&gate, Some("先🙂\n"));
+        for _ in 0..12 {
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                window.simulate_next_frame(cx);
+                window.draw(cx).clear(cx);
+            });
+        }
+        cx.run_until_parked();
+        let expected = if redo {
+            "先🙂\n日本!🙂tail"
+        } else {
+            "日本!🙂tail"
+        };
+        host.update(cx, |host, _| {
+            assert_eq!(host.session.buffer().text(), expected)
+        });
+        entity.update(cx, |state, _| {
+            assert!(state.pending_edit.is_none());
+            assert_eq!(state.edit.buffer.text(), expected);
+        });
+    }
+}
