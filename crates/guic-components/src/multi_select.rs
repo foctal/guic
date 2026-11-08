@@ -158,7 +158,7 @@ impl RenderOnce for MultiSelect {
 
         let trigger = div()
             .id(self.id.clone())
-            .accessibility(
+            .accessible(
                 AccessibilityProps::new(Role::Button)
                     .label(self.placeholder.clone())
                     .expanded(self.expanded)
@@ -211,7 +211,7 @@ impl RenderOnce for MultiSelect {
         if self.expanded {
             let mut menu = div()
                 .id(format!("{}-menu", self.id))
-                .accessibility(
+                .accessible(
                     AccessibilityProps::new(Role::ListBox).label(format!("{} options", self.id)),
                 )
                 .w_full()
@@ -230,7 +230,7 @@ impl RenderOnce for MultiSelect {
                 let selected = self.is_selected(index);
                 let row = div()
                     .id(SharedString::from(format!("{}-item-{index}", self.id)))
-                    .accessibility(
+                    .accessible(
                         AccessibilityProps::new(Role::Option)
                             .label(item.label.clone())
                             .selected(selected)

@@ -1,7 +1,7 @@
-use crate::{ButtonVariant, ComponentSize, IconButton};
+use crate::{ButtonVariant, ComponentSize, IconButton, TextInput};
 use gpui::{
     App, FocusHandle, InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _,
-    RenderOnce, SharedString, Styled as _, Window, div, px,
+    RenderOnce, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div, px,
 };
 use guic_core::{AccessibilityElementExt as _, AccessibilityProps, Role};
 use guic_icons::IconName;
@@ -14,7 +14,7 @@ type NumberChangeHandler = Rc<dyn Fn(&f64, &mut Window, &mut App)>;
 ///
 /// `InputNumber` is host-managed: supply the current [`InputNumber::value`] and
 /// react to [`InputNumber::on_change`], which reports the next clamped value
-/// from the step controls or the up/down arrow keys. Interactive inputs are
+/// from direct text entry, the step controls, or the up/down arrow keys. Interactive inputs are
 /// keyboard-focusable by default; [`InputNumber::focusable`] supplies a host handle.
 ///
 /// # Example
@@ -139,6 +139,7 @@ impl InputNumber {
         value.clamp(self.min, self.max)
     }
 
+    #[cfg(test)]
     fn display(&self) -> String {
         let formatted = format!("{}", self.value);
         match &self.suffix {
@@ -148,8 +149,67 @@ impl InputNumber {
     }
 }
 
+struct NumberEditor {
+    input: gpui::Entity<TextInput>,
+    value: f64,
+    min: f64,
+    max: f64,
+    handler: Option<NumberChangeHandler>,
+}
+
 impl RenderOnce for InputNumber {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let editor = _window.use_keyed_state(format!("{}-number-editor", self.id), cx, |_, cx| {
+            use gpui::AppContext as _;
+            let owner: gpui::WeakEntity<NumberEditor> = cx.entity().downgrade();
+            let input = cx.new(|cx| {
+                TextInput::new("number-value", cx)
+                    .size(self.size)
+                    .value(self.value.to_string())
+                    .accessible_label(self.id.clone())
+                    .on_change(move |text, window, cx| {
+                        let Ok(value) = text.trim().parse::<f64>() else {
+                            return;
+                        };
+                        if !value.is_finite() {
+                            return;
+                        }
+                        let _ = owner.update(cx, |state, cx| {
+                            let value = value.clamp(state.min, state.max);
+                            if value != state.value
+                                && let Some(handler) = &state.handler
+                            {
+                                handler(&value, window, cx);
+                            }
+                        });
+                    })
+            });
+            NumberEditor {
+                input,
+                value: self.value,
+                min: self.min,
+                max: self.max,
+                handler: None,
+            }
+        });
+        let input = editor.update(cx, |state, cx| {
+            if state.value != self.value {
+                state.input.update(cx, |input, cx| {
+                    if input.current_value().trim().parse::<f64>().ok() != Some(self.value) {
+                        input.set_value(self.value.to_string(), cx);
+                    }
+                });
+            }
+            state.value = self.value;
+            state.min = self.min;
+            state.max = self.max;
+            state.handler = self.on_change.clone();
+            state.input.update(cx, |input, cx| {
+                input.set_size(self.size, cx);
+                input.set_disabled(self.disabled || self.on_change.is_none(), cx)
+            });
+            state.input.clone()
+        });
         let theme = Theme::global(cx);
         let accessibility_label = self.id.clone();
         let metrics = self.size.control_metrics(theme);
@@ -163,7 +223,7 @@ impl RenderOnce for InputNumber {
             IconButton::new(IconName::Minus)
                 .variant(ButtonVariant::Secondary)
                 .size(self.size)
-                .label("Decrement")
+                .label(guic_core::translate(cx, "number.decrement", "Decrement"))
                 .disabled(self.disabled || decremented == self.value)
                 .on_click(move |_event, window, cx| {
                     if let Some(handler) = on_change.as_ref() {
@@ -176,7 +236,7 @@ impl RenderOnce for InputNumber {
             IconButton::new(IconName::Plus)
                 .variant(ButtonVariant::Secondary)
                 .size(self.size)
-                .label("Increment")
+                .label(guic_core::translate(cx, "number.increment", "Increment"))
                 .disabled(self.disabled || incremented == self.value)
                 .on_click(move |_event, window, cx| {
                     if let Some(handler) = on_change.as_ref() {
@@ -189,21 +249,17 @@ impl RenderOnce for InputNumber {
             .flex_1()
             .h(height)
             .min_w(px(56.0))
-            .px(px(theme.spacing.x3))
             .flex()
             .items_center()
-            .justify_center()
-            .rounded(px(theme.radius.md))
-            .border_1()
-            .border_color(theme.border())
-            .bg(theme.background())
+            .gap_2()
             .text_size(text_size)
             .text_color(theme.foreground())
-            .child(self.display());
+            .child(input)
+            .children(self.suffix.clone());
 
         let mut root = div()
             .id(self.id.clone())
-            .accessibility(
+            .accessible(
                 AccessibilityProps::new(Role::SpinButton)
                     .label(accessibility_label)
                     .disabled(self.disabled)
@@ -241,7 +297,36 @@ impl RenderOnce for InputNumber {
             let min = self.min;
             let max = self.max;
             let step = self.step;
-            root = root.key_context("GuicInputNumber").on_key_down(
+            for (action, next) in [
+                (gpui::accesskit::Action::Increment, incremented),
+                (gpui::accesskit::Action::Decrement, decremented),
+            ] {
+                let handler = on_change.clone();
+                root = root.on_a11y_action(action, move |_, window, cx| {
+                    if next != value
+                        && let Some(handler) = &handler
+                    {
+                        handler(&next, window, cx);
+                    }
+                });
+            }
+            let handler = on_change.clone();
+            root = root.aria_numeric_value_step(step).on_a11y_action(
+                gpui::accesskit::Action::SetValue,
+                move |data, window, cx| {
+                    if let Some(gpui::accesskit::ActionData::NumericValue(next)) = data
+                        && next.is_finite()
+                    {
+                        let next = next.clamp(min, max);
+                        if next != value
+                            && let Some(handler) = &handler
+                        {
+                            handler(&next, window, cx);
+                        }
+                    }
+                },
+            );
+            root = root.key_context("GuicInputNumber").capture_key_down(
                 move |event: &KeyDownEvent, window, cx| {
                     let next = match event.keystroke.key.as_str() {
                         "up" => Some((value + step).clamp(min, max)),
@@ -393,6 +478,27 @@ mod interaction_tests {
             assert_eq!(view.value, 100.0);
             assert_eq!(view.changes, 1);
         });
+    }
+
+    #[gpui::test]
+    fn direct_text_entry_updates_the_controlled_number(cx: &mut TestAppContext) {
+        init(cx);
+        let (view, cx) = cx.add_window_view(|_, cx| InputNumberHarness::new(cx));
+        let bounds = cx
+            .debug_bounds("guic-text-input-number-value")
+            .expect("numeric editor");
+        cx.simulate_click(bounds.center(), Modifiers::none());
+        let window = cx.window_handle();
+        let command = if cfg!(target_os = "macos") {
+            "cmd-a"
+        } else {
+            "ctrl-a"
+        };
+        cx.dispatch_keystroke(window, Keystroke::parse(command).expect("select all"));
+        cx.simulate_input("8");
+        view.update(cx, |view, _| assert_eq!(view.value, 8.0));
+        cx.dispatch_keystroke(window, Keystroke::parse("up").expect("increment"));
+        view.update(cx, |view, _| assert_eq!(view.value, 10.0));
     }
 
     #[gpui::test]

@@ -200,7 +200,7 @@ impl RenderOnce for Paginator {
                     let label = SharedString::from((page + 1).to_string());
                     let cell = div()
                         .id(SharedString::from(format!("{}-page-{page}", self.id)))
-                        .accessibility(
+                        .accessible(
                             AccessibilityProps::new(Role::Button)
                                 .label(format!("Page {}", page + 1))
                                 .selected(is_current),

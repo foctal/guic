@@ -154,7 +154,7 @@ impl RenderOnce for CascadeSelect {
         let mut root = div().w_full().flex().flex_col().gap_2();
         let trigger = div()
             .id(self.id.clone())
-            .accessibility(
+            .accessible(
                 AccessibilityProps::new(Role::Button)
                     .label(self.placeholder.clone())
                     .expanded(self.expanded)
@@ -254,7 +254,7 @@ fn render_cascade_columns(
             let active = selected == Some(index);
             let mut row = div()
                 .id(format!("guic-cascade-option-{}", path_to_key(&path)))
-                .accessibility(
+                .accessible(
                     AccessibilityProps::new(Role::Option)
                         .label(option.item.label.clone())
                         .selected(active)

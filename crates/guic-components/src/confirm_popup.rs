@@ -121,9 +121,7 @@ impl RenderOnce for ConfirmPopup {
             root = root.child(overlay_portal(
                 div()
                     .id(format!("{}-panel", self.id))
-                    .accessibility(
-                        AccessibilityProps::new(Role::Dialog).label(self.message.clone()),
-                    )
+                    .accessible(AccessibilityProps::new(Role::Dialog).label(self.message.clone()))
                     .debug_selector(|| "guic-confirm-popup-panel".to_owned())
                     .absolute()
                     .top_full()

@@ -899,7 +899,7 @@ impl RenderOnce for TreeView {
         let mut root = div()
             .id(self.id.clone())
             .debug_selector(|| format!("guic-tree-{}", self.id))
-            .accessibility(
+            .accessible(
                 AccessibilityProps::new(Role::Tree)
                     .label(self.title.clone().unwrap_or_else(|| self.id.clone())),
             )
@@ -1105,7 +1105,7 @@ fn render_node_row(node: &TreeNode, depth: usize, context: TreeRenderContext) ->
     }
     let mut row = div()
         .id(node.id.clone())
-        .accessibility(accessibility)
+        .accessible(accessibility)
         .debug_selector({
             let node_id = node.id.clone();
             move || format!("guic-tree-row-{node_id}")

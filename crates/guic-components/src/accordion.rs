@@ -111,7 +111,7 @@ impl RenderOnce for Accordion {
 
             let mut header = div()
                 .id(header_id)
-                .accessibility(
+                .accessible(
                     AccessibilityProps::new(Role::Button)
                         .label(section.title.clone())
                         .expanded(expanded),

@@ -275,7 +275,7 @@ fn render_menu_items(
                     let label = item.label.clone();
                     surface.child(
                         row.id(item.id)
-                            .accessibility(
+                            .accessible(
                                 AccessibilityProps::new(Role::MenuItem)
                                     .label(label)
                                     .selected(active),
@@ -483,7 +483,7 @@ fn render_tiered_menu_items(
                 };
                 let mut row = div()
                     .id(item.id.clone())
-                    .accessibility(
+                    .accessible(
                         AccessibilityProps::new(Role::MenuItem)
                             .label(item_label)
                             .expanded(!children.is_empty() && !is_collapsed),
@@ -671,14 +671,17 @@ impl Menu {
         self
     }
 
-    fn into_surface(self, theme: &Theme) -> gpui::Stateful<gpui::Div> {
+    fn into_surface(
+        self,
+        theme: &Theme,
+    ) -> guic_core::AccessibleElement<gpui::Stateful<gpui::Div>> {
         let items = self.items;
         let active_index = self
             .active_index
             .filter(|index| items.get(*index).is_some_and(MenuItem::is_activatable));
         let mut surface = div()
             .id(self.id.clone())
-            .accessibility(AccessibilityProps::new(Role::Menu))
+            .accessible(AccessibilityProps::new(Role::Menu))
             .flex()
             .flex_col()
             .p_1()

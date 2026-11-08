@@ -122,7 +122,7 @@ impl RenderOnce for Breadcrumb {
                 row.child(
                     crumb
                         .id(item.id)
-                        .accessibility(AccessibilityProps::new(Role::Link).label(item.label))
+                        .accessible(AccessibilityProps::new(Role::Link).label(item.label))
                         .debug_selector(move || selector.clone())
                         .tab_index(0)
                         .key_context("GuicBreadcrumbLink")

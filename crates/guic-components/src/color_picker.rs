@@ -119,7 +119,7 @@ impl RenderOnce for ColorPicker {
             };
             let mut swatch_view = div()
                 .id(format!("guic-color-swatch-{}", value))
-                .accessibility(
+                .accessible(
                     AccessibilityProps::new(Role::Radio)
                         .label(label.clone())
                         .selected(is_selected)

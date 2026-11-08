@@ -659,6 +659,46 @@ pub enum DataTableState {
     },
 }
 
+/// Immutable row data and selection metadata shared between table frames.
+///
+/// Build this once when the dataset changes, then pass cheap clones to
+/// [`DataTable::shared_rows`]. Rendering does not scan or clone offscreen rows.
+#[derive(Clone, Debug, Default)]
+pub struct DataTableRows {
+    rows: Rc<[DataRow]>,
+    ids: Rc<[SharedString]>,
+    selected: Rc<[SharedString]>,
+}
+
+impl DataTableRows {
+    /// Indexes a dataset once for reuse across renders.
+    #[must_use]
+    pub fn new(rows: Vec<DataRow>) -> Self {
+        let ids = rows.iter().map(|row| row.id.clone()).collect();
+        let selected = rows
+            .iter()
+            .filter(|row| row.selected)
+            .map(|row| row.id.clone())
+            .collect();
+        Self {
+            rows: rows.into(),
+            ids,
+            selected,
+        }
+    }
+    /// Returns the immutable rows in display order.
+    #[must_use]
+    pub fn as_slice(&self) -> &[DataRow] {
+        &self.rows
+    }
+}
+impl std::ops::Deref for DataTableRows {
+    type Target = [DataRow];
+    fn deref(&self) -> &Self::Target {
+        &self.rows
+    }
+}
+
 /// A controlled table for structured row and column data.
 ///
 /// The current implementation focuses on stable layout, selection styling,
@@ -686,7 +726,7 @@ pub struct DataTable {
     id: SharedString,
     title: Option<SharedString>,
     columns: Vec<DataColumn>,
-    rows: Vec<DataRow>,
+    rows: DataTableRows,
     state: DataTableState,
     sort: Option<TableSort>,
     on_sort: Option<SortHandler>,
@@ -713,7 +753,7 @@ impl DataTable {
             id: id.into(),
             title: None,
             columns: Vec::new(),
-            rows: Vec::new(),
+            rows: DataTableRows::default(),
             state: DataTableState::Ready,
             sort: None,
             on_sort: None,
@@ -750,6 +790,13 @@ impl DataTable {
     /// Replaces the row data.
     #[must_use]
     pub fn rows(mut self, rows: Vec<DataRow>) -> Self {
+        self.rows = DataTableRows::new(rows);
+        self
+    }
+
+    /// Uses an indexed dataset without cloning rows on every frame.
+    #[must_use]
+    pub fn shared_rows(mut self, rows: DataTableRows) -> Self {
         self.rows = rows;
         self
     }
@@ -979,20 +1026,13 @@ impl DataTable {
     /// Returns the selected row identifier, if any.
     #[must_use]
     pub fn selected_row_id(&self) -> Option<SharedString> {
-        self.rows
-            .iter()
-            .find(|row| row.selected)
-            .map(|row| row.id.clone())
+        self.rows.selected.first().cloned()
     }
 
     /// Returns selected row identifiers in table order.
     #[must_use]
     pub fn selected_row_ids(&self) -> Vec<SharedString> {
-        self.rows
-            .iter()
-            .filter(|row| row.selected)
-            .map(|row| row.id.clone())
-            .collect()
+        self.rows.selected.to_vec()
     }
 
     /// Returns visible row metadata in render order.
@@ -1066,8 +1106,8 @@ impl DataTable {
         )
     }
 
-    fn row_ids(&self) -> Vec<SharedString> {
-        self.rows.iter().map(|row| row.id.clone()).collect()
+    fn row_ids(&self) -> Rc<[SharedString]> {
+        self.rows.ids.clone()
     }
 
     fn page_step(&self) -> usize {
@@ -1123,7 +1163,7 @@ impl RenderOnce for DataTable {
         let (start, end, top_spacer, bottom_spacer) = self.visible_rows();
         let all_row_ids = self.row_ids();
         let selected_row_id = self.selected_row_id();
-        let selected_row_ids = self.selected_row_ids();
+        let selected_row_ids = self.rows.selected.clone();
         let focus_handle = self.focus_handle.clone();
         let keyboard = focus_handle
             .as_ref()
@@ -1308,7 +1348,10 @@ impl RenderOnce for DataTable {
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(Label::new("No rows available").muted(true))
+                .child(
+                    Label::new(guic_core::translate(cx, "table.empty", "No rows available"))
+                        .muted(true),
+                )
                 .into_any_element()
         } else {
             let mut rows = div().w_full().flex().flex_col();
@@ -1318,7 +1361,7 @@ impl RenderOnce for DataTable {
 
             for (row_index, row) in self
                 .rows
-                .into_iter()
+                .iter()
                 .enumerate()
                 .skip(start)
                 .take(end.saturating_sub(start))
@@ -1394,7 +1437,7 @@ impl RenderOnce for DataTable {
                             .flex()
                             .items_center()
                             .justify_end()
-                            .child(renderer(&row)),
+                            .child(renderer(row)),
                     );
                 }
                 row_view = row_view.child(row_start).child(row_middle).child(row_end);
@@ -2279,5 +2322,23 @@ mod tests {
         view.update(cx, |view, _| {
             assert_eq!(view.selected_rows, vec!["row-1", "row-2"]);
         });
+    }
+}
+
+#[cfg(test)]
+mod shared_rows_tests {
+    use super::*;
+    #[test]
+    fn sharing_a_dataset_retains_indexes_and_selection() {
+        let rows = DataTableRows::new(vec![
+            DataRow::new("a", vec!["A"]),
+            DataRow::new("b", vec!["B"]).selected(true),
+        ]);
+        let table = DataTable::new("table").shared_rows(rows.clone());
+        assert!(Rc::ptr_eq(&rows.rows, &table.rows.rows));
+        assert!(Rc::ptr_eq(&rows.ids, &table.row_ids()));
+        assert_eq!(table.selected_row_id().as_deref(), Some("b"));
+        assert_eq!(table.selected_row_ids(), vec![SharedString::from("b")]);
+        assert_eq!(table.rows.as_slice().len(), 2);
     }
 }

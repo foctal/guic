@@ -114,7 +114,7 @@ impl Render for AutoComplete {
         if !query.is_empty() {
             let mut menu = div()
                 .id(format!("{}-suggestions", self.id))
-                .accessibility(
+                .accessible(
                     AccessibilityProps::new(Role::ListBox).label("Autocomplete suggestions"),
                 )
                 .w_full()
@@ -140,9 +140,7 @@ impl Render for AutoComplete {
                 menu = menu.child(
                     div()
                         .id(item.id.clone())
-                        .accessibility(
-                            AccessibilityProps::new(Role::Option).label(item.label.clone()),
-                        )
+                        .accessible(AccessibilityProps::new(Role::Option).label(item.label.clone()))
                         .debug_selector(move || format!("guic-autocomplete-result-{index}"))
                         .tab_index(0)
                         .key_context("GuicAutoCompleteOption")

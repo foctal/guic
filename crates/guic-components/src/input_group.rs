@@ -60,7 +60,7 @@ impl RenderOnce for InputGroup {
         }
         div()
             .id(self.id)
-            .accessibility(accessibility)
+            .accessible(accessibility)
             .w_full()
             .min_w_0()
             .flex()

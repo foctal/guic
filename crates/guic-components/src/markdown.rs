@@ -1,7 +1,9 @@
 use crate::Label;
+use std::{ops::Range, rc::Rc};
+type LinkHandler = Rc<dyn Fn(&str, &mut Window, &mut App)>;
 use gpui::{
-    AnyElement, App, IntoElement, ParentElement as _, RenderOnce, SharedString, Styled as _,
-    Window, div, px,
+    AnyElement, App, InteractiveElement as _, IntoElement, ParentElement as _, RenderOnce,
+    SharedString, Styled as _, Window, div, px,
 };
 use guic_tokens::Theme;
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
@@ -22,6 +24,8 @@ use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, T
 #[derive(gpui::IntoElement)]
 pub struct Markdown {
     source: SharedString,
+    id: SharedString,
+    on_link: Option<LinkHandler>,
 }
 
 impl Markdown {
@@ -30,20 +34,76 @@ impl Markdown {
     pub fn new(source: impl Into<SharedString>) -> Self {
         Self {
             source: source.into(),
+            id: "guic-markdown".into(),
+            on_link: None,
+        }
+    }
+    /// Sets an identity when rendering multiple documents in the same view.
+    #[must_use]
+    pub fn id(mut self, id: impl Into<SharedString>) -> Self {
+        self.id = id.into();
+        self
+    }
+    /// Handles link activation. Without a handler, only HTTP, HTTPS and mail links open.
+    #[must_use]
+    pub fn on_link_click(
+        mut self,
+        handler: impl Fn(&str, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_link = Some(Rc::new(handler));
+        self
+    }
+}
+
+#[derive(Default)]
+struct MarkdownCache {
+    source: SharedString,
+    blocks: Rc<[MarkdownBlock]>,
+    colors: Option<(gpui::Hsla, gpui::Hsla)>,
+    inlines: Vec<Rc<InlineContent>>,
+}
+impl MarkdownCache {
+    fn update(&mut self, source: SharedString, theme: &Theme) {
+        let colors = (theme.primary(), theme.secondary());
+        if self.source != source {
+            self.blocks = parse_markdown(&source).into();
+            self.source = source;
+            self.inlines.clear();
+        }
+        if self.colors != Some(colors) {
+            self.colors = Some(colors);
+            self.inlines.clear();
         }
     }
 }
 
 impl RenderOnce for Markdown {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = Theme::global(cx);
-        let blocks = parse_markdown(self.source.as_ref());
-        let children = blocks
-            .into_iter()
-            .map(|block| render_block(block, theme))
-            .collect::<Vec<_>>();
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let cache = window.use_keyed_state(format!("{}-document", self.id), cx, |_, _| {
+            MarkdownCache::default()
+        });
+        let theme = Theme::global(cx).clone();
+        let children = cache.update(cx, |cache, _| {
+            cache.update(self.source, &theme);
+            let mut inline_id = 0;
+            cache
+                .blocks
+                .clone()
+                .iter()
+                .map(|block| {
+                    render_block(
+                        block,
+                        &theme,
+                        &self.on_link,
+                        &mut inline_id,
+                        &mut cache.inlines,
+                    )
+                })
+                .collect::<Vec<_>>()
+        });
 
         div()
+            .id(self.id)
             .w_full()
             .rounded(px(theme.radius.lg))
             .border_1()
@@ -117,7 +177,13 @@ enum MarkdownBlock {
     Html(String),
 }
 
-fn render_block(block: MarkdownBlock, theme: &Theme) -> AnyElement {
+fn render_block(
+    block: &MarkdownBlock,
+    theme: &Theme,
+    on_link: &Option<LinkHandler>,
+    inline_id: &mut usize,
+    inlines: &mut Vec<Rc<InlineContent>>,
+) -> AnyElement {
     match block {
         MarkdownBlock::Heading { level, text } => {
             let size = match level {
@@ -129,21 +195,21 @@ fn render_block(block: MarkdownBlock, theme: &Theme) -> AnyElement {
             div()
                 .text_size(px(size))
                 .text_color(theme.foreground())
-                .child(text)
+                .child(render_inline(text, theme, on_link, inline_id, inlines))
                 .into_any_element()
         }
-        MarkdownBlock::Paragraph(text) => Label::new(text).into_any_element(),
+        MarkdownBlock::Paragraph(text) => render_inline(text, theme, on_link, inline_id, inlines),
         MarkdownBlock::BulletList(items) => div()
             .flex()
             .flex_col()
             .gap_2()
-            .children(items.into_iter().map(|item| {
+            .children(items.iter().map(|item| {
                 div()
                     .flex()
                     .gap_2()
                     .items_start()
                     .child(div().pt_1().text_color(theme.primary()).child("-"))
-                    .child(Label::new(item))
+                    .child(render_inline(item, theme, on_link, inline_id, inlines))
                     .into_any_element()
             }))
             .into_any_element(),
@@ -151,7 +217,7 @@ fn render_block(block: MarkdownBlock, theme: &Theme) -> AnyElement {
             .flex()
             .flex_col()
             .gap_2()
-            .children(items.into_iter().enumerate().map(|(index, item)| {
+            .children(items.iter().enumerate().map(|(index, item)| {
                 div()
                     .flex()
                     .gap_2()
@@ -161,7 +227,7 @@ fn render_block(block: MarkdownBlock, theme: &Theme) -> AnyElement {
                             .text_color(theme.primary())
                             .child(format!("{}.", index + 1)),
                     )
-                    .child(Label::new(item))
+                    .child(render_inline(item, theme, on_link, inline_id, inlines))
                     .into_any_element()
             }))
             .into_any_element(),
@@ -169,7 +235,7 @@ fn render_block(block: MarkdownBlock, theme: &Theme) -> AnyElement {
             .pl_3()
             .border_l_2()
             .border_color(theme.primary())
-            .child(Label::new(text).muted(true))
+            .child(render_inline(text, theme, on_link, inline_id, inlines))
             .into_any_element(),
         MarkdownBlock::Rule => div()
             .w_full()
@@ -189,9 +255,9 @@ fn render_block(block: MarkdownBlock, theme: &Theme) -> AnyElement {
             if let Some(language) = language
                 && !language.is_empty()
             {
-                root = root.child(Label::new(language).muted(true));
+                root = root.child(Label::new(language.clone()).muted(true));
             }
-            root.child(div().text_color(theme.foreground()).child(code))
+            root.child(div().text_color(theme.foreground()).child(code.clone()))
                 .into_any_element()
         }
         MarkdownBlock::Table { headers, rows } => {
@@ -205,11 +271,15 @@ fn render_block(block: MarkdownBlock, theme: &Theme) -> AnyElement {
                 .flex_col();
 
             if !headers.is_empty() {
-                table = table.child(render_table_row(headers, true, theme));
+                table = table.child(render_table_row(
+                    headers, true, theme, on_link, inline_id, inlines,
+                ));
             }
 
             for row in rows {
-                table = table.child(render_table_row(row, false, theme));
+                table = table.child(render_table_row(
+                    row, false, theme, on_link, inline_id, inlines,
+                ));
             }
 
             table.into_any_element()
@@ -218,12 +288,19 @@ fn render_block(block: MarkdownBlock, theme: &Theme) -> AnyElement {
             .rounded(px(theme.radius.md))
             .bg(theme.secondary().opacity(0.12))
             .p_3()
-            .child(Label::new(html_preview_text(&html)).muted(true))
+            .child(Label::new(html_preview_text(html)).muted(true))
             .into_any_element(),
     }
 }
 
-fn render_table_row(cells: Vec<String>, header: bool, theme: &Theme) -> AnyElement {
+fn render_table_row(
+    cells: &[String],
+    header: bool,
+    theme: &Theme,
+    on_link: &Option<LinkHandler>,
+    inline_id: &mut usize,
+    inlines: &mut Vec<Rc<InlineContent>>,
+) -> AnyElement {
     div()
         .w_full()
         .flex()
@@ -234,7 +311,7 @@ fn render_table_row(cells: Vec<String>, header: bool, theme: &Theme) -> AnyEleme
         } else {
             theme.background()
         })
-        .children(cells.into_iter().map(|cell| {
+        .children(cells.iter().map(|cell| {
             div()
                 .flex_1()
                 .min_w(px(96.0))
@@ -245,13 +322,122 @@ fn render_table_row(cells: Vec<String>, header: bool, theme: &Theme) -> AnyEleme
                 .child(if header {
                     div()
                         .text_color(theme.foreground())
-                        .child(cell)
+                        .child(render_inline(cell, theme, on_link, inline_id, inlines))
                         .into_any_element()
                 } else {
-                    Label::new(cell).into_any_element()
+                    render_inline(cell, theme, on_link, inline_id, inlines)
                 })
                 .into_any_element()
         }))
+        .into_any_element()
+}
+
+#[derive(Default)]
+struct InlineContent {
+    text: SharedString,
+    highlights: Vec<(Range<usize>, gpui::HighlightStyle)>,
+    links: Vec<(Range<usize>, String)>,
+    fonts: Vec<(Range<usize>, SharedString)>,
+}
+
+fn inline_content(source: &str, theme: &Theme) -> InlineContent {
+    let mut result = InlineContent::default();
+    let mut rendered = String::new();
+    let (mut strong, mut emphasis, mut strike) = (0usize, 0usize, 0usize);
+    let mut link: Option<(usize, String)> = None;
+    for event in Parser::new_ext(source, Options::ENABLE_STRIKETHROUGH) {
+        match event {
+            Event::Start(Tag::Strong) => strong += 1,
+            Event::End(TagEnd::Strong) => strong = strong.saturating_sub(1),
+            Event::Start(Tag::Emphasis) => emphasis += 1,
+            Event::End(TagEnd::Emphasis) => emphasis = emphasis.saturating_sub(1),
+            Event::Start(Tag::Strikethrough) => strike += 1,
+            Event::End(TagEnd::Strikethrough) => strike = strike.saturating_sub(1),
+            Event::Start(Tag::Link { dest_url, .. }) => {
+                link = Some((rendered.len(), dest_url.into_string()))
+            }
+            Event::End(TagEnd::Link) => {
+                if let Some((start, url)) = link.take() {
+                    result.links.push((start..rendered.len(), url));
+                }
+            }
+            Event::Code(text) => {
+                let start = rendered.len();
+                rendered.push_str(&text);
+                let range = start..rendered.len();
+                result.fonts.push((range.clone(), "monospace".into()));
+                result.highlights.push((
+                    range,
+                    gpui::HighlightStyle {
+                        background_color: Some(theme.secondary()),
+                        ..Default::default()
+                    },
+                ));
+            }
+            Event::Text(text) => {
+                let start = rendered.len();
+                rendered.push_str(&text);
+                let highlight = gpui::HighlightStyle {
+                    font_weight: (strong > 0).then_some(gpui::FontWeight::BOLD),
+                    font_style: (emphasis > 0).then_some(gpui::FontStyle::Italic),
+                    strikethrough: (strike > 0).then_some(gpui::StrikethroughStyle {
+                        thickness: px(1.0),
+                        color: None,
+                    }),
+                    underline: link.as_ref().map(|_| gpui::UnderlineStyle {
+                        thickness: px(1.0),
+                        color: None,
+                        wavy: false,
+                    }),
+                    color: link.as_ref().map(|_| theme.primary()),
+                    ..Default::default()
+                };
+                result.highlights.push((start..rendered.len(), highlight));
+            }
+            Event::SoftBreak | Event::HardBreak => rendered.push('\n'),
+            _ => {}
+        }
+    }
+    result.text = rendered.into();
+    result
+}
+
+fn render_inline(
+    source: &str,
+    theme: &Theme,
+    on_link: &Option<LinkHandler>,
+    inline_id: &mut usize,
+    inlines: &mut Vec<Rc<InlineContent>>,
+) -> AnyElement {
+    if *inline_id == inlines.len() {
+        inlines.push(Rc::new(inline_content(source, theme)));
+    }
+    let content = inlines[*inline_id].clone();
+    let text = gpui::StyledText::new(content.text.clone())
+        .with_highlights(content.highlights.clone())
+        .with_font_family_overrides(content.fonts.clone());
+    let id = format!("inline-{}", *inline_id);
+    *inline_id += 1;
+    let ranges = content
+        .links
+        .iter()
+        .map(|(range, _)| range.clone())
+        .collect();
+    let handler = on_link.clone();
+    gpui::InteractiveText::new(id, text)
+        .on_click(ranges, move |index, window, cx| {
+            let url = &content.links[index].1;
+            if let Some(handler) = &handler {
+                handler(url, window, cx);
+            } else if matches!(
+                url.split_once(':')
+                    .map(|(scheme, _)| scheme.to_ascii_lowercase())
+                    .as_deref(),
+                Some("http" | "https" | "mailto")
+            ) {
+                cx.open_url(url);
+            }
+        })
         .into_any_element()
 }
 
@@ -265,6 +451,7 @@ fn parse_markdown(source: &str) -> Vec<MarkdownBlock> {
     let mut current_html = String::new();
     let mut current_code = String::new();
     let mut code_language = None;
+    let mut link_destinations = Vec::new();
     let mut in_paragraph = false;
     let mut in_heading = None;
     let mut in_quote = false;
@@ -275,7 +462,7 @@ fn parse_markdown(source: &str) -> Vec<MarkdownBlock> {
     let mut in_table_head = false;
 
     let mut options = Options::empty();
-    options.insert(Options::ENABLE_TABLES);
+    options.insert(Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH);
 
     for event in Parser::new_ext(source, options) {
         match event {
@@ -425,13 +612,22 @@ fn parse_markdown(source: &str) -> Vec<MarkdownBlock> {
                 if in_code {
                     current_code.push_str(text.as_ref());
                 } else {
-                    current_text.push_str(text.as_ref());
+                    for ch in text.chars() {
+                        if "\\`*_{}[]()#+-.!|>~".contains(ch) {
+                            current_text.push('\\');
+                        }
+                        current_text.push(ch);
+                    }
                 }
             }
             Event::Code(code) => {
-                current_text.push('`');
+                let fence =
+                    "`".repeat(code.split(|ch| ch != '`').map(str::len).max().unwrap_or(0) + 1);
+                current_text.push_str(&fence);
+                current_text.push(' ');
                 current_text.push_str(code.as_ref());
-                current_text.push('`');
+                current_text.push(' ');
+                current_text.push_str(&fence);
             }
             Event::InlineMath(math) => {
                 current_text.push('$');
@@ -451,8 +647,14 @@ fn parse_markdown(source: &str) -> Vec<MarkdownBlock> {
             Event::End(TagEnd::Strikethrough) => current_text.push_str("~~"),
             Event::Start(Tag::Link { dest_url, .. }) => {
                 current_text.push('[');
-                current_text.push_str(dest_url.as_ref());
-                current_text.push_str("] ");
+                link_destinations.push(dest_url.into_string());
+            }
+            Event::End(TagEnd::Link) => {
+                current_text.push_str("](<");
+                if let Some(destination) = link_destinations.pop() {
+                    current_text.push_str(&destination.replace('>', "%3E").replace('<', "%3C"));
+                }
+                current_text.push_str(">)");
             }
             Event::Start(Tag::Image { dest_url, .. }) => {
                 current_text.push_str("[image ");
@@ -616,6 +818,55 @@ mod tests {
     }
 
     #[test]
+    fn retained_document_reuses_parsing_and_invalidates_colors() {
+        use super::{MarkdownCache, inline_content};
+        use std::rc::Rc;
+        let mut cache = MarkdownCache::default();
+        let theme = guic_tokens::Theme::dark();
+        cache.update("**Ready**".into(), &theme);
+        let blocks = cache.blocks.clone();
+        cache
+            .inlines
+            .push(Rc::new(inline_content("**Ready**", &theme)));
+        let inline = cache.inlines[0].clone();
+        cache.update("**Ready**".into(), &theme);
+        assert!(Rc::ptr_eq(&blocks, &cache.blocks));
+        assert!(Rc::ptr_eq(&inline, &cache.inlines[0]));
+        cache.update("**Ready**".into(), &guic_tokens::Theme::light());
+        assert!(Rc::ptr_eq(&blocks, &cache.blocks));
+        assert!(cache.inlines.is_empty());
+        cache.update("Changed".into(), &theme);
+        assert!(!Rc::ptr_eq(&blocks, &cache.blocks));
+    }
+
+    #[test]
+    fn rich_inline_preserves_escapes_unicode_and_nested_styles() {
+        let blocks = parse_markdown(
+            r"**Bold and *italic*** with \*literal\* and `a` and [Guide](https://example.com).",
+        );
+        let MarkdownBlock::Paragraph(source) = &blocks[0] else {
+            panic!("paragraph");
+        };
+        let content = super::inline_content(source, &guic_tokens::Theme::dark());
+        assert_eq!(
+            content.text,
+            "Bold and italic with *literal* and a and Guide."
+        );
+        assert!(
+            content
+                .highlights
+                .iter()
+                .any(|(_, style)| style.font_weight.is_some() && style.font_style.is_some())
+        );
+        assert_eq!(content.links.len(), 1);
+        assert_eq!(&content.text[content.links[0].0.clone()], "Guide");
+        assert_eq!(content.links[0].1, "https://example.com");
+        assert_eq!(&content.text[content.fonts[0].0.clone()], "a");
+        let content = super::inline_content("**\u{65e5}\u{672c}**", &guic_tokens::Theme::light());
+        assert_eq!(content.highlights[0].0, 0..6);
+    }
+
+    #[test]
     fn markdown_parser_handles_tables() {
         let blocks = parse_markdown(
             "| Area | Status |\n| --- | --- |\n| Tokens | Stable |\n| Runtime | Preview |",
@@ -651,10 +902,10 @@ mod tests {
             blocks,
             vec![
                 MarkdownBlock::Paragraph(
-                    "Intro with **bold** and *emphasis* and ~~strike~~.".to_owned()
+                    "Intro with **bold** and *emphasis* and ~~strike~~\\.".to_owned()
                 ),
                 MarkdownBlock::Rule,
-                MarkdownBlock::Paragraph("[https://example.com] Guide".to_owned()),
+                MarkdownBlock::Paragraph("[Guide](<https://example.com>)".to_owned()),
             ]
         );
     }
@@ -668,7 +919,7 @@ mod tests {
         assert_eq!(
             blocks,
             vec![
-                MarkdownBlock::Paragraph("Before preview after.".to_owned()),
+                MarkdownBlock::Paragraph("Before preview after\\.".to_owned()),
                 MarkdownBlock::Paragraph("[image asset://logo.svg: Logo]".to_owned()),
                 MarkdownBlock::Html("<div>Inline <strong>HTML</strong></div>".to_owned()),
             ]

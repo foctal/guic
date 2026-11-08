@@ -328,7 +328,7 @@ impl RenderOnce for Select {
 
         let mut trigger = div()
             .id(self.id.clone())
-            .accessibility(
+            .accessible(
                 AccessibilityProps::new(Role::Button)
                     .label(accessible_label)
                     .expanded(self.expanded)
@@ -472,7 +472,7 @@ impl RenderOnce for Select {
         if self.expanded && !self.disabled {
             let mut menu = div()
                 .id(format!("{}-menu", self.id))
-                .accessibility(
+                .accessible(
                     AccessibilityProps::new(Role::ListBox).label(format!("{} options", self.id)),
                 )
                 .debug_selector(|| format!("guic-select-menu-{}", self.id))
@@ -504,7 +504,7 @@ impl RenderOnce for Select {
             for (index, item) in self.items.into_iter().enumerate() {
                 let row = div()
                     .id(item.id.clone())
-                    .accessibility(
+                    .accessible(
                         AccessibilityProps::new(Role::Option)
                             .label(item.label.clone())
                             .selected(Some(index) == self.selected)

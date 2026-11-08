@@ -122,7 +122,7 @@ impl RenderOnce for Checkbox {
         let accessibility_label = self.label.clone().unwrap_or_else(|| self.id.clone());
         let mut row = div()
             .id(self.id.clone())
-            .accessibility(
+            .accessible(
                 AccessibilityProps::new(Role::Checkbox)
                     .label(accessibility_label)
                     .checked(self.checked)

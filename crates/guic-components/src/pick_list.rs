@@ -95,7 +95,7 @@ impl RenderOnce for PickList {
                         "available"
                     }
                 ))
-                .accessibility(AccessibilityProps::new(Role::ListBox).label(label.clone()))
+                .accessible(AccessibilityProps::new(Role::ListBox).label(label.clone()))
                 .flex_1()
                 .min_w(px(160.))
                 .rounded(px(theme.radius.md))
@@ -146,7 +146,7 @@ impl RenderOnce for PickList {
                             "available"
                         }
                     ))
-                    .accessibility(
+                    .accessible(
                         AccessibilityProps::new(Role::Option)
                             .label(item.label.clone())
                             .selected(selected_pane)

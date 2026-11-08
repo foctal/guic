@@ -159,7 +159,7 @@ impl RenderOnce for Tabs {
             } else if let Some(on_select) = self.on_select.clone() {
                 row.child(
                     base.id(item.id)
-                        .accessibility(
+                        .accessible(
                             AccessibilityProps::new(Role::Tab)
                                 .label(label)
                                 .selected(selected),

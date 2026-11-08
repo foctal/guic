@@ -261,7 +261,7 @@ impl RenderOnce for Button {
             .unwrap_or_else(|| self.label.clone());
         let mut button = div()
             .id(element_id.clone())
-            .accessibility(
+            .accessible(
                 AccessibilityProps::new(Role::Button)
                     .label(button_label)
                     .disabled(self.disabled),

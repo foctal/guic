@@ -280,7 +280,7 @@ impl Render for CommandPalette {
 
         let mut results = div()
             .id(format!("{}-results", self.id))
-            .accessibility(AccessibilityProps::new(Role::ListBox).label("Matching commands"))
+            .accessible(AccessibilityProps::new(Role::ListBox).label("Matching commands"))
             .debug_selector(|| "guic-command-palette-results".into())
             .w_full()
             .max_h((window.viewport_size().height - px(200.0)).clamp(px(0.0), px(360.0)))
@@ -321,7 +321,7 @@ impl Render for CommandPalette {
             let mut row = div()
                 .id(format!("{}-command-{}", self.id, item.id))
                 .debug_selector(move || format!("guic-command-palette-item-{result_index}"))
-                .accessibility(
+                .accessible(
                     AccessibilityProps::new(Role::Option)
                         .label(item.title.clone())
                         .selected(active)
@@ -370,7 +370,7 @@ impl Render for CommandPalette {
             .key_context("GuicCommandPalette")
             .on_key_down(cx.listener(Self::handle_key))
             .on_action(cx.listener(Self::handle_submit))
-            .accessibility(AccessibilityProps::new(Role::Dialog).label("Command palette"))
+            .accessible(AccessibilityProps::new(Role::Dialog).label("Command palette"))
             .w_full()
             .max_w(px(640.0))
             .rounded(px(theme.radius.lg))

@@ -104,7 +104,7 @@ impl RenderOnce for Form {
         let theme = Theme::global(cx);
         let mut root = div()
             .id(self.id)
-            .accessibility(
+            .accessible(
                 AccessibilityProps::new(Role::Group)
                     .label(self.label.unwrap_or_else(|| "Form".into())),
             )
@@ -225,7 +225,7 @@ impl RenderOnce for FormField {
 
         let mut root = div()
             .id(self.id)
-            .accessibility(
+            .accessible(
                 AccessibilityProps::new(Role::Group)
                     .label(label)
                     .description(accessible_description.unwrap_or_default())
@@ -301,7 +301,7 @@ impl RenderOnce for FormSummary {
             .collect::<Vec<_>>();
         let mut root = div()
             .id(self.id)
-            .accessibility(AccessibilityProps::new(Role::Group).label(self.title.clone()))
+            .accessible(AccessibilityProps::new(Role::Group).label(self.title.clone()))
             .w_full()
             .rounded(px(theme.radius.md))
             .border_1()

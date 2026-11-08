@@ -56,7 +56,7 @@ impl Render for TooltipBubble {
         let theme = Theme::global(cx);
         div()
             .id("guic-tooltip-bubble")
-            .accessibility(AccessibilityProps::new(Role::Tooltip).label(self.message.clone()))
+            .accessible(AccessibilityProps::new(Role::Tooltip).label(self.message.clone()))
             .px_3()
             .py_2()
             .rounded(px(theme.radius.sm))

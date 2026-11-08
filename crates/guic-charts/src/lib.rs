@@ -1974,7 +1974,7 @@ fn render_chart(
     let accessible_description = bounded_accessible_description(&series, 20);
     let mut root = div()
         .id(id.clone())
-        .accessibility(
+        .accessible(
             AccessibilityProps::new(Role::Group)
                 .label(accessible_label)
                 .description(accessible_description),
@@ -2231,7 +2231,7 @@ fn render_interaction_controls(
                     let handler = handler.clone();
                     div()
                         .id(format!("{id}-control-{index}"))
-                        .accessibility(AccessibilityProps::new(Role::Button).label(label))
+                        .accessible(AccessibilityProps::new(Role::Button).label(label))
                         .tab_index(0)
                         .key_context("GuicChartControl")
                         .px_2()

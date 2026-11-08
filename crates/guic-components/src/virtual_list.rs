@@ -4,6 +4,8 @@ use gpui::{
 };
 use std::{ops::Range, rc::Rc};
 
+type RenderItemFn = dyn Fn(usize, &mut Window, &mut App) -> AnyElement;
+
 type RenderRangeFn = dyn Fn(Range<usize>, &mut Window, &mut App) -> Vec<AnyElement>;
 
 /// A lightweight wrapper around GPUI's uniform list.
@@ -196,5 +198,112 @@ mod boundary_tests {
     fn total_height_stays_finite_for_extreme_content() {
         let metrics = VirtualListMetrics::new(f32::MAX, 100.0, 0, usize::MAX);
         assert_eq!(metrics.total_height(), f32::MAX);
+    }
+}
+
+/// A virtual list that measures variable-height items lazily.
+///
+/// Retain the [`gpui::ListState`] between renders. Use its `splice` method when
+/// items change so cached measurements and the scroll anchor stay consistent.
+/// Width changes are remeasured by GPUI without constructing every row.
+#[derive(gpui::IntoElement)]
+pub struct VariableList {
+    state: gpui::ListState,
+    render_item: Rc<RenderItemFn>,
+    height: gpui::Pixels,
+}
+
+impl VariableList {
+    /// Creates a variable-height list using retained measurement and scroll state.
+    #[must_use]
+    pub fn new(
+        state: gpui::ListState,
+        render_item: impl Fn(usize, &mut Window, &mut App) -> AnyElement + 'static,
+    ) -> Self {
+        Self {
+            state,
+            render_item: Rc::new(render_item),
+            height: gpui::px(240.0),
+        }
+    }
+    /// Sets the viewport height, clamping invalid values to zero.
+    #[must_use]
+    pub fn height(mut self, height: gpui::Pixels) -> Self {
+        self.height = if f32::from(height).is_finite() {
+            height.max(gpui::px(0.0))
+        } else {
+            gpui::px(0.0)
+        };
+        self
+    }
+}
+impl RenderOnce for VariableList {
+    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+        gpui::list(self.state, move |index, window, cx| {
+            (self.render_item)(index, window, cx)
+        })
+        .w_full()
+        .h(self.height)
+    }
+}
+
+#[cfg(test)]
+mod variable_tests {
+    use super::*;
+    use gpui::{Context, InteractiveElement as _, Render, TestAppContext, px};
+    use std::cell::Cell;
+    struct Harness {
+        state: gpui::ListState,
+        rendered: Rc<Cell<usize>>,
+    }
+    impl Render for Harness {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let rendered = self.rendered.clone();
+            VariableList::new(self.state.clone(), move |index, _, _| {
+                rendered.set(rendered.get() + 1);
+                div()
+                    .debug_selector(move || format!("variable-{index}"))
+                    .h(px(if index % 2 == 0 { 30.0 } else { 90.0 }))
+                    .child(index.to_string())
+                    .into_any_element()
+            })
+            .height(px(240.0))
+        }
+    }
+    #[gpui::test]
+    fn variable_rows_are_measured_only_near_the_viewport(cx: &mut TestAppContext) {
+        let rendered = Rc::new(Cell::new(0));
+        let state = gpui::ListState::new(10_000, gpui::ListAlignment::Top, px(50.0));
+        let (_, cx) = cx.add_window_view({
+            let state = state.clone();
+            let rendered = rendered.clone();
+            move |_, _| Harness { state, rendered }
+        });
+        assert!(rendered.get() < 100);
+        assert_eq!(
+            cx.debug_bounds("variable-0")
+                .expect("first row")
+                .size
+                .height,
+            px(30.0)
+        );
+        assert_eq!(
+            cx.debug_bounds("variable-1")
+                .expect("second row")
+                .size
+                .height,
+            px(90.0)
+        );
+        rendered.set(0);
+        state.scroll_to(gpui::ListOffset {
+            item_ix: 9000,
+            offset_in_item: px(0.0),
+        });
+        cx.update(|window, cx| {
+            window.refresh();
+            window.draw(cx).clear(cx);
+        });
+        assert!(rendered.get() < 100);
+        assert!(cx.debug_bounds("variable-9000").is_some());
     }
 }

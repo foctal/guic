@@ -123,7 +123,7 @@ impl RenderOnce for Chip {
                 let selector = format!("guic-chip-{}", self.id);
                 move || selector.clone()
             })
-            .accessibility(
+            .accessible(
                 AccessibilityProps::new(Role::Button)
                     .label(self.label.clone())
                     .selected(self.selected)

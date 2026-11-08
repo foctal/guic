@@ -123,7 +123,7 @@ impl RenderOnce for Listbox {
         };
         let mut root = div()
             .id(self.id)
-            .accessibility(AccessibilityProps::new(Role::ListBox))
+            .accessible(AccessibilityProps::new(Role::ListBox))
             .w_full()
             .rounded(px(theme.radius.md))
             .border_1()
@@ -144,7 +144,7 @@ impl RenderOnce for Listbox {
             let label = item.label.clone();
             let row = div()
                 .id(format!("guic-listbox-item-{index}"))
-                .accessibility(
+                .accessible(
                     AccessibilityProps::new(Role::Option)
                         .label(label)
                         .selected(selected),
