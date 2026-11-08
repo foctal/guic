@@ -12,8 +12,9 @@ HTML previews, or other content that needs a browser engine.
 - It should be treated as an isolated surface, not a seamless composited GPUI
   primitive.
 - Behavior depends on the underlying platform WebView implementation.
-- On Windows, the example currently sets `GPUI_DISABLE_DIRECT_COMPOSITION=true`
-  before app startup as a workaround for compositor conflicts.
+- On Windows, the example sets `WindowOptions::windows_composition` to
+  `gpui::WindowsCompositionMode::RedirectionBitmap` for the WebView host window.
+  Other application windows can retain their default rendering mode.
 
 ## Linux example
 

@@ -70,13 +70,6 @@ fn main() {
         std::process::exit(1);
     }
 
-    #[cfg(target_os = "windows")]
-    // SAFETY: This process-level environment variable is set before the GPUI
-    // application is initialized, which avoids concurrent mutation hazards.
-    unsafe {
-        std::env::set_var("GPUI_DISABLE_DIRECT_COMPOSITION", "true");
-    }
-
     gpui_platform::application().run(move |cx: &mut gpui::App| {
         guic::init(cx);
 
@@ -84,6 +77,7 @@ fn main() {
         linux::run_gtk_loop(cx);
 
         let options = WindowOptions {
+            windows_composition: gpui::WindowsCompositionMode::RedirectionBitmap,
             window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                 None,
                 size(px(1200.), px(800.)),
