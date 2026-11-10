@@ -1,6 +1,10 @@
 [workspace]
 members = [
     "crates/cargo-guic",
+    "crates/guic-packager",
+    "crates/guic-packager-updater",
+    "crates/guic-packager-utils",
+    "crates/guic-packager-resource-resolver",
     "crates/guic-build",
     "crates/guic",
     "crates/guic-core",
@@ -14,7 +18,6 @@ members = [
     "crates/guic-assets",
     "crates/guic-macros",
     "crates/guic-story",
-    "crates/quick-xml-compat",
     "examples/hello_world",
     "examples/assets_demo",
     "examples/charts_dashboard",
@@ -39,7 +42,7 @@ rust-version = "1.95"
 
 [workspace.dependencies]
 anyhow = "1"
-gpui = { package = "guic-gpui", version = "=0.6.0" }
+gpui = { package = "guic-gpui", version = "=0.6.1" }
 gtk = "0.18.2"
 once_cell = "1"
 raw-window-handle = { version = "0.6", features = ["std"] }
@@ -53,10 +56,6 @@ tracing = "0.1"
 unicode-segmentation = "1"
 unicode-linebreak = "0.1.5"
 wry = "0.53.3"
-
-[patch.crates-io]
-# zbus_xml 5.1.1 constrains quick-xml below the security fixes in 0.41.
-quick-xml = { path = "crates/quick-xml-compat" }
 
 [workspace.lints.clippy]
 dbg_macro = "deny"

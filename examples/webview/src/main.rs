@@ -14,13 +14,7 @@ struct AppView {
 impl AppView {
     fn new(window: &mut Window, url: &str, cx: &mut Context<Self>) -> Self {
         let webview = cx.new(|cx| {
-            let builder = wry::WebViewBuilder::new().with_on_page_load_handler(|event, url| {
-                let event = match event {
-                    wry::PageLoadEvent::Started => "started",
-                    wry::PageLoadEvent::Finished => "finished",
-                };
-                eprintln!("WebView {event}: {url}");
-            });
+            let builder = wry::WebViewBuilder::new();
 
             #[cfg(target_os = "linux")]
             let webview =
