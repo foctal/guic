@@ -9,7 +9,7 @@ use std::{
     process::Command,
 };
 
-pub(crate) const VERSION: &str = "0.11.8";
+pub(crate) const VERSION: &str = "guic-packager 0.1.0";
 
 fn xml(value: &str) -> Result<String> {
     ensure!(

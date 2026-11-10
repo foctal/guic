@@ -15,7 +15,7 @@ anyhow.workspace = true
 cargo_metadata = "0.23"
 cargo-config2 = "0.1.45"
 
-cargo-packager = { version = "=0.11.8", default-features = false, features = ["rustls-tls"] }
+cargo-packager = { package = "guic-packager", version = "0.1.0", path = "../guic-packager", default-features = false, features = ["rustls-tls"] }
 clap = { version = "4", features = ["derive"] }
 ctrlc = { version = "3", features = ["termination"] }
 fs2 = "0.4"
@@ -46,4 +46,4 @@ libc = "0.2"
 workspace = true
 
 [dev-dependencies]
-cargo-packager-updater = "=0.2.3"
+cargo-packager-updater = { package = "guic-packager-updater", version = "0.1.0", path = "../guic-packager-updater" }

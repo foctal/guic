@@ -6,6 +6,16 @@ Copyright 2026 foctal
 Licensed under the Apache License, Version 2.0. The full license text is
 available in `LICENSE`.
 
+## Packaging fork
+
+The `guic-packager`, `guic-packager-updater`, `guic-packager-utils`, and
+`guic-packager-resource-resolver` crates are derived from
+[cargo-packager](https://github.com/crabnebula-dev/cargo-packager), by CrabNebula
+Ltd. and contributors, including code from Tauri Programme within The Commons
+Conservancy. These crates retain Apache-2.0 OR MIT licensing. Original copyright
+notices and both license texts are included in each crate; `UPSTREAM.md` records
+provenance.
+
 ## Referenced projects
 
 [gpui-component](https://github.com/longbridge/gpui-component) served as a
