@@ -267,9 +267,23 @@ pub(crate) fn reserve(destinations: &mut BTreeSet<String>, destination: &Path) -
                     || p.is_empty()
                     || p.ends_with(['.', ' '])
                     || ["con", "prn", "aux", "nul"].contains(&stem)
-                    || (stem.len() == 4
-                        && (stem.starts_with("com") || stem.starts_with("lpt"))
-                        && matches!(stem.as_bytes()[3], b'1'..=b'9'))
+                    || matches!(
+                        stem.strip_prefix("com")
+                            .or_else(|| stem.strip_prefix("lpt")),
+                        Some(
+                            "1" | "2"
+                                | "3"
+                                | "4"
+                                | "5"
+                                | "6"
+                                | "7"
+                                | "8"
+                                | "9"
+                                | "\u{b9}"
+                                | "\u{b2}"
+                                | "\u{b3}"
+                        )
+                    )
             }),
         "unsafe resource destination"
     );
@@ -531,6 +545,22 @@ mod tests {
         assert_eq!(partial.outputs.len(), 1);
         assert!(partial.outputs[0].path.is_file());
         Ok(())
+    }
+
+    #[test]
+    fn windows_superscript_device_names_are_rejected() {
+        for prefix in ["COM", "lpt"] {
+            for digit in ['\u{b9}', '\u{b2}', '\u{b3}'] {
+                for suffix in ["", ".txt", "/data"] {
+                    let name = format!("assets/{prefix}{digit}{suffix}");
+                    assert!(
+                        reserve(&mut BTreeSet::new(), Path::new(&name)).is_err(),
+                        "{name}"
+                    );
+                }
+            }
+        }
+        assert!(reserve(&mut BTreeSet::new(), Path::new("assets/company.txt")).is_ok());
     }
 
     #[test]
