@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## 0.6.0 - 2026-11-10
 
 ### Added
 
@@ -56,6 +56,8 @@ All notable changes to this project will be documented in this file.
 
 ### Migration notes
 
+- Update direct GUIC crate dependencies to 0.6.0. Applications with explicit
+  `guic-gpui` or `guic-gpui-platform` dependencies must pin them to `=0.6.1`.
 - `guic::updater` now re-exports `guic-packager-updater`. Direct upstream types
   are distinct. `Config` adds `dangerous_insecure_transport_protocol`; set it
   to `false` or use `..Default::default()`. The HTTP client re-export uses reqwest 0.13.

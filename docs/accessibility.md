@@ -27,5 +27,4 @@ Use visible text as its accessible name when possible.
 
 Test keyboard navigation, focus restoration, and screen-reader output on each
 target platform. Metadata alone does not establish screen-reader compatibility.
-See [focus behavior](component-behavior.md#focus-lifecycle),
-[theming](theming.md), and the [platform checklist](platform-smoke.md).
+See [focus behavior](component-behavior.md#focus-lifecycle) and [theming](theming.md).

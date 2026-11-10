@@ -617,8 +617,7 @@ host the generated directory at the specified HTTPS location manually.
 Enable `guic`'s `updater` feature. The `guic::updater` module exposes the workspace
 fork `guic-packager-updater` 0.1.0. macOS installation uses an atomic bundle swap
 and requests system authorization when necessary. Cancellation leaves the old
-application intact. See the [dependency policy](dependency-policy.md#optional-application-updater)
-for filesystem requirements and migration notes.
+application intact. 
 
 ```rust,no_run
 fn check_for_updates() -> Result<(), Box<dyn std::error::Error>> {

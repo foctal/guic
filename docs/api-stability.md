@@ -8,7 +8,7 @@ may change between releases. See the [changelog](../CHANGELOG.md) before upgradi
 | Core, tokens, components, icons, assets, macros, charts, and native integration | Preview |
 | Editor and WebView integration | Experimental |
 | `cargo-guic`, `guic-build`, and the `guic-packager` crate family | Preview tooling, versioned separately as `0.1.x` |
-| Examples, gallery, compatibility packages, and build tasks | Not published |
+| Examples, gallery, and build tasks | Not published |
 
 Experimental integrations may require application-specific adapters and have
 the limitations described in their guides. The `guic` umbrella crate inherits

@@ -165,9 +165,7 @@ graphemes, and multiple edits on one line can still be expensive. Background
 processing does not guarantee a latency bound for every operation.
 
 The layout is intended for monospace text. Full bidirectional editing and
-accessibility text ranges are not supported. Native IME, screen-reader behavior,
-and interactive latency require the [platform smoke checks](../platform-smoke.md);
-automated model and rendering tests do not establish those guarantees.
+accessibility text ranges are not supported. 
 
 ## Rectangular selection
 

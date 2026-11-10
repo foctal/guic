@@ -27,9 +27,7 @@ cargo install cargo-guic --locked
 cargo guic --help
 ```
 
-Use `--locked` to retain the packaged dependency versions. See the
-[dependency policy](https://github.com/foctal/guic/blob/main/docs/dependency-policy.md#cargo-guic-backend)
-for resolution constraints and known advisories.
+Use `--locked` to retain the packaged dependency versions. 
 
 To install from source, run from the repository root:
 

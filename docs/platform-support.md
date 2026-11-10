@@ -12,8 +12,6 @@ limitations are described in [API stability](api-stability.md).
 | Ubuntu | Workspace tests, formatting, strict full/minimal rustdoc, documentation examples, and theme schema |
 
 The [CI workflow](../.github/workflows/ci.yml) defines the exact commands.
-Native input, accessibility, rendering, and installed application behavior
-require the [platform smoke checks](platform-smoke.md).
 
 ## Linux
 

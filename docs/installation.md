@@ -1,39 +1,54 @@
 # Installation
 
-GUIC requires Rust 1.95 or newer. Add the toolkit, GPUI, and the platform
-runtime to the application manifest. These versions apply to GUIC 0.5.0:
+GUIC requires Rust 1.95 or newer. Add the toolkit to the application manifest:
 
 ```toml
 [dependencies]
-guic = "0.5.0"
-gpui = { package = "guic-gpui", version = "=0.5.0" }
-
-[target.'cfg(target_os = "linux")'.dependencies]
-gpui_platform = { package = "guic-gpui-platform", version = "=0.5.0", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
-
-[target.'cfg(target_os = "macos")'.dependencies]
-gpui_platform = { package = "guic-gpui-platform", version = "=0.5.0", features = ["font-kit"] }
-
-[target.'cfg(target_os = "windows")'.dependencies]
-gpui_platform = { package = "guic-gpui-platform", version = "=0.5.0" }
+guic = "0.6.0"
 ```
 
-To use a source checkout, replace the `guic` dependency with a local path or
-a pinned Git revision and keep the matching runtime versions:
+The default `application` feature selects the native platform backend.
+`guic::gpui` re-exports the matching runtime; import it as `gpui` when using
+GPUI action macros or derives. `guic::application()` creates the application,
+and `guic::open_window(cx, options, builder)` initializes GUIC and wraps the
+content entity in `Root`. See the [quick start](../README.md#quick-start) and
+[hello-world example](../examples/hello_world/src/main.rs).
+
+With `default-features = false`, enable `application` for the backend helper
+and select the component and subsystem features your application needs.
+Applications can also supply a platform backend and construct `Root` themselves.
+
+## Explicit runtime dependencies
+
+Applications importing GPUI directly should use the versions below with GUIC
+0.6.0. The runtime family is pinned to 0.6.1; its version differs from GUIC's.
+
+```toml
+[dependencies]
+guic = "0.6.0"
+gpui = { package = "guic-gpui", version = "=0.6.1" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gpui_platform = { package = "guic-gpui-platform", version = "=0.6.1", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+gpui_platform = { package = "guic-gpui-platform", version = "=0.6.1", features = ["font-kit"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+gpui_platform = { package = "guic-gpui-platform", version = "=0.6.1" }
+```
+
+## Source checkouts
+
+Replace the `guic` dependency with a local path or a pinned Git revision:
 
 ```toml
 guic = { git = "https://github.com/foctal/guic", rev = "<commit>" }
 ```
 
-The current development checkout uses the published `guic-gpui` and
-`guic-gpui-platform` 0.6.1 crates. When using this checkout, change the `gpui`
-version and every target-specific `gpui_platform` version above to `=0.6.1`,
-preserving their feature lists. No sibling runtime checkout or runtime patch
-is needed. Keep the 0.5.0 runtime pins when using the published GUIC 0.5.0 release.
-
-Do not use a moving branch for reproducible builds. GUIC `0.5.x` is a preview;
-enable only the subsystem features the application needs and review
-[API Stability](api-stability.md) before upgrading.
+Keep any explicit runtime dependencies aligned with the checkout. No sibling
+runtime checkout or runtime patch is needed. Avoid moving branches for
+reproducible builds and review [API Stability](api-stability.md) before upgrading.
 
 ## Linux
 
@@ -46,16 +61,3 @@ optional WebView integration:
 
 Applications that do not enable the `webview` feature do not need WebKit at
 runtime. See [Platform Support](platform-support.md) for the validation matrix.
-
-## Development facade
-
-The development checkout also supports a single `guic` dependency. Its default
-`application` feature selects the native platform backend, and `guic::gpui`
-re-exports the matching runtime. Import it as `gpui` when using GPUI action macros
-or derives. `guic::application()` creates the application;
-`guic::open_window(cx, options, builder)` initializes GUIC and wraps the content
-entity in `Root`. The hello-world example demonstrates this setup.
-
-With `default-features = false`, opt into `application` for the backend helper,
-or continue supplying a platform and constructing `Root` yourself. The existing
-explicit runtime dependencies and initialization API remain supported.

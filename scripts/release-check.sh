@@ -20,4 +20,3 @@ cargo metadata --locked --format-version 1 >/dev/null
 ./scripts/package-check.sh
 
 echo "Automated release checks passed."
-echo "Complete docs/platform-smoke.md on physical target systems before release."
