@@ -12,11 +12,14 @@ The GUI library crates use version `0.5.0`. Publish in dependency order:
 3. `guic-components`, `guic-charts`, `guic-editor`, and `guic-native`
 4. `guic`
 
-Examples, samples, `guic-story`, `quick-xml-compat`, and `xtask` are internal
+Examples, samples, `guic-story`, and `xtask` are internal
 and set `publish = false`.
 
 The tooling crates use version `0.1.0` and have an independent publication
-order: publish `guic-build` first, then `cargo-guic`. Neither depends on the GUI
+order: publish `guic-packager-utils` first, followed by `guic-packager`,
+`guic-packager-updater`, and `guic-packager-resource-resolver`. Publish
+`guic-build` before `cargo-guic`, and `guic-packager-updater` before `guic`.
+The packaging fork family also starts at `0.1.0`. These tooling crates do not depend on the GUI
 library crates. Install released tooling with `cargo install cargo-guic --locked` and invoke it with `cargo guic`. See the
 [cargo-guic guide](cargo-guic.md).
 
@@ -28,19 +31,20 @@ Run:
 ./scripts/package-check.sh
 ```
 
-The script builds and verifies both tooling archives together using Cargo's
-temporary registry, so they can be checked before either is published. It also
-builds archives for the independent first-stage GUI crates and lists package
-contents for every public crate. To check only the tooling crates, run:
+The script checks license files and builds every public archive together.
+Cargo's temporary registry resolves dependencies between these archives, so
+verification does not require publishing prerequisites first. Nothing is uploaded.
+To check only the tooling crates, run:
 
 ```bash
-cargo package --locked --allow-dirty -p guic-build -p cargo-guic
+cargo package --locked --allow-dirty -p guic-packager-utils -p guic-packager \
+  -p guic-packager-updater -p guic-build -p cargo-guic
 ```
 
-For individual downstream package checks, Cargo requires registry versions
-of dependencies even when local path overrides are present. Run
-`cargo package -p <crate>` without `--no-verify` after its prerequisites are
-available on crates.io.
+Before publishing 0.6.0, update the GUI crate versions and their path-dependency
+version requirements together, regenerate `Cargo.lock`, and repeat validation.
+Update installation examples and move the changelog's Unreleased section to the
+release version and date. The tooling versions remain independent.
 
 Every archive must contain only source, manifest, README/license metadata, and
 intentional benchmark or build files. Reject secrets, local fixtures, generated

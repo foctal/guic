@@ -19,8 +19,8 @@ InputNumber::new("quantity")
 `Up`/`Down`/`Home`/`End` keys. The step buttons disable automatically at the
 range bounds or when the step would not change the value.
 
-Values are clamped regardless of whether `.value(...)` or `.range(...)` is
-called first. Non-finite values, bounds, and steps are ignored.
+Each builder call clamps the value to the range configured at that point.
+Call `.range(...)` before `.value(...)` for values outside the default 0–100 range. Non-finite values, bounds, and steps are ignored.
 
 Interactive inputs participate in keyboard traversal by default. A host-owned
 focus handle is optional and enables programmatic focus. Arrow keys and Home/End

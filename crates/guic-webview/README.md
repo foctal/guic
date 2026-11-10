@@ -6,7 +6,7 @@ or depend on this crate directly.
 
 The native WebView is layered above GPUI content within its bounds. Use it for
 isolated web content such as login flows, documentation, or HTML previews.
-The wrapper supports bounds, visibility, focus, navigation, and script evaluation.
+The wrapper supports bounds, visibility, focus, and navigation.
 
 The Linux example requires X11 or XWayland and a GTK event loop on the main
 thread. See the [integration guide](https://github.com/foctal/guic/blob/main/docs/webview.md)

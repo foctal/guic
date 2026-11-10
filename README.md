@@ -20,7 +20,8 @@ before adopting GUIC in a product.
 GUIC requires Rust 1.95 or newer. Follow the
 [installation guide](https://github.com/foctal/guic/blob/main/docs/installation.md)
 for Cargo dependencies and Linux packages. GUIC 0.5.0 uses the matching 0.5.0
-`guic-gpui` runtime and platform crates.
+`guic-gpui` runtime and platform crates. The development checkout targets GUIC
+0.6.0 and uses runtime 0.6.1; see the installation guide for its dependency setup.
 
 ## Quick Start
 
@@ -68,11 +69,13 @@ cargo run -p guic-sample-component-gallery
 
 Subsystems are opt-in through the `charts`, `editor`, `webview`,
 `data-table`, `tree`, `dock`, `markdown`, and `updater` features. The default feature set
-includes the core component, icon, asset, and native APIs.
+includes the core component, icon, asset, and native APIs, plus the `application`
+feature for the native backend.
 
 ## Documentation
 
 - [cargo-guic: application development and packaging](docs/cargo-guic.md)
+- [guic-packager: packaging backend and updater](crates/guic-packager/README.md)
 - [Component behavior and host integration](docs/component-behavior.md)
 
 Start with [Getting Started](https://github.com/foctal/guic/blob/main/docs/getting-started.md),
@@ -84,4 +87,5 @@ See [NOTICE.md](https://github.com/foctal/guic/blob/main/NOTICE.md) for attribut
 
 ## License
 
-Licensed under the Apache License, Version 2.0.
+Licensed under Apache-2.0. The `guic-packager` crate family
+retains its upstream Apache-2.0 OR MIT licensing.

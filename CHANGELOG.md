@@ -6,112 +6,67 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- Select rectangular ranges with Shift+Alt-drag across shaped display rows,
-  including soft wrapping, short lines, multiple cursors, and pending paste
-  selection rebasing through queued edits and undo/redo. Route edits over many
-  selections through the ordered background queue.
-
-- Expose disabled accessibility semantics without additional layout or focus nodes,
-  numeric control actions, and password/multiline text roles and editable values.
-- Add editable numeric fields, calendar month/year navigation with local-date
-  defaults, shared indexed table data, and lazily measured variable-height lists.
-- Add application-owned translation catalogs, a native application/window facade,
-  styled Markdown inline content, and link activation handlers.
-- Continue editor drag selection and scrolling while the pointer is stationary
-  outside the viewport, render secondary cursors, and offer configurable cursor
-  blinking that pauses during composition.
-- Read basic input clipboard text asynchronously with ordered commands, an IME
-  draft, rebased pointer selections, and cancellation on authoritative changes.
-
-- Read editor clipboard text asynchronously and preview pointer selections during
-  pending pastes, preserving input order and rebasing selections through edits
-  and queued undo/redo.
-- Configure Windows native-menu and WebView example windows through the runtime's
-  per-window composition API instead of mutating process-wide environment variables.
-
-- Prepare large native and clipboard pastes asynchronously, with ordered follow-up
-  edits, queued clipboard/history commands, a responsive IME composition context,
-  progress feedback, and stale-result rejection on host replacement or closure.
-
-- Add `EditorSession::clear_history()` and bounded background release of large
-  retired history batches, including redo invalidation and session destruction.
-
-- Virtualize long non-wrapped editor lines horizontally using indexed grapheme
-  segments, keeping selection, caret reveal, and IME geometry aligned.
-- Share cancellable syntax analysis and byte/grapheme/UTF-16 checkpoints across
-  editor snapshots and reflow. Painting borrows cached syntax ranges without
-  scanning or copying whole logical lines.
-
-- Run large editor measurements and width/font reflow in cancellable background
-  jobs, with bounded initial previews, stale-result rejection, and scroll/caret
-  preservation. Release replaced layout metadata off the UI thread.
-
-- Add opt-in CodeEditor soft wrapping with Unicode break opportunities, grapheme
-  fallback, visual-row navigation, and shared selection/IME geometry.
-- Add draggable editor overflow scrollbars, track paging, outside drag capture,
-  and logical viewport anchoring on resize.
-- Share large editor buffers and history through persistent line chunks; index
-  native UTF-16 ranges and cache incremental wrap metadata. Add direct `line()`
-  and `iter_lines()` access while preserving `lines()` compatibility.
-
-- Add native IME composition to CodeEditor, with marked-text decoration and one
-  committed host edit per composition; preserve composition across host redraws.
-- Add glyph-based editor hit testing, text-span selection, double/triple-click
-  selection, two-axis wheel scrolling, and automatic primary-caret reveal.
-- Retain editor viewport state, shape visible rows only, and preserve the preferred
-  horizontal position during vertical navigation.
-
-- Add bounded TextInput undo/redo with native shortcuts, selection restoration,
-  and one history entry per IME composition.
-- Add `TextInput::set_value` and `set_disabled` for updating retained entities
-  without replacing focus handles. Programmatic value changes reset history and
-  do not emit user-edit callbacks.
-- Implement native text selection updates and UTF-16 document-length queries.
+- Add `guic::application()`, `guic::open_window()`, and a matching `gpui` re-export
+  for applications using a single toolkit dependency.
+- Add application-owned translation catalogs, editable numeric inputs, calendar
+  month/year navigation, shared table rows, and variable-height virtual lists.
+- Render Markdown inline styles and clickable links with cached parsing.
+- Add native editor IME composition, shaped selection and hit testing, soft
+  wrapping, draggable scrollbars, rectangular selection, and secondary cursors.
+- Prepare large editor edits and clipboard pastes asynchronously while preserving
+  input order, pointer selections, undo/redo, and composition.
+- Add shared editor snapshots and position indexes, background reflow, horizontal
+  virtualization of long lines, and `EditorSession::clear_history()`.
+- Add TextInput undo/redo and retained-entity `set_value`/`set_disabled` methods.
+- Expose disabled accessibility semantics, numeric actions, and password and
+  multiline text roles.
 
 ### Changed
 
-- Update the pinned runtime and platform family to the published `guic-gpui`
-  0.6.0 crates.
+- Maintain the packaging backend, updater, utilities, and resource resolver as
+  workspace-owned `guic-packager` crates. Keep existing GUIC configuration keys.
+- Pin the runtime and platform family to `guic-gpui` 0.6.1, including the
+  fix for size changes received during native child-window initialization.
+- Use per-window composition settings in Windows native-menu and WebView examples.
+- Replace the local XML compatibility patch with `zbus_xml` 5.2.1, which no longer
+  uses the affected parser. Replace yanked lockfile entries for `spin`,
+  `async-executor`, and `num-modular` with compatible available releases.
+- Verify all public crate archives together before publication. Run Windows
+  sidecar cleanup tests in the existing CI job.
 
 ### Fixed
 
-- Prevent PasswordInput Copy and Cut actions from exposing the masked value
-  through the clipboard, while preserving paste and undo behavior.
-
-- Avoid waiting on background position-index initialization and repeating large
-  text comparisons when controlled hosts accept prepared edits. Release unused
-  prepared snapshots off the foreground thread.
-
-- Partition large new Unicode position indexes across up to four workers at
-  verified grapheme boundaries. Preserve synchronous paste/IME ordering and
-  fall back to serial indexing when workers cannot be created.
-
-- Preserve per-line position indexes and unchanged syntax caches through edits,
-  chunk rebuilding, and undo/redo. Update long-line positions around replacement
-  boundaries, including line splits, joins, and Unicode cluster changes.
-- Normalize pasted line endings once, avoid whole-document intermediate strings
-  for native replacement, and derive multi-cursor paste positions from byte ranges.
-  Keep the caret after an inserted combining mark when it joins the preceding text.
-
-- Keep editor candidate geometry current before repaint, preserve grapheme cursor
-  bounds after combining-character insertion, and normalize CRLF/CR to LF.
-- Avoid repeatedly allocating the remaining line while classifying editor syntax,
-  and wire editor undo/redo commands in the gallery.
-
-- Convert IME selection offsets relative to the replacement text, including
-  supplementary Unicode characters and normalized line endings; clamp malformed
-  or oversized native ranges to valid text boundaries.
-- Reject native edits and editing actions on disabled text inputs, normalize
-  CRLF and CR line endings, and suppress unchanged-value notifications.
-- Stop scheduling another render from TextInput painting, allowing idle inputs
-  to remain idle.
+- Pass macOS signing requirements as inline expressions during verification.
+- Validate macOS update archives and atomically replace application bundles.
+  Request system authorization when needed and preserve the old app on cancellation.
+- Resolve umbrella string macros through GUIC for single-dependency applications.
+- Decrement the mounted-root count when a root view is released.
+- Prevent password Copy/Cut actions from exposing secrets through the clipboard.
+- Preserve asynchronous clipboard order and reject stale edits after host
+  replacement, disabling, or editor removal.
+- Correct Unicode and normalized-newline selection offsets, native range bounds,
+  and composition undo boundaries. Reject native edits on disabled text inputs.
+- Avoid idle TextInput redraws and repeated large-document scans during editing.
+- Make dense editor search walk each line's grapheme boundaries once.
+- Preserve Markdown quote and list structure, ordered-list starting numbers,
+  literal ampersands, and suppressed inline HTML content.
+- Reject Windows device names containing superscript digits in packaged resources.
+- Bound the total activation-request receive time so trickling clients cannot
+  keep application shutdown waiting indefinitely.
 
 ### Migration notes
 
+- `guic::updater` now re-exports `guic-packager-updater`. Direct upstream types
+  are distinct. `Config` adds `dangerous_insecure_transport_protocol`; set it
+  to `false` or use `..Default::default()`. The HTTP client re-export uses reqwest 0.13.
+- `application` joins the default features and selects the platform backend.
+  Applications supplying their own backend can disable default features and
+  explicitly enable the required subsystems.
 - Keep a stable CodeEditor ID to retain composition and scrolling. `visible_lines`
-  now defines a fixed-height viewport; `first_line` initializes or repositions it
-  when that option changes. IME preedit updates stay local until committed.
-- EditorBuffer now normalizes line endings to LF. Preserve file newline conventions
+  defines a fixed-height viewport; changing `first_line` repositions it.
+- Editor preedit updates stay local until committed. Apply undo/redo synchronously
+  in `on_command` and notify the host so queued input can resume.
+- EditorBuffer normalizes line endings to LF. Preserve file newline conventions
   in the application's save layer when required.
 
 ## 0.5.0 - 2026-11-03

@@ -7,9 +7,10 @@ state. Keyboard behavior is described on each [component page](components.md).
 
 `guic_core::AccessibilityProps` and `AccessibilityElementExt` map roles, labels,
 descriptions, selection, expansion, checked state, and numeric values/ranges to
-GPUI accessibility nodes. The `disabled` field is retained in GUIC metadata but
-is not forwarded by this adapter. Components enforce disabled interaction
-separately.
+GPUI accessibility nodes. Use `.accessible(props)` to include disabled semantics
+without adding a layout or focus node. The original `.accessibility(props)` method
+preserves its concrete return type but does not forward `disabled`. Components
+must also enforce disabled interaction in their event handlers.
 
 For application controls:
 

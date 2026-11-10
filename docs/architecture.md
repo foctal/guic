@@ -17,8 +17,13 @@ re-exports the libraries below.
 | `guic-webview` | Optional Wry-based WebView integration |
 | `guic-build` | Application identity and Windows executable resources at build time |
 | `cargo-guic` | Application development and packaging CLI |
+| `guic-packager` | Native packaging backend and standalone CLI |
+| `guic-packager-updater` | Signed update downloads and installation; re-exported as `guic::updater` |
+| `guic-packager-utils` | Shared packaging formats and executable-path helpers |
+| `guic-packager-resource-resolver` | Resource lookup for the packager's native layouts |
 
-`guic` enables `components`, `icons`, `assets`, and `native` by default.
+`guic` enables `components`, `icons`, `assets`, `native`, and `application` by default.
+The `application` feature selects the platform backend for `guic::application()`.
 The `data-table`, `tree`, `dock`, and `markdown` features enable the corresponding
 `guic-components` modules. `charts`, `editor`, `webview`, and `updater` add
 separate optional dependencies.

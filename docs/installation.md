@@ -26,8 +26,8 @@ guic = { git = "https://github.com/foctal/guic", rev = "<commit>" }
 ```
 
 The current development checkout uses the published `guic-gpui` and
-`guic-gpui-platform` 0.6.0 crates. When using this checkout, change the `gpui`
-version and every target-specific `gpui_platform` version above to `=0.6.0`,
+`guic-gpui-platform` 0.6.1 crates. When using this checkout, change the `gpui`
+version and every target-specific `gpui_platform` version above to `=0.6.1`,
 preserving their feature lists. No sibling runtime checkout or runtime patch
 is needed. Keep the 0.5.0 runtime pins when using the published GUIC 0.5.0 release.
 

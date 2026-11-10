@@ -4,6 +4,9 @@ Application development and packaging tooling for GUIC. See the
 [usage guide](https://github.com/foctal/guic/blob/main/docs/cargo-guic.md) and
 [configuration schema](https://github.com/foctal/guic/blob/main/docs/cargo-guic.schema.json).
 
+The packaging backend is the workspace-owned `guic-packager` fork.
+The existing `[backend.cargo-packager]` configuration key is retained.
+
 The CLI supports project discovery, configuration inspection, prerequisite checks,
 development execution and immutable build records. `build` compiles and packages;
 `bundle` packages a saved executable. Native formats include macOS app/DMG,

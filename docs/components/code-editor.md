@@ -71,7 +71,10 @@ geometry. Selections highlight their text spans rather than entire rows.
 Clicks and drag selections snap to grapheme boundaries, including combining
 characters and emoji sequences. Shift+click extends from the anchor, double-click
 selects a word segment, and triple-click selects a line including its newline.
-Dragging outside the viewport scrolls while the pointer continues moving.
+Dragging outside the viewport scrolls even while the pointer is stationary.
+Release or blur stops the timer. All visible collapsed selections draw a cursor.
+Focused cursors blink at idle and remain visible during composition; set
+`CodeEditorOptions::cursor_blink(false)` for a steady cursor.
 
 Keyboard editing includes Backspace/Delete, Enter, Tab indentation, arrows,
 Home/End, Page Up/Down, Shift selection extension, Select All, and clipboard
@@ -115,171 +118,56 @@ horizontal extent. Activating a diagnostic does not move the selection.
 
 ## Large documents
 
-Buffer clones and undo snapshots share immutable line chunks. An ordinary edit
-copies affected chunks and rebuilds the small chunk index, rather than cloning
-every line. Byte and UTF-16 summaries locate native input ranges without joining
-the document or scanning all preceding lines. `line(index)` and `iter_lines()`
-access shared storage directly. The compatible `lines()` API materializes and
-caches a contiguous view; `text()` explicitly allocates the full document.
+Buffer clones and undo snapshots share immutable line chunks. Use `line(index)`
+and `iter_lines()` to inspect them without allocating a contiguous copy.
+`lines()` materializes and caches a contiguous view; `text()` allocates the full
+document. Explicit model operations, including initial construction and uncached
+queries, are synchronous.
 
-The viewport caches row boundaries per shared chunk. Unchanged frames reuse the
-index; text edits remeasure changed chunks. Work exceeding either 16 KiB or 256
-logical lines runs on the background executor, including initial measurement and
-wrap-width/font changes. Small incremental updates remain synchronous. Workers
-use their own text-layout caches and shared thread-safe font services; they do
-not access the window or editor entity.
+The surface measures large documents and width/font changes on background
+workers. Only visible rows or horizontal segments are shaped for painting.
+Unchanged text shares syntax and position indexes. While measurement is pending,
+the previous layout remains visible; a new document uses a bounded preview with
+an ellipsis for truncated lines. Preview truncation never changes the buffer.
+Caret and IME geometry become available when their position is measured.
+Superseded work is cancelled and cannot replace a newer document or layout.
 
-During width changes, the previous completed wrapping remains usable until the
-new layout is ready. Initial loading or a replacement document uses a temporary
-unwrapped preview of visible lines, capped at 256 graphemes and 4 KiB per line.
-An ellipsis marks a truncated preview. Input still updates the full document;
-preview truncation never changes text. Candidate bounds and the caret are withheld
-when their position is outside the measured preview, then restored after reflow.
+Clipboard reads and large paste preparation run asynchronously. Subsequent
+edits, clipboard commands, navigation, and undo/redo retain input order, while
+scrolling stays responsive. Each paste and committed composition is a separate
+undo transaction. Pointer selections preview immediately and are rebased through
+queued edits. Unknown host history transitions use the host's restored selection.
+An empty or unavailable clipboard leaves the selection intact.
 
-Each job belongs to a document snapshot, font, width, and generation. New requests
-cancel superseded work; workers check cancellation between chunks and during long
-lines. Results are validated before adoption, so old jobs cannot overwrite newer
-text or layout settings. Completion preserves the current logical scroll anchor,
-including scrolling performed while the worker ran. Pending input-driven caret
-reveal is retained, while explicit scrolling cancels it. Old layout metadata is
-also released on a background thread. An unchanged frame schedules no reflow.
+During pending input, IME queries use a small composition context beside the
+"Pasting…" indicator. This limits surrounding-text context until the queue drains.
+Replacing the host document, disabling editing, or removing the editor cancels
+pending work. Application callbacks and copying borrowed native input can still
+perform synchronous work.
 
-Grapheme advances are cached for the monospace layout. Non-wrapped lines are
-indexed into segments of at most 128 graphemes during background measurement.
-Each segment is shaped as a unit, with its logical tab stops preserved. Horizontal
-scrolling paints only segments intersecting the viewport. Cursor reveal, hit
-testing, native text geometry, and cross-segment selection use the same segment
-origins; line numbers remain fixed even when the first text segment is offscreen.
-Wrapped lines continue to shape only their visible visual rows.
+`EditorSession::clear_history()` discards undo and redo without changing text or
+selections. Large retired history batches are released by a bounded background
+worker. A full queue or unavailable worker falls back to synchronous release.
+Other owners keep shared snapshots alive; deferred disposal temporarily retains
+memory until the worker finishes.
 
-Syntax classification and sparse byte/grapheme/UTF-16 checkpoints are computed
-alongside layout, with cancellation checks during long scans. Immutable line
-chunks share those results across snapshots, redraws, and width/font changes.
-Only changed lines receive fresh syntax caches; unchanged neighboring lines retain
-their analysis even when chunks are rebuilt. Painting only borrows cached token ranges;
-it never classifies an entire line or clones its full token list. Strings and
-comments beginning offscreen retain their classification in visible segments.
-After analysis completes, position queries binary-search a checkpoint and scan
-at most one 128-grapheme interval instead of walking from the beginning of a long
-line. `EditorBuffer::syntax_tokens()` remains an explicit synchronous API on a
-cache miss and returns an owned token list; repeated calls reuse classification.
+Run `cargo bench -p guic-editor --bench editor_models --profile dev --locked` for
+model workloads covering large buffers, dense search, Unicode edits, snapshots,
+and history disposal. These timings do not measure native frame latency,
+clipboard acquisition, or completion of background reclamation.
 
-Text-position indexes are independent of syntax classification. Edits reuse
-prefix checkpoints and scan from a preceding grapheme boundary until the new text
-converges with the old suffix, then translate the remaining checkpoints. Line
-splits and joins reuse the indexes of both boundary lines. Cached UTF-16 totals
-avoid rescanning unchanged text when rebuilding summaries. ASCII-only lines use
-byte offsets directly when constructing checkpoints. An uncached position index
-is built once on demand; subsequent queries and history restores reuse it.
+## Limitations
 
-Large new Unicode position indexes can use up to four scoped workers. Partitions
-are aligned using Unicode grapheme boundaries before workers run, so combining
-marks, emoji ZWJ sequences, regional indicators, and Indic conjuncts retain the
-same columns and UTF-16 offsets as serial indexing. Small inputs, single-core
-hosts, and worker-creation failures use serial indexing. Boundary probes use
-bounded context; long indivisible clusters and regional-indicator runs fall back
-to one serial pass instead of repeatedly scanning the line to find partitions.
-These helpers remain synchronous for explicit model APIs such as
-`EditorSession::insert`; the interactive surface schedules large pastes separately.
+The editor remains experimental. It does not provide click-to-add cursors,
+folding, or an integrated LSP client. Each changed logical line is a contiguous
+string, so editing it copies its bytes. Very long lines, large indivisible
+graphemes, and multiple edits on one line can still be expensive. Background
+processing does not guarantee a latency bound for every operation.
 
-OS clipboard text reads use the runtime's asynchronous desktop API. Each request
-starts when paste is invoked; results are consumed in input order even if reads
-finish out of order. An empty or unavailable clipboard leaves the selection intact.
-Native insertions of at least 64 KiB and clipboard paste preparation run on GPUI's
-background executor. The surface never joins the preparation worker. Normalization, text
-replacement, cursor/index construction, and change detection finish before the
-result is published. Verified negative snapshot comparisons prevent the controlled
-host from rescanning equally sized documents when accepting an edit. Position
-indexes are built outside their publication lock; foreground queries do not wait
-for another thread's long initialization.
-
-The last committed document stays visible with a small "Pasting…" indicator.
-Wheel and scrollbar input continue immediately. Subsequent typing, editing keys,
-clipboard commands, and undo/redo are processed in arrival order. Clipboard pastes
-capture their requested contents, including a preceding queued copy/cut. Undo/redo
-wait for the host to acknowledge preceding edits and render the command result
-before later input runs. Each paste and committed IME composition remains a
-separate undo transaction. Clicks, double/triple-clicks, and drag selections preview
-immediately against the visible document. Their byte positions are rebased through
-pending edits and known undo/redo transitions before subsequent input is applied.
-Drag updates coalesce only when no intervening operation depends on them. If a host
-history result has no known position mapping, its restored selection takes precedence
-over stale queued pointer positions. Keyboard navigation remains queued.
-
-While preparation or queued input is pending, native IME queries address a small
-composition context in the indicator, not the large document. Its UTF-16 text,
-selection, and marked ranges remain immediately queryable; preedit is underlined
-and candidate geometry follows that context. It survives worker completion until
-the composition commits, unmarks, cancels, or loses focus. The normal document
-input context is restored only after this context and the queue have drained.
-This intentionally limits surrounding-text context during a pending paste.
-
-Results carry a generation and source snapshot/selection. A newly supplied host
-value, loss of editability, or removal of the editor invalidates pending work.
-Superseded results never publish over a replacement already delivered by the host.
-Preparation checks cancellation between stages and position-index updates;
-a running indivisible scan can finish before cancellation is observed. Completion
-and cancellation release unused prepared snapshots away from the foreground.
-Clipboard acquisition and the required ownership copy of borrowed native input
-still follow GPUI's synchronous platform API; document preparation does not.
-Application callbacks can also perform their own synchronous work.
-
-`EditorSession::clear_history()` discards both history stacks without changing
-text or selections. Large retired batches from explicit clearing, limit trimming,
-redo invalidation, disabled history, and session destruction are handed to one
-background release worker. Its queue holds at most eight batches. Small batches,
-an unavailable worker, or a full queue use ordinary synchronous destruction;
-there is no unbounded disposal queue. Other owners of a shared snapshot retain
-it normally, and releasing their final reference may still be synchronous.
-Deferred disposal temporarily retains the queued batches' memory.
-
-Pastes borrow LF-only input, normalize CRLF/CR in one allocation when needed,
-and construct replacement lines directly. Multi-cursor edits resolve original
-byte ranges once, then derive final cursors from byte deltas; inserting combining
-marks does not move the caret past the following grapheme. Undo/redo restore shared
-text and position indexes, and pending layout jobs still validate their snapshot
-before applying results. New syntax classification remains in background reflow
-for large changes.
-
-Run `cargo bench -p guic-editor --bench editor_models --profile dev --locked` to
-measure model operations on large documents and long lines. Workloads cover
-100,000-line buffers, shared snapshots, tail-range queries, cached syntax,
-replacement and undo/redo, ASCII and Unicode pastes, and history disposal.
-These benchmarks measure model work and disposal submission, not native frame
-latency, clipboard acquisition, or background reclamation completion. Use the
-[platform smoke checklist](../platform-smoke.md) to validate interactive behavior.
-
-## Remaining limitations
-
-The editor remains experimental. It does not yet provide click-to-add cursors,
-folding, or an integrated LSP client. Constructing or
-serializing the buffer and explicit uncached model queries still take synchronous
-work. Each changed logical line remains a contiguous string, so rewriting it
-copies its bytes; explicit model insertion still waits for initial indexing.
-The native surface moves large paste preparation to the background. Sparse
-checkpoint vectors and the root chunk index are copied during editing. Grapheme
-boundary changes can require scanning a long suffix, and multiple edits on the
-same line still copy that line separately. History disposal can still fall back
-to synchronous release when its bounded worker queue is full or unavailable.
-These remaining costs need native latency and memory profiling before a general
-responsiveness guarantee. Word selection/search, unusually
-large indivisible graphemes, and overlapping zero-advance clusters also need
-further profiling. Segment shaping
-is intended for the editor's monospace layout; full contextual/bidirectional text
-editing remains outside its current contract. Background analysis and viewport
-segmentation are not a latency guarantee for every editing or file-loading operation.
-
-Full accessibility text ranges,
-bidirectional editing, and native IME behavior with real desktop input methods
-still require platform validation. Automated native-handler and rendering tests
-do not replace the [platform smoke checklist](../platform-smoke.md).
-
-Dragging outside the text viewport continues selection and scrolling on a timer
-even while the pointer is stationary. Release or blur stops the timer.
-
-Focused cursors blink at idle and remain visible during composition. Use
-`CodeEditorOptions::cursor_blink(false)` for a steady cursor. All visible collapsed
-selections draw a cursor, including secondary selections supplied by the host.
+The layout is intended for monospace text. Full bidirectional editing and
+accessibility text ranges are not supported. Native IME, screen-reader behavior,
+and interactive latency require the [platform smoke checks](../platform-smoke.md);
+automated model and rendering tests do not establish those guarantees.
 
 ## Rectangular selection
 
