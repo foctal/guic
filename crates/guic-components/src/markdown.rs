@@ -162,9 +162,11 @@ enum MarkdownBlock {
         text: String,
     },
     Paragraph(String),
-    BulletList(Vec<String>),
-    OrderedList(Vec<String>),
-    Quote(String),
+    List {
+        start: Option<u64>,
+        items: Vec<Vec<MarkdownBlock>>,
+    },
+    Quote(Vec<MarkdownBlock>),
     Rule,
     CodeBlock {
         language: Option<String>,
@@ -199,43 +201,42 @@ fn render_block(
                 .into_any_element()
         }
         MarkdownBlock::Paragraph(text) => render_inline(text, theme, on_link, inline_id, inlines),
-        MarkdownBlock::BulletList(items) => div()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .children(items.iter().map(|item| {
-                div()
-                    .flex()
-                    .gap_2()
-                    .items_start()
-                    .child(div().pt_1().text_color(theme.primary()).child("-"))
-                    .child(render_inline(item, theme, on_link, inline_id, inlines))
-                    .into_any_element()
-            }))
-            .into_any_element(),
-        MarkdownBlock::OrderedList(items) => div()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .children(items.iter().enumerate().map(|(index, item)| {
-                div()
-                    .flex()
-                    .gap_2()
-                    .items_start()
-                    .child(
-                        div()
-                            .text_color(theme.primary())
-                            .child(format!("{}.", index + 1)),
-                    )
-                    .child(render_inline(item, theme, on_link, inline_id, inlines))
-                    .into_any_element()
-            }))
-            .into_any_element(),
-        MarkdownBlock::Quote(text) => div()
+        MarkdownBlock::List { start, items } => {
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .children(items.iter().enumerate().map(|(index, item)| {
+                    let marker = start.map_or_else(
+                        || "-".to_owned(),
+                        |start| format!("{}.", start.saturating_add(index as u64)),
+                    );
+                    div()
+                        .flex()
+                        .gap_2()
+                        .items_start()
+                        .child(div().text_color(theme.primary()).child(marker))
+                        .child(div().flex().flex_col().gap_2().children(
+                            item.iter().map(|block| {
+                                render_block(block, theme, on_link, inline_id, inlines)
+                            }),
+                        ))
+                        .into_any_element()
+                }))
+                .into_any_element()
+        }
+        MarkdownBlock::Quote(blocks) => div()
             .pl_3()
             .border_l_2()
             .border_color(theme.primary())
-            .child(render_inline(text, theme, on_link, inline_id, inlines))
+            .flex()
+            .flex_col()
+            .gap_2()
+            .children(
+                blocks
+                    .iter()
+                    .map(|block| render_block(block, theme, on_link, inline_id, inlines)),
+            )
             .into_any_element(),
         MarkdownBlock::Rule => div()
             .w_full()
@@ -444,7 +445,18 @@ fn render_inline(
 fn parse_markdown(source: &str) -> Vec<MarkdownBlock> {
     let mut blocks = Vec::new();
     let mut current_text = String::new();
-    let mut current_items = Vec::new();
+    enum Container {
+        Quote {
+            parent: Vec<MarkdownBlock>,
+        },
+        List {
+            parent: Vec<MarkdownBlock>,
+            start: Option<u64>,
+            items: Vec<Vec<MarkdownBlock>>,
+        },
+    }
+    let mut containers = Vec::new();
+    let mut flattened_depth = 0usize;
     let mut table_headers = Vec::new();
     let mut table_rows = Vec::new();
     let mut current_table_row = Vec::new();
@@ -452,11 +464,9 @@ fn parse_markdown(source: &str) -> Vec<MarkdownBlock> {
     let mut current_code = String::new();
     let mut code_language = None;
     let mut link_destinations = Vec::new();
-    let mut in_paragraph = false;
     let mut in_heading = None;
-    let mut in_quote = false;
-    let mut list_kind = None;
     let mut in_html = false;
+    let mut inline_html_depth = 0;
     let mut in_code = false;
     let mut in_table = false;
     let mut in_table_head = false;
@@ -465,18 +475,43 @@ fn parse_markdown(source: &str) -> Vec<MarkdownBlock> {
     options.insert(Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH);
 
     for event in Parser::new_ext(source, options) {
-        match event {
-            Event::Start(Tag::Paragraph) => {
-                if !in_table {
-                    current_text.clear();
-                    in_paragraph = true;
+        // Bound the recursive render tree even for attacker-controlled Markdown.
+        // Excess nesting keeps its text without creating more layout containers.
+        if flattened_depth > 0 {
+            match event {
+                Event::Start(Tag::List(_) | Tag::BlockQuote(_)) => flattened_depth += 1,
+                Event::End(TagEnd::List(_) | TagEnd::BlockQuote(_)) => flattened_depth -= 1,
+                Event::InlineHtml(html) => update_suppressed_html_depth(
+                    html.trim_start_matches('<').trim_end_matches('>'),
+                    &mut inline_html_depth,
+                ),
+                Event::Text(text) | Event::Code(text) if inline_html_depth == 0 => {
+                    for ch in text.chars() {
+                        if "\\`*_{}[]()#+-.!|>~".contains(ch) {
+                            current_text.push('\\');
+                        }
+                        current_text.push(ch);
+                    }
                 }
+                Event::End(TagEnd::Paragraph | TagEnd::Item)
+                | Event::SoftBreak
+                | Event::HardBreak => current_text.push('\n'),
+                _ => {}
             }
-            Event::End(TagEnd::Paragraph) => {
-                if !in_table {
-                    push_text_block(&mut blocks, &mut current_text, MarkdownContainer::Paragraph);
-                    in_paragraph = false;
-                }
+            continue;
+        }
+        if containers.len() == 64
+            && matches!(event, Event::Start(Tag::List(_) | Tag::BlockQuote(_)))
+        {
+            flattened_depth = 1;
+            continue;
+        }
+        match event {
+            Event::Start(Tag::Paragraph) if !in_table => {
+                current_text.clear();
+            }
+            Event::End(TagEnd::Paragraph) if !in_table => {
+                push_text_block(&mut blocks, &mut current_text);
             }
             Event::Start(Tag::Heading { level, .. }) => {
                 current_text.clear();
@@ -499,34 +534,42 @@ fn parse_markdown(source: &str) -> Vec<MarkdownBlock> {
                 current_text.clear();
             }
             Event::Start(Tag::BlockQuote(_)) => {
-                current_text.clear();
-                in_quote = true;
+                push_text_block(&mut blocks, &mut current_text);
+                containers.push(Container::Quote {
+                    parent: std::mem::take(&mut blocks),
+                });
             }
             Event::End(TagEnd::BlockQuote(_)) => {
-                blocks.push(MarkdownBlock::Quote(current_text.trim().to_owned()));
-                current_text.clear();
-                in_quote = false;
+                push_text_block(&mut blocks, &mut current_text);
+                if let Some(Container::Quote { parent }) = containers.pop() {
+                    let quoted = std::mem::replace(&mut blocks, parent);
+                    blocks.push(MarkdownBlock::Quote(quoted));
+                }
             }
             Event::Start(Tag::List(start)) => {
-                current_items.clear();
-                list_kind = Some(start.is_some());
+                push_text_block(&mut blocks, &mut current_text);
+                containers.push(Container::List {
+                    parent: std::mem::take(&mut blocks),
+                    start,
+                    items: Vec::new(),
+                });
             }
             Event::End(TagEnd::List(_)) => {
-                if let Some(ordered) = list_kind.take() {
-                    if ordered {
-                        blocks.push(MarkdownBlock::OrderedList(current_items.clone()));
-                    } else {
-                        blocks.push(MarkdownBlock::BulletList(current_items.clone()));
-                    }
+                if let Some(Container::List {
+                    parent,
+                    start,
+                    items,
+                }) = containers.pop()
+                {
+                    blocks = parent;
+                    blocks.push(MarkdownBlock::List { start, items });
                 }
-                current_items.clear();
-            }
-            Event::Start(Tag::Item) => {
-                current_text.clear();
             }
             Event::End(TagEnd::Item) => {
-                current_items.push(current_text.trim().to_owned());
-                current_text.clear();
+                push_text_block(&mut blocks, &mut current_text);
+                if let Some(Container::List { items, .. }) = containers.last_mut() {
+                    items.push(std::mem::take(&mut blocks));
+                }
             }
             Event::Start(Tag::CodeBlock(kind)) => {
                 current_code.clear();
@@ -599,19 +642,23 @@ fn parse_markdown(source: &str) -> Vec<MarkdownBlock> {
                 in_html = true;
             }
             Event::InlineHtml(html) => {
-                current_text.push_str(html_preview_text(html.as_ref()).as_ref());
-            }
-            Event::End(TagEnd::HtmlBlock) => {
-                if in_html {
-                    blocks.push(MarkdownBlock::Html(current_html.trim().to_owned()));
-                    current_html.clear();
-                    in_html = false;
+                update_suppressed_html_depth(
+                    html.trim_start_matches('<').trim_end_matches('>'),
+                    &mut inline_html_depth,
+                );
+                if inline_html_depth == 0 {
+                    current_text.push_str(html_preview_text(html.as_ref()).as_ref());
                 }
+            }
+            Event::End(TagEnd::HtmlBlock) if in_html => {
+                blocks.push(MarkdownBlock::Html(current_html.trim().to_owned()));
+                current_html.clear();
+                in_html = false;
             }
             Event::Text(text) => {
                 if in_code {
                     current_code.push_str(text.as_ref());
-                } else {
+                } else if inline_html_depth == 0 {
                     for ch in text.chars() {
                         if "\\`*_{}[]()#+-.!|>~".contains(ch) {
                             current_text.push('\\');
@@ -620,13 +667,18 @@ fn parse_markdown(source: &str) -> Vec<MarkdownBlock> {
                     }
                 }
             }
-            Event::Code(code) => {
+            Event::Code(code) if inline_html_depth == 0 => {
                 let fence =
                     "`".repeat(code.split(|ch| ch != '`').map(str::len).max().unwrap_or(0) + 1);
+                let padding = !code.chars().all(|ch| ch == ' ');
                 current_text.push_str(&fence);
-                current_text.push(' ');
+                if padding {
+                    current_text.push(' ');
+                }
                 current_text.push_str(code.as_ref());
-                current_text.push(' ');
+                if padding {
+                    current_text.push(' ');
+                }
                 current_text.push_str(&fence);
             }
             Event::InlineMath(math) => {
@@ -669,11 +721,7 @@ fn parse_markdown(source: &str) -> Vec<MarkdownBlock> {
                 current_text.push(']');
             }
             Event::SoftBreak | Event::HardBreak => current_text.push('\n'),
-            _ => {
-                if in_paragraph || in_heading.is_some() || in_quote || list_kind.is_some() {
-                    continue;
-                }
-            }
+            _ => {}
         }
     }
 
@@ -684,25 +732,10 @@ fn parse_markdown(source: &str) -> Vec<MarkdownBlock> {
     blocks
 }
 
-enum MarkdownContainer {
-    Paragraph,
-}
-
-fn push_text_block(
-    blocks: &mut Vec<MarkdownBlock>,
-    current_text: &mut String,
-    container: MarkdownContainer,
-) {
-    let text = current_text.trim();
-    if text.is_empty() {
-        current_text.clear();
-        return;
+fn push_text_block(blocks: &mut Vec<MarkdownBlock>, current_text: &mut String) {
+    if !current_text.trim().is_empty() {
+        blocks.push(MarkdownBlock::Paragraph(current_text.trim().to_owned()));
     }
-
-    match container {
-        MarkdownContainer::Paragraph => blocks.push(MarkdownBlock::Paragraph(text.to_owned())),
-    }
-
     current_text.clear();
 }
 
@@ -715,6 +748,13 @@ fn html_preview_text(source: &str) -> SharedString {
     let mut suppressed_depth = 0usize;
 
     for ch in source.chars() {
+        if in_entity && !(ch.is_ascii_alphanumeric() || matches!(ch, '#' | ';')) {
+            if suppressed_depth == 0 {
+                text.push('&');
+                text.push_str(&entity);
+            }
+            in_entity = false;
+        }
         match ch {
             '<' => {
                 in_tag = true;
@@ -722,6 +762,14 @@ fn html_preview_text(source: &str) -> SharedString {
             }
             '>' if in_tag => {
                 update_suppressed_html_depth(&tag, &mut suppressed_depth);
+                if suppressed_depth == 0
+                    && matches!(
+                        html_tag_name(&tag).as_str(),
+                        "p" | "div" | "br" | "li" | "tr" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
+                    )
+                {
+                    text.push(' ');
+                }
                 in_tag = false;
                 tag.clear();
             }
@@ -742,6 +790,10 @@ fn html_preview_text(source: &str) -> SharedString {
         }
     }
 
+    if in_entity && suppressed_depth == 0 {
+        text.push('&');
+        text.push_str(&entity);
+    }
     text.split_whitespace().collect::<Vec<_>>().join(" ").into()
 }
 
@@ -810,11 +862,94 @@ mod tests {
             blocks.first(),
             Some(MarkdownBlock::Heading { .. })
         ));
-        assert!(matches!(blocks.get(1), Some(MarkdownBlock::BulletList(_))));
+        assert!(matches!(
+            blocks.get(1),
+            Some(MarkdownBlock::List { start: None, .. })
+        ));
         assert!(matches!(
             blocks.get(2),
             Some(MarkdownBlock::CodeBlock { .. })
         ));
+    }
+
+    #[test]
+    fn excessive_nesting_keeps_text_in_a_bounded_tree() {
+        let source = format!("{}leaf<script>hidden</script>", "> ".repeat(1_000));
+        let blocks = parse_markdown(&source);
+        let mut current = blocks.as_slice();
+        for _ in 0..64 {
+            let [MarkdownBlock::Quote(children)] = current else {
+                panic!("quote container");
+            };
+            current = children;
+        }
+        assert_eq!(current, &[MarkdownBlock::Paragraph("leaf".into())]);
+    }
+
+    #[test]
+    fn inline_code_preserves_whitespace_only_content() {
+        let blocks = parse_markdown("`   `");
+        let MarkdownBlock::Paragraph(source) = &blocks[0] else {
+            panic!("paragraph");
+        };
+        let content = super::inline_content(source, &guic_tokens::Theme::dark());
+        assert_eq!(content.text, "   ");
+    }
+
+    #[test]
+    fn inline_html_suppresses_script_contents() {
+        let blocks = parse_markdown("Before <script>hidden</script> after");
+        assert_eq!(
+            blocks,
+            vec![MarkdownBlock::Paragraph("Before  after".into())]
+        );
+    }
+
+    #[test]
+    fn quotes_and_loose_lists_retain_paragraphs() {
+        assert_eq!(
+            parse_markdown("> First\n>\n> Second"),
+            vec![MarkdownBlock::Quote(vec![
+                MarkdownBlock::Paragraph("First".into()),
+                MarkdownBlock::Paragraph("Second".into()),
+            ]),]
+        );
+        assert_eq!(
+            parse_markdown("- First\n\n- Second"),
+            vec![MarkdownBlock::List {
+                start: None,
+                items: vec![
+                    vec![MarkdownBlock::Paragraph("First".into())],
+                    vec![MarkdownBlock::Paragraph("Second".into())],
+                ]
+            },]
+        );
+    }
+
+    #[test]
+    fn nested_lists_preserve_parent_text_and_start_number() {
+        assert_eq!(
+            parse_markdown("3. Parent\n   - Child\n4. Last"),
+            vec![MarkdownBlock::List {
+                start: Some(3),
+                items: vec![
+                    vec![
+                        MarkdownBlock::Paragraph("Parent".into()),
+                        MarkdownBlock::List {
+                            start: None,
+                            items: vec![vec![MarkdownBlock::Paragraph("Child".into())],]
+                        }
+                    ],
+                    vec![MarkdownBlock::Paragraph("Last".into())],
+                ]
+            },]
+        );
+    }
+
+    #[test]
+    fn html_preview_preserves_literal_ampersands_and_separates_blocks() {
+        assert_eq!(html_preview_text("<p>R&D</p><p>AT&T</p>"), "R&D AT&T");
+        assert_eq!(html_preview_text("a &unfinished"), "a &unfinished");
     }
 
     #[test]

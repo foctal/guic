@@ -32,6 +32,7 @@ The renderer supports headings, paragraphs, lists, tables, block quotes,
 thematic rules, fenced code blocks,
 styled strong/emphasized/struck text, monospace inline code, clickable links,
 and lightweight HTML fragments. Escaped Markdown punctuation remains literal.
+Nesting beyond 64 list/quote levels is flattened to text.
 Set `.id(...)` when rendering multiple documents in one view. Use
 `.on_link_click(...)` to route links inside the application; the default handler
 opens only HTTP, HTTPS, and mail links. Other schemes remain inert.
