@@ -3,6 +3,10 @@ use std::{hint::black_box, time::Instant};
 
 fn main() {
     benchmark_large_buffer_search();
+    let dense = EditorBuffer::from_text("a\u{301}".repeat(100_000));
+    let started = Instant::now();
+    black_box(dense.search("\u{301}"));
+    report("dense_unicode_line_search", started, 1);
     benchmark_large_buffer_edits();
     benchmark_visible_syntax_pass();
     benchmark_snapshots_and_tail_ranges();

@@ -401,15 +401,26 @@ impl EditorBuffer {
         let mut matches = Vec::new();
         for (line_index, line) in self.lines.iter().enumerate() {
             let mut byte_start = 0usize;
+            let mut boundaries = line.grapheme_indices(true).enumerate().peekable();
+            let mut boundary = (0, 0);
+            // Search matches are ordered. Walk grapheme boundaries once per
+            // line instead of rescanning its prefix for every match.
+            let mut column_at = |byte| {
+                while let Some(&(column, (offset, _))) = boundaries.peek() {
+                    if offset > byte {
+                        break;
+                    }
+                    boundary = (column, offset);
+                    boundaries.next();
+                }
+                boundary
+            };
             while let Some(offset) = line.as_ref()[byte_start..].find(query) {
                 let start_byte = byte_start + offset;
                 let end_byte = start_byte + query.len();
-                let start = line
-                    .grapheme_indices(true)
-                    .take_while(|(index, _)| *index <= start_byte)
-                    .count()
-                    .saturating_sub(1);
-                let end = byte_to_grapheme(line, end_byte);
+                let (start, _) = column_at(start_byte);
+                let (end_column, end_boundary) = column_at(end_byte);
+                let end = end_column + usize::from(end_byte > end_boundary);
                 matches.push(EditorSearchMatch {
                     range: EditorPosition::new(line_index, start)
                         ..EditorPosition::new(line_index, end),
@@ -1470,6 +1481,26 @@ mod tests {
         );
 
         assert_eq!(buffer.text(), "let value = 2;");
+    }
+
+    #[test]
+    fn dense_search_preserves_grapheme_ranges() {
+        let buffer = EditorBuffer::from_text("a\u{301}a\u{301} ".repeat(20_000));
+        let matches = buffer.search("\u{301}");
+        assert_eq!(matches.len(), 40_000);
+        for (index, matched) in matches.iter().enumerate() {
+            let column = index / 2 * 3 + index % 2;
+            assert_eq!(
+                matched.range,
+                EditorPosition::new(0, column)..EditorPosition::new(0, column + 1)
+            );
+        }
+        let matches = EditorBuffer::from_text("a".repeat(100_000)).search("a");
+        assert_eq!(matches.len(), 100_000);
+        assert_eq!(
+            matches.last().expect("last match").range,
+            EditorPosition::new(0, 99_999)..EditorPosition::new(0, 100_000)
+        );
     }
 
     #[test]
