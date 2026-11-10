@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+cd "$(dirname "$0")/.."
+
 ./scripts/check.sh
 
 if ! command -v cargo-deny >/dev/null 2>&1; then
@@ -11,7 +13,7 @@ fi
 
 cargo deny check bans licenses sources
 
-echo "Checking advisories. Reviewed maintenance advisories are pinned in deny.toml."
+echo "Checking advisories. Reviewed advisory exceptions are pinned in deny.toml."
 cargo deny check advisories
 
 cargo metadata --locked --format-version 1 >/dev/null
