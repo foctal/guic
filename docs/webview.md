@@ -37,22 +37,6 @@ network connection:
 cargo run -p guic-example-webview -- file:///absolute/path/to/page.html
 ```
 
-The example prints page-load start and finish events to stderr. Check both the
-rendered page and input/clipboard behavior; a finished load alone does not
-prove that the native child window was painted.
-
-For a repeatable native smoke check, open the included fixture:
-
-```sh
-cargo run -p guic-example-webview -- "file://$PWD/examples/webview/tests/fixtures/smoke.html"
-```
-
-Check that resizing updates the viewport dimensions, Ctrl+A/C/X/V and Tab move
-text between the two inputs, the increment button updates its counter, links
-scroll to the destination and back, and closing the window exits successfully.
-Run this from X11 and from a Wayland session with XWayland. The automated
-`linux_startup` tests also verify graceful failure when X11 is unavailable.
-
 With GTK 3.24.41 and WebKitGTK 2.52.6, forcing `GDK_SCALE=2` can emit a
 `_gdk_frame_clock_freeze` warning inside Wry's foreign-window `show_all` call.
 This is a known GTK/Wry limitation. Do not enable
