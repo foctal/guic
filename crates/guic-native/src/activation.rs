@@ -17,6 +17,7 @@ use std::{
 };
 
 const MAX_REQUEST: usize = 64 * 1024;
+const REQUEST_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// A launch request retained until the application's UI is ready to consume it.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -322,14 +323,14 @@ fn receive(
 ) -> Result<()> {
     // Accepted sockets can inherit the listener's nonblocking mode on macOS.
     stream.set_nonblocking(false)?;
-    stream.set_read_timeout(Some(Duration::from_millis(500)))?;
-    stream.set_write_timeout(Some(Duration::from_millis(500)))?;
+    let deadline = Instant::now() + REQUEST_TIMEOUT;
+    stream.set_write_timeout(Some(REQUEST_TIMEOUT))?;
     let mut length = [0; 4];
-    stream.read_exact(&mut length)?;
+    read_before(stream, &mut length, deadline)?;
     let length = u32::from_be_bytes(length) as usize;
     ensure!(length <= MAX_REQUEST, "activation request is too large");
     let mut bytes = vec![0; length];
-    stream.read_exact(&mut bytes)?;
+    read_before(stream, &mut bytes, deadline)?;
     let packet: Packet = serde_json::from_slice(&bytes)?;
     ensure!(packet.token == token, "invalid activation token");
     packet.request.validate()?;
@@ -348,6 +349,31 @@ fn receive(
     Ok(())
 }
 
+// A socket timeout applies to each read, so a trickling sender could otherwise
+// keep the listener (and owner destruction) blocked for the entire request size.
+fn read_before(
+    stream: &mut TcpStream,
+    mut bytes: &mut [u8],
+    deadline: Instant,
+) -> std::io::Result<()> {
+    while !bytes.is_empty() {
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .filter(|remaining| !remaining.is_zero())
+            .ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::TimedOut, "activation request timed out")
+            })?;
+        stream.set_read_timeout(Some(remaining))?;
+        match stream.read(bytes) {
+            Ok(0) => return Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)),
+            Ok(length) => bytes = &mut bytes[length..],
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
 impl Drop for ActivationOwner {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
@@ -362,6 +388,35 @@ impl Drop for ActivationOwner {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn trickling_request_has_a_total_deadline() -> Result<()> {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
+        let mut client = TcpStream::connect(listener.local_addr()?)?;
+        let (mut server, _) = listener.accept()?;
+        let (sender, _) = async_channel::bounded(1);
+        let (done, completion) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let result = receive(&mut server, "token", &sender, &mut Default::default());
+            done.send(result.is_err()).expect("completion observer");
+        });
+        client.write_all(&100u32.to_be_bytes())?;
+        // Each fragment arrives inside the socket timeout, but the complete
+        // request must still time out without waiting for all 100 bytes.
+        let started = Instant::now();
+        while started.elapsed() < Duration::from_millis(1500) {
+            if let Ok(failed) = completion.try_recv() {
+                assert!(failed);
+                worker.join().expect("receiver");
+                return Ok(());
+            }
+            let _ = client.write_all(b" ");
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        drop(client);
+        worker.join().expect("receiver");
+        anyhow::bail!("trickling request exceeded its total deadline")
+    }
 
     #[test]
     fn receive_waits_for_fragmented_requests_on_nonblocking_connections() -> Result<()> {
