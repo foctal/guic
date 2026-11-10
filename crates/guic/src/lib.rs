@@ -67,11 +67,40 @@ pub fn open_window<V: gpui::Render>(
 /// Enable the `updater` feature. Run blocking network and installation operations
 /// on a background thread, outside the GUI event loop. Configure HTTPS endpoints
 /// and the public key used by `cargo guic updater prepare`.
+///
+/// macOS installation uses an atomic bundle swap and requests system authorization
+/// when permissions require it. Cancellation preserves the installed application.
+/// Validate signed application updates and relaunch behavior before distribution.
 #[cfg(feature = "updater")]
 pub use cargo_packager_updater as updater;
 
 pub use guic_core as core;
-pub use guic_macros::{shared_format, shared_string};
+/// Creates a shared string without requiring a direct GPUI dependency.
+///
+/// ```
+/// let text = guic::shared_string!("Hello");
+/// assert_eq!(text.as_ref(), "Hello");
+/// ```
+#[macro_export]
+macro_rules! shared_string {
+    ($value:literal) => {
+        $crate::gpui::SharedString::from($value)
+    };
+}
+
+/// Formats a shared string using the same arguments as [`std::format!`].
+///
+/// ```
+/// let text = guic::shared_format!("Hello, {name}", name = "world");
+/// assert_eq!(text.as_ref(), "Hello, world");
+/// ```
+#[macro_export]
+macro_rules! shared_format {
+    ($($argument:tt)*) => {
+        $crate::gpui::SharedString::from(::std::format!($($argument)*))
+    };
+}
+
 /// Desktop application identity, activation, lifecycle, menus, trays, and sidecars.
 #[cfg(feature = "native")]
 pub use guic_native as native;

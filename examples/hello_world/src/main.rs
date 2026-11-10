@@ -70,3 +70,17 @@ fn main() {
             .expect("failed to open hello world window");
     })
 }
+
+#[cfg(test)]
+mod tests {
+    // This binary has only a GUIC dependency, so it also checks macro hygiene.
+    #[test]
+    fn umbrella_macros_do_not_require_direct_runtime_dependencies() {
+        assert_eq!(guic::shared_string!("hello").as_ref(), "hello");
+        assert_eq!(
+            guic::shared_format!("{count} items", count = 3).as_ref(),
+            "3 items"
+        );
+        assert_eq!(guic::theme_name!("Custom").to_string(), "Custom");
+    }
+}
