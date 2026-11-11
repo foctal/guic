@@ -2,7 +2,8 @@ use crate::{Label, ScrollArea, Separator};
 use gpui::{
     AnyElement, App, Bounds, ClickEvent, FocusHandle, InteractiveElement as _, IntoElement,
     KeyDownEvent, Keystroke, MouseButton, MouseMoveEvent, ParentElement as _, Pixels, RenderOnce,
-    SharedString, StatefulInteractiveElement as _, Styled as _, Window, canvas, div, px,
+    ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _, Window, canvas, div,
+    px,
 };
 use guic_tokens::Theme;
 use std::{cell::Cell, rc::Rc};
@@ -736,6 +737,7 @@ pub struct DataTable {
     max_height: Option<f32>,
     row_height: f32,
     viewport: Option<DataTableViewport>,
+    scroll_handle: Option<ScrollHandle>,
     column_viewport: Option<DataTableColumnViewport>,
     striped: bool,
     focus_handle: Option<FocusHandle>,
@@ -763,6 +765,7 @@ impl DataTable {
             max_height: None,
             row_height: 40.0,
             viewport: None,
+            scroll_handle: None,
             column_viewport: None,
             striped: true,
             focus_handle: None,
@@ -878,6 +881,16 @@ impl DataTable {
     #[must_use]
     pub fn viewport(mut self, viewport: DataTableViewport) -> Self {
         self.viewport = Some(viewport);
+        self
+    }
+
+    /// Tracks the body scroll position when [`Self::max_height`] is set.
+    ///
+    /// For row virtualization, pass the negated vertical offset to
+    /// [`DataTableViewport::new`] on each render.
+    #[must_use]
+    pub fn track_scroll(mut self, handle: ScrollHandle) -> Self {
+        self.scroll_handle = Some(handle);
         self
     }
 
@@ -1180,7 +1193,7 @@ impl RenderOnce for DataTable {
                 )
             });
         let mut root = div()
-            .id(self.id)
+            .id(self.id.clone())
             .w_full()
             .rounded(px(theme.radius.lg))
             .border_1()
@@ -1356,7 +1369,7 @@ impl RenderOnce for DataTable {
         } else {
             let mut rows = div().w_full().flex().flex_col();
             if top_spacer > 0.0 {
-                rows = rows.child(div().w_full().h(px(top_spacer)));
+                rows = rows.child(div().w_full().h(px(top_spacer)).flex_shrink_0());
             }
 
             for (row_index, row) in self
@@ -1388,6 +1401,12 @@ impl RenderOnce for DataTable {
                     } else {
                         theme.background()
                     });
+                if self.viewport.is_some() {
+                    row_view = row_view
+                        .h(px(self.row_height))
+                        .flex_shrink_0()
+                        .overflow_hidden();
+                }
                 let mut row_start = div().flex().flex_shrink_0();
                 let mut row_middle = div().min_w_0().flex_1().flex();
                 if constrain_middle {
@@ -1477,16 +1496,22 @@ impl RenderOnce for DataTable {
             }
 
             if bottom_spacer > 0.0 {
-                rows = rows.child(div().w_full().h(px(bottom_spacer)));
+                rows = rows.child(div().w_full().h(px(bottom_spacer)).flex_shrink_0());
             }
 
             let mut body = div().w_full().child(rows);
             if let Some(max_height) = self.max_height {
-                body = div().w_full().h(px(max_height)).child(
-                    ScrollArea::new("guic-data-table-scroll", body)
-                        .vertical(true)
-                        .horizontal(true),
-                );
+                let mut scroll = ScrollArea::new("guic-data-table-scroll", body)
+                    .vertical(true)
+                    .horizontal(true);
+                if let Some(handle) = self.scroll_handle {
+                    scroll = scroll.track_scroll(handle);
+                }
+                body = div()
+                    .debug_selector(|| format!("guic-data-table-body-{}", self.id))
+                    .w_full()
+                    .h(px(max_height))
+                    .child(scroll);
             }
             body.into_any_element()
         };

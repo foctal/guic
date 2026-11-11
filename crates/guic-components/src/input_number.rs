@@ -254,8 +254,14 @@ impl RenderOnce for InputNumber {
             .gap_2()
             .text_size(text_size)
             .text_color(theme.foreground())
-            .child(input)
-            .children(self.suffix.clone());
+            .child(div().flex_1().min_w_0().child(input))
+            .children(self.suffix.clone().map(|suffix| {
+                div()
+                    .debug_selector(|| format!("guic-input-number-suffix-{}", self.id))
+                    .flex_shrink_0()
+                    .whitespace_nowrap()
+                    .child(suffix)
+            }));
 
         let mut root = div()
             .id(self.id.clone())
@@ -397,7 +403,7 @@ mod interaction_tests {
     use super::InputNumber;
     use gpui::{
         AppContext as _, Context, FocusHandle, Keystroke, Modifiers, ParentElement as _, Render,
-        Styled as _, TestAppContext, VisualContext as _, Window, div,
+        Styled as _, TestAppContext, VisualContext as _, Window, div, px,
     };
 
     struct InputNumberHarness {
@@ -425,6 +431,7 @@ mod interaction_tests {
                     .value(self.value)
                     .range(0.0, 10.0)
                     .step(2.0)
+                    .suffix("items")
                     .focusable(self.focus_handle.clone())
                     .on_change(cx.listener(|this, value: &f64, _, cx| {
                         this.value = *value;
@@ -456,6 +463,29 @@ mod interaction_tests {
                     this.changes += 1;
                     cx.notify();
                 }))
+        }
+    }
+
+    #[gpui::test]
+    fn suffix_fits_between_the_editor_and_increment_button(cx: &mut TestAppContext) {
+        init(cx);
+        let (_, cx) = cx.add_window_view(|_, cx| InputNumberHarness::new(cx));
+        for width in [240.0, 1200.0] {
+            cx.simulate_resize(gpui::size(px(width), px(160.0)));
+            let editor = cx
+                .debug_bounds("guic-text-input-number-value")
+                .expect("numeric editor");
+            let suffix = cx
+                .debug_bounds("guic-input-number-suffix-qty")
+                .expect("unit suffix");
+            let increment = cx
+                .debug_bounds("guic-icon-button-Plus")
+                .expect("increment button");
+            assert!(editor.size.width > px(0.0));
+            assert!(suffix.size.width > px(0.0));
+            assert!(editor.right() < suffix.left());
+            assert!(suffix.right() < increment.left());
+            assert!(increment.right() <= px(width - 16.0));
         }
     }
 

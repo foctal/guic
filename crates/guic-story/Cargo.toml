@@ -12,6 +12,9 @@ rust-version.workspace = true
 gpui.workspace = true
 guic = { path = "../guic", features = ["charts", "data-table", "dock", "editor", "markdown", "tree"] }
 
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 gpui_platform = { package = "guic-gpui-platform", version = "=0.6.1", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
 

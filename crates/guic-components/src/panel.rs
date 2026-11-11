@@ -102,20 +102,18 @@ impl RenderOnce for Panel {
 
         let header_id = SharedString::from(format!("{}-header", self.id));
         let selector = format!("guic-panel-header-{}", self.id);
-        let mut header = div()
-            .flex()
-            .items_center()
-            .justify_between()
-            .gap_3()
-            .px(px(theme.spacing.x4))
-            .py(px(theme.spacing.x3));
+        let mut header = div().flex().items_center().justify_between().gap_3();
 
         let mut heading = div()
             .id(header_id)
             .debug_selector(move || selector.clone())
+            .flex_1()
+            .min_w_0()
             .flex()
             .items_center()
-            .gap_2();
+            .gap_2()
+            .px(px(theme.spacing.x4))
+            .py(px(theme.spacing.x3));
         if collapsible {
             heading = heading.child(
                 Icon::new(if collapsed {
@@ -161,7 +159,13 @@ impl RenderOnce for Panel {
         }
         header = header.child(heading);
         if let Some(actions) = self.actions {
-            header = header.child(actions);
+            header = header.child(
+                div()
+                    .flex_shrink_0()
+                    .pr(px(theme.spacing.x4))
+                    .py(px(theme.spacing.x3))
+                    .child(actions),
+            );
         }
 
         let mut root = div()

@@ -24,7 +24,14 @@ DataTable::new("builds")
 
 ## Virtualized Rows
 
+Store a `gpui::ScrollHandle` as `self.scroll_handle` in the host view. On each
+render, pass its negated vertical offset to `DataTableViewport`, clamped to the
+scrollable range. Virtualized rows have a fixed `row_height`.
+
 ```rust
+let scroll_offset = (-f32::from(self.scroll_handle.offset().y))
+    .clamp(0.0, 500.0 * 36.0 - 240.0);
+
 DataTable::new("large-builds")
     .columns(vec![
         DataColumn::new("name", "Name"),
@@ -37,7 +44,9 @@ DataTable::new("large-builds")
         )
     }).collect())
     .row_height(36.0)
-    .viewport(DataTableViewport::new(720.0, 240.0).overscan(3))
+    .viewport(DataTableViewport::new(scroll_offset, 240.0).overscan(3))
+    .track_scroll(self.scroll_handle.clone())
+    .max_height(240.0)
 ```
 
 ## Navigation
