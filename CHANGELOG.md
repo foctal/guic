@@ -25,8 +25,9 @@ All notable changes to this project will be documented in this file.
 
 - Maintain the packaging backend, updater, utilities, and resource resolver as
   workspace-owned `guic-packager` crates. Keep existing GUIC configuration keys.
-- Pin the runtime and platform family to `guic-gpui` 0.6.1, including the
-  fix for size changes received during native child-window initialization.
+- Pin the runtime and platform family to `guic-gpui` 0.6.2, including fixes
+  for native child-window resizing and transparent backgrounds on Linux with
+  the VMware SVGA3D OpenGL renderer.
 - Use per-window composition settings in Windows native-menu and WebView examples.
 - Replace the local XML compatibility patch with `zbus_xml` 5.2.1, which no longer
   uses the affected parser. Replace yanked lockfile entries for `spin`,
@@ -57,7 +58,7 @@ All notable changes to this project will be documented in this file.
 ### Migration notes
 
 - Update direct GUIC crate dependencies to 0.6.0. Applications with explicit
-  `guic-gpui` or `guic-gpui-platform` dependencies must pin them to `=0.6.1`.
+  `guic-gpui` or `guic-gpui-platform` dependencies must pin them to `=0.6.2`.
 - `guic::updater` now re-exports `guic-packager-updater`. Direct upstream types
   are distinct. `Config` adds `dangerous_insecure_transport_protocol`; set it
   to `false` or use `..Default::default()`. The HTTP client re-export uses reqwest 0.13.

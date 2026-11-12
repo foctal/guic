@@ -21,21 +21,21 @@ Applications can also supply a platform backend and construct `Root` themselves.
 ## Explicit runtime dependencies
 
 Applications importing GPUI directly should use the versions below with GUIC
-0.6.0. The runtime family is pinned to 0.6.1; its version differs from GUIC's.
+0.6.0. The runtime family is pinned to 0.6.2; its version differs from GUIC's.
 
 ```toml
 [dependencies]
 guic = "0.6.0"
-gpui = { package = "guic-gpui", version = "=0.6.1" }
+gpui = { package = "guic-gpui", version = "=0.6.2" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-gpui_platform = { package = "guic-gpui-platform", version = "=0.6.1", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
+gpui_platform = { package = "guic-gpui-platform", version = "=0.6.2", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-gpui_platform = { package = "guic-gpui-platform", version = "=0.6.1", features = ["font-kit"] }
+gpui_platform = { package = "guic-gpui-platform", version = "=0.6.2", features = ["font-kit"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-gpui_platform = { package = "guic-gpui-platform", version = "=0.6.1" }
+gpui_platform = { package = "guic-gpui-platform", version = "=0.6.2" }
 ```
 
 ## Source checkouts
