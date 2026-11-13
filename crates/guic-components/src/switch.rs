@@ -118,7 +118,7 @@ impl RenderOnce for Switch {
         let accessibility_label = self.label.clone().unwrap_or_else(|| self.id.clone());
         let mut row = div()
             .id(self.id.clone())
-            .accessibility(
+            .accessible(
                 AccessibilityProps::new(Role::Switch)
                     .label(accessibility_label)
                     .checked(self.checked)

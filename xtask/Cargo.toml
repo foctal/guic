@@ -10,7 +10,7 @@ rust-version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-guic-tokens = { version = "0.5.0", path = "../crates/guic-tokens" }
+guic-tokens = { version = "0.6.0", path = "../crates/guic-tokens" }
 serde_json.workspace = true
 
 [lints]

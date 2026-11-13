@@ -169,14 +169,14 @@ pub use toolbar::Toolbar;
 pub use tooltip::Tooltip;
 pub use tree_select::{TreeSelect, TreeSelectNode};
 pub use tree_table::{TreeTable, TreeTableColumn, TreeTableRow};
-pub use virtual_list::{VirtualList, VirtualListMetrics};
+pub use virtual_list::{VariableList, VirtualList, VirtualListMetrics};
 
 #[cfg(feature = "data-table")]
 pub use data_table::{
     DataColumn, DataColumnAlign, DataColumnPin, DataColumnResize, DataRow, DataTable,
     DataTableCell, DataTableColumnViewport, DataTableNavigation, DataTableNavigationOutcome,
-    DataTableSelection, DataTableSelectionIntent, DataTableSelectionMode, DataTableState,
-    DataTableViewport, SortDirection, TableSort, VisibleDataColumn, VisibleDataRow,
+    DataTableRows, DataTableSelection, DataTableSelectionIntent, DataTableSelectionMode,
+    DataTableState, DataTableViewport, SortDirection, TableSort, VisibleDataColumn, VisibleDataRow,
 };
 #[cfg(feature = "dock")]
 pub use dock::{
@@ -359,7 +359,8 @@ mod catalog_keyboard_interaction_tests {
     fn date_picker_calendar_supports_grid_keyboard_navigation(cx: &mut TestAppContext) {
         init(cx);
         let (view, cx) = cx.add_window_view(|_, _| Harness::new(Surface::DatePicker));
-        focus_next(cx, 2);
+        // Skip the trigger and both month-navigation controls.
+        focus_next(cx, 4);
         let window = cx.window_handle();
         cx.dispatch_keystroke(window, Keystroke::parse("right").expect("key parses"));
         cx.dispatch_keystroke(window, Keystroke::parse("enter").expect("key parses"));
@@ -367,6 +368,23 @@ mod catalog_keyboard_interaction_tests {
             assert_eq!(view.date.as_ref(), "2026-08-02");
             assert!(!view.open);
         });
+    }
+
+    #[gpui::test]
+    fn date_picker_keeps_focus_when_the_next_month_has_fewer_days(cx: &mut TestAppContext) {
+        init(cx);
+        let (view, cx) = cx.add_window_view(|_, _| Harness::new(Surface::DatePicker));
+        focus_next(cx, 4);
+        let window = cx.window_handle();
+        for key in ["end", "pagedown", "enter"] {
+            cx.dispatch_keystroke(window, Keystroke::parse(key).expect("key"));
+        }
+        view.update(cx, |view, _| {
+            assert_eq!(view.date.as_ref(), "2026-09-30");
+            assert!(!view.open);
+        });
+        cx.dispatch_keystroke(window, Keystroke::parse("enter").expect("reopen"));
+        view.update(cx, |view, _| assert!(view.open));
     }
 
     #[gpui::test]

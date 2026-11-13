@@ -527,6 +527,7 @@ fn assert_cancellation_terminates_child(dev: bool) -> Result<()> {
     let mut child = Command::new(env!("CARGO_BIN_EXE_cargo-guic"))
         .current_dir(dir.path())
         .args(args)
+        .env_remove("CARGO_TARGET_DIR")
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()?;

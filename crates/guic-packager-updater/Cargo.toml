@@ -1,0 +1,51 @@
+[package]
+name = "guic-packager-updater"
+version = "0.1.0"
+description = "Rust executable updater."
+authors = ["CrabNebula Ltd.", "Tauri Programme within The Commons Conservancy"]
+edition = "2021"
+license = "Apache-2.0 OR MIT"
+repository.workspace = true
+rust-version.workspace = true
+readme = "README.md"
+
+[features]
+default = ["rustls-tls", "system-proxy"]
+process-relaunch-dangerous-allow-symlink-macos = [
+  "guic-packager-utils/process-relaunch-dangerous-allow-symlink-macos",
+]
+native-tls = ["reqwest/native-tls"]
+native-tls-vendored = ["reqwest/native-tls-vendored"]
+rustls-tls = ["reqwest/rustls-no-provider", "dep:rustls"]
+system-proxy = ["reqwest/system-proxy"]
+
+[dependencies]
+guic-packager-utils = { version = "0.1.0", path = "../guic-packager-utils" }
+reqwest = { version = "0.13", default-features = false, features = [
+  "json",
+  "stream",
+  "blocking",
+] }
+rustls = { version = "0.23", default-features = false, features = [
+  "ring",
+], optional = true }
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+dunce = "1"
+dirs = "7.0"
+semver = "1"
+base64 = "0.23"
+time = { version = "0.3", features = ["parsing", "formatting"] }
+http = "1"
+url = { version = "2", features = ["serde"] }
+minisign-verify = "0.2"
+tempfile = "3.12"
+log = "0.4"
+percent-encoding = "2"
+
+[target."cfg(target_os = \"macos\")".dependencies]
+tar = "0.4"
+flate2 = "1.0"
+libc = "0.2"
+

@@ -16,11 +16,11 @@ use guic::prelude::{
     CascadeSelect, ChartDataset, ChartOptions, ChartPoint, Checkbox, Chip, CodeEditor,
     CodeEditorOptions, ColorPicker, ColorSwatch, CommandPalette, CommandPaletteItem, ComponentSize,
     ConfirmDialog, ConfirmPopup, ContextMenu, DataColumn, DataColumnPin, DataColumnResize, DataRow,
-    DataTable, DataTableColumnViewport, DataTableNavigation, DataTableState, DataTableViewport,
-    DataView, DataViewItem, DataViewLayout, DatePicker, Dialog, Dock, DockCommand, DockLayout,
-    DockNode, DockTab, DockTabs, Drawer, DrawerSide, EditorBuffer, EditorEdit, EditorSession,
-    Fieldset, FilePicker, Form, FormField, FormSummary, HtmlFragment, IconButton, IconName, Image,
-    ImageFit, InputGroup, InputGroupAddon, InputNumber, InputOtp, Label, LineChart, Listbox,
+    DataTable, DataTableNavigation, DataTableState, DataTableViewport, DataView, DataViewItem,
+    DataViewLayout, DatePicker, Dialog, Dock, DockCommand, DockDensity, DockLayout, DockNode,
+    DockTab, DockTabs, Drawer, DrawerSide, EditorBuffer, EditorEdit, EditorSession, Fieldset,
+    FilePicker, Form, FormField, FormSummary, HtmlFragment, IconButton, IconName, Image, ImageFit,
+    InputGroup, InputGroupAddon, InputNumber, InputOtp, Label, LineChart, Listbox,
     ListboxSelectionMode, Markdown, Menu, MenuItem, Menubar, MenubarActivation, MenubarMenu,
     Message, MessageVariant, MetricCard, MultiSelect, Paginator, Panel, PanelMenu, PasswordInput,
     PickList, PieChart, Popover, Progress, PropertyItem, PropertyList, Radio, ScrollArea,
@@ -41,6 +41,21 @@ struct StoryRoot {
     selected_radio: usize,
     switch_on: bool,
     active_tab: usize,
+    active_tab_menu: usize,
+    last_action: SharedString,
+    action_count: usize,
+    backend_tag_visible: bool,
+    preferences_notifications: bool,
+    preferences_native: bool,
+    preferences_preview: bool,
+    form_notifications: bool,
+    form_saved: bool,
+    native_chip_selected: bool,
+    accessible_chip_selected: bool,
+    accessible_chip_visible: bool,
+    workspace_scroll: gpui::ScrollHandle,
+    dock_tab_scroll: [gpui::ScrollHandle; 3],
+    inspected_row: Option<SharedString>,
     select_expanded: bool,
     selected_option: Option<usize>,
     selected_table_row_id: &'static str,
@@ -53,6 +68,9 @@ struct StoryRoot {
     popover_open: bool,
     dialog_open: bool,
     filters_collapsed: bool,
+    filter_open_checked: bool,
+    filter_mine_checked: bool,
+    dataset_scroll: gpui::ScrollHandle,
     accordion_open: [bool; 3],
     breadcrumb_index: usize,
     wizard_step: usize,
@@ -88,6 +106,7 @@ struct StoryRoot {
     tree_select_selected: SharedString,
     tree_table_selected: SharedString,
     tree_table_docs_expanded: bool,
+    tree_table_components_expanded: bool,
     editor_session: EditorSession,
     dock_layout: DockLayout,
     dock_focus: FocusHandle,
@@ -110,6 +129,7 @@ impl StoryRoot {
     fn new(cx: &mut Context<Self>) -> Self {
         let autocomplete_view = cx.entity();
         let command_palette_view = cx.entity();
+        let slider_view = cx.entity();
         Self {
             active_theme: Theme::DEFAULT_DARK_NAME,
             progress: 42.0,
@@ -118,6 +138,21 @@ impl StoryRoot {
             selected_radio: 0,
             switch_on: true,
             active_tab: 0,
+            active_tab_menu: 0,
+            last_action: "No action yet".into(),
+            action_count: 0,
+            backend_tag_visible: true,
+            preferences_notifications: true,
+            preferences_native: true,
+            preferences_preview: true,
+            form_notifications: false,
+            form_saved: false,
+            native_chip_selected: true,
+            accessible_chip_selected: true,
+            accessible_chip_visible: true,
+            workspace_scroll: gpui::ScrollHandle::new(),
+            dock_tab_scroll: std::array::from_fn(|_| gpui::ScrollHandle::new()),
+            inspected_row: None,
             select_expanded: false,
             selected_option: Some(0),
             selected_table_row_id: "runtime",
@@ -130,6 +165,9 @@ impl StoryRoot {
             popover_open: false,
             dialog_open: false,
             filters_collapsed: false,
+            filter_open_checked: false,
+            filter_mine_checked: false,
+            dataset_scroll: gpui::ScrollHandle::new(),
             accordion_open: [true, false, false],
             breadcrumb_index: 2,
             wizard_step: 1,
@@ -168,6 +206,7 @@ impl StoryRoot {
             tree_select_selected: SharedString::from("editor"),
             tree_table_selected: SharedString::from("components"),
             tree_table_docs_expanded: true,
+            tree_table_components_expanded: true,
             editor_session: EditorSession::new(EditorBuffer::from_text(
                 "fn main() {\n    let status = \"ready\";\n    println!(\"{status}\");\n}",
             )),
@@ -220,6 +259,9 @@ impl StoryRoot {
                     .range(0.0, 100.0)
                     .step(5.0)
                     .value(40.0)
+                    .on_change(move |_, _, app| {
+                        slider_view.update(app, |_, cx| cx.notify());
+                    })
             }),
             text_input: cx.new(|cx| {
                 TextInput::new("story-text-input", cx)
@@ -458,6 +500,334 @@ impl StoryRoot {
         ])
     }
 
+    fn render_release_table(&self, cx: &mut Context<Self>) -> DataTable {
+        let rows = self.release_rows();
+
+        self.release_table_model()
+            .title("Release Checklist")
+            .rows(rows)
+            .focusable(self.table_focus.clone())
+            .on_sort(cx.listener(|this, sort, _, cx| this.set_table_sort(sort, cx)))
+            .on_column_resize(cx.listener(|this, resize: &DataColumnResize, _, cx| {
+                if resize.column_id().as_ref() == "status" {
+                    this.status_column_width = resize.width();
+                    cx.notify();
+                }
+            }))
+            .on_row_select(cx.listener(|this, row_id: &SharedString, _, cx| {
+                this.set_table_row(row_id.as_ref(), cx)
+            }))
+            .render_cell(|cell| {
+                if cell.column_id().as_ref() == "status" {
+                    let badge = match cell.value().as_ref() {
+                        "Ready" => Badge::new(cell.value().clone()).success(),
+                        "Review" => Badge::new(cell.value().clone()).warning(),
+                        _ => Badge::new(cell.value().clone()),
+                    };
+                    badge.into_any_element()
+                } else {
+                    Label::new(cell.value().clone()).into_any_element()
+                }
+            })
+            .render_row_actions({
+                let view = cx.entity();
+                move |row| {
+                    let row_id = row.id().clone();
+                    let view = view.clone();
+                    Button::new("Inspect")
+                        .id(format!("inspect-{row_id}"))
+                        .secondary()
+                        .size(ComponentSize::Small)
+                        .on_click(move |_, _, app| {
+                            app.stop_propagation();
+                            view.update(app, |this, cx| {
+                                this.inspected_row = Some(row_id.clone());
+                                cx.notify();
+                            });
+                        })
+                        .into_any_element()
+                }
+            })
+            .max_height(220.0)
+    }
+
+    fn large_dataset_table(&self) -> DataTable {
+        // Wheel events can briefly overshoot before GPUI clamps the scroll offset.
+        let scroll_offset =
+            (-f32::from(self.dataset_scroll.offset().y)).clamp(0.0, 200.0 * 36.0 - 180.0);
+        DataTable::new("story-data-table-virtualized")
+            .title("Large Dataset Preview")
+            .columns(vec![
+                DataColumn::new("index", "Row")
+                    .width(88.0)
+                    .pin(DataColumnPin::Start),
+                DataColumn::new("owner", "Owner").width(180.0),
+                DataColumn::new("status", "Status").width(140.0),
+                DataColumn::new("notes", "Notes")
+                    .width(240.0)
+                    .pin(DataColumnPin::End),
+            ])
+            .rows(
+                (0..200)
+                    .map(|index| {
+                        DataRow::new(
+                            format!("build-{index}"),
+                            vec![
+                                format!("#{}", index + 1),
+                                format!("Team {}", index % 8 + 1),
+                                if index % 5 == 0 { "Review" } else { "Ready" }.to_string(),
+                                format!("Virtualized row {}", index + 1),
+                            ],
+                        )
+                    })
+                    .collect(),
+            )
+            .row_height(36.0)
+            .viewport(DataTableViewport::new(scroll_offset, 180.0).overscan(2))
+            .track_scroll(self.dataset_scroll.clone())
+            .max_height(180.0)
+            .state(DataTableState::Ready)
+    }
+
+    fn large_workspace_tree(&self) -> TreeView {
+        let viewport_height = f32::from(self.workspace_scroll.bounds().size.height).max(1.0);
+        let scroll_offset = (-f32::from(self.workspace_scroll.offset().y))
+            .clamp(0.0, (10_000.0 * 36.0 - viewport_height).max(0.0));
+        TreeView::new("story-tree-virtualized")
+            .title("Large Workspace Preview")
+            .nodes(
+                (0..10_000)
+                    .map(|index| {
+                        TreeNode::new(
+                            format!("generated-node-{index}"),
+                            format!("Generated node {index}"),
+                        )
+                        .detail(format!("virtual item {index}"))
+                    })
+                    .collect(),
+            )
+            .row_height(36.0)
+            .viewport(TreeViewport::new(scroll_offset, viewport_height).overscan(2))
+            .track_scroll(self.workspace_scroll.clone())
+            .height(216.0)
+    }
+
+    fn record_action(&mut self, label: &str, cx: &mut Context<Self>) {
+        self.action_count += 1;
+        self.last_action = format!("Last action: {label} ({})", self.action_count).into();
+        cx.notify();
+    }
+
+    fn demo_button(
+        &self,
+        id: &'static str,
+        label: &'static str,
+        variant: ButtonVariant,
+        cx: &Context<Self>,
+    ) -> Button {
+        Button::new(label)
+            .id(id)
+            .variant(variant)
+            .on_click(cx.listener(move |this, _, _, cx| this.record_action(label, cx)))
+    }
+
+    fn render_buttons(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(Label::new("Buttons"))
+            .child(
+                div()
+                    .flex()
+                    .gap_3()
+                    .flex_wrap()
+                    .items_center()
+                    .child(
+                        Button::new("Primary Action")
+                            .primary()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.advance_progress(cx);
+                                this.record_action("Primary Action", cx);
+                            })),
+                    )
+                    .child(self.demo_button(
+                        "button-secondary",
+                        "Secondary",
+                        ButtonVariant::Secondary,
+                        cx,
+                    ))
+                    .child(self.demo_button("button-ghost", "Ghost", ButtonVariant::Ghost, cx))
+                    .child(self.demo_button("button-danger", "Danger", ButtonVariant::Danger, cx))
+                    .child(Button::new("Disabled").disabled(true))
+                    .child(
+                        IconButton::new(IconName::Search)
+                            .id("button-search")
+                            .label("Search")
+                            .variant(ButtonVariant::Secondary)
+                            .on_click(
+                                cx.listener(|this, _, _, cx| this.record_action("Search", cx)),
+                            ),
+                    ),
+            )
+            .child(Label::new(self.last_action.clone()).muted(true))
+            .child(Label::new("Disabled is intentionally unavailable.").muted(true))
+    }
+
+    fn render_preferences(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        Fieldset::new()
+            .legend("Preferences")
+            .description("Grouped controls share one labelled surface.")
+            .child(
+                Checkbox::new("forms-fieldset-notifications")
+                    .label("Enable notifications")
+                    .checked(self.preferences_notifications)
+                    .on_toggle(cx.listener(|this, checked, _, cx| {
+                        this.preferences_notifications = *checked;
+                        cx.notify();
+                    })),
+            )
+            .child(
+                div()
+                    .debug_selector(|| "gallery-preference-native".into())
+                    .child(
+                        Radio::new("forms-fieldset-native")
+                            .label("Native renderer")
+                            .checked(self.preferences_native)
+                            .on_select(cx.listener(|this, _, _, cx| {
+                                this.preferences_native = true;
+                                cx.notify();
+                            })),
+                    ),
+            )
+            .child(
+                div()
+                    .debug_selector(|| "gallery-preference-automatic".into())
+                    .child(
+                        Radio::new("forms-fieldset-automatic")
+                            .label("Automatic renderer")
+                            .checked(!self.preferences_native)
+                            .on_select(cx.listener(|this, _, _, cx| {
+                                this.preferences_native = false;
+                                cx.notify();
+                            })),
+                    ),
+            )
+            .child(
+                div()
+                    .debug_selector(|| "gallery-preference-preview".into())
+                    .child(
+                        Switch::new("forms-fieldset-preview")
+                            .label("Preview mode")
+                            .checked(self.preferences_preview)
+                            .on_toggle(cx.listener(|this, checked, _, cx| {
+                                this.preferences_preview = *checked;
+                                cx.notify();
+                            })),
+                    ),
+            )
+    }
+
+    fn render_notification_form(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let mut form = Form::new("gallery-form").label("Notification preferences");
+        let mut field = FormField::new(
+            "notifications",
+            "Notifications",
+            Checkbox::new("gallery-form-notifications")
+                .label("Send release notifications")
+                .checked(self.form_notifications)
+                .on_toggle(cx.listener(|this, checked, _, cx| {
+                    this.form_notifications = *checked;
+                    this.form_saved = false;
+                    cx.notify();
+                })),
+        )
+        .required(true)
+        .description("Controls product release alerts");
+        if !self.form_notifications {
+            let message = "Enable release notifications before saving";
+            form = form.child(FormSummary::new(
+                "gallery-form-summary",
+                vec![ValidationIssue::error(
+                    "notifications",
+                    "Notifications",
+                    message,
+                )],
+            ));
+            field = field.validation(ValidationSeverity::Error, message);
+        } else {
+            field = field.validation(
+                ValidationSeverity::Success,
+                if self.form_saved {
+                    "Notification preferences saved for this session"
+                } else {
+                    "Ready to save"
+                },
+            );
+        }
+        form.child(field).action(
+            Button::new("Save")
+                .id("notification-save")
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.form_saved = this.form_notifications;
+                    cx.notify();
+                })),
+        )
+    }
+
+    fn render_chips(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        div()
+            .flex()
+            .gap_2()
+            .flex_wrap()
+            .child(
+                Chip::new("Native")
+                    .id("gallery-chip-native")
+                    .selected(self.native_chip_selected)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.native_chip_selected = !this.native_chip_selected;
+                        cx.notify();
+                    })),
+            )
+            .children(self.accessible_chip_visible.then(|| {
+                Chip::new("Accessible")
+                    .id("gallery-chip-accessible")
+                    .selected(self.accessible_chip_selected)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.accessible_chip_selected = !this.accessible_chip_selected;
+                        cx.notify();
+                    }))
+                    .on_remove(cx.listener(|this, _, _, cx| {
+                        this.accessible_chip_visible = false;
+                        cx.notify();
+                    }))
+            }))
+            .children((!self.accessible_chip_visible).then(|| {
+                Button::new("Restore chip")
+                    .size(ComponentSize::Small)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.accessible_chip_visible = true;
+                        cx.notify();
+                    }))
+            }))
+            .child(Chip::new("Blocked").disabled(true))
+    }
+
+    fn render_workspace_dock(&self, cx: &mut Context<Self>) -> Dock {
+        Dock::new("story-dock", self.dock_layout.clone())
+            .title("Workspace Dock")
+            .density(DockDensity::Compact)
+            .show_pin_actions(false)
+            .show_stack_actions(false)
+            .track_tab_scroll("sidebar", self.dock_tab_scroll[0].clone())
+            .track_tab_scroll("editor", self.dock_tab_scroll[1].clone())
+            .track_tab_scroll("console", self.dock_tab_scroll[2].clone())
+            .focusable(self.dock_focus.clone())
+            .on_command(cx.listener(|this, command: &DockCommand, _, cx| {
+                this.apply_dock_command(command, cx);
+            }))
+    }
+
     fn initial_dock_layout() -> DockLayout {
         DockLayout::new(DockNode::horizontal(
             DockNode::Tabs(
@@ -499,9 +869,9 @@ impl StoryRoot {
                     )
                     .active_tab(0),
                 ),
-                720,
+                600,
             ),
-            280,
+            340,
         ))
     }
 
@@ -545,19 +915,46 @@ impl StoryRoot {
             .child(Avatar::new("guic").size(ComponentSize::Small))
             .child(Tag::new("stable").variant(TagVariant::Success).dot(true))
             .child(Tag::new("preview").variant(TagVariant::Warning).dot(true))
-            .child(
+            .children(self.backend_tag_visible.then(|| {
                 Tag::new("backend")
+                    .id("catalog-backend-tag")
                     .variant(TagVariant::Info)
-                    .removable(true),
-            );
+                    .on_remove(cx.listener(|this, _, _, cx| {
+                        this.backend_tag_visible = false;
+                        cx.notify();
+                    }))
+            }))
+            .children((!self.backend_tag_visible).then(|| {
+                Button::new("Restore tag")
+                    .size(ComponentSize::Small)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.backend_tag_visible = true;
+                        cx.notify();
+                    }))
+            }));
 
         let toolbar = Toolbar::new()
-            .child(Button::new("New").size(ComponentSize::Small))
-            .child(Button::new("Open").secondary().size(ComponentSize::Small))
+            .child(
+                self.demo_button("toolbar-new", "New", ButtonVariant::Primary, cx)
+                    .size(ComponentSize::Small),
+            )
+            .child(
+                self.demo_button("toolbar-open", "Open", ButtonVariant::Secondary, cx)
+                    .size(ComponentSize::Small),
+            )
             .separator()
-            .child(Button::new("Save").secondary().size(ComponentSize::Small))
+            .child(
+                self.demo_button("toolbar-save", "Save", ButtonVariant::Secondary, cx)
+                    .size(ComponentSize::Small),
+            )
             .spacer()
-            .child(IconButton::new(IconName::Search).variant(ButtonVariant::Ghost));
+            .child(
+                IconButton::new(IconName::Search)
+                    .id("toolbar-search")
+                    .label("Search")
+                    .variant(ButtonVariant::Ghost)
+                    .on_click(cx.listener(|this, _, _, cx| this.record_action("Search", cx))),
+            );
 
         let card = Card::new()
             .title("Workspace usage")
@@ -565,18 +962,40 @@ impl StoryRoot {
             .header_actions(Badge::new("live").success())
             .child(Label::new("1,204 sessions").muted(true))
             .child(Progress::new(self.progress).id("catalog-workspace-usage"))
-            .footer(Button::new("View report").size(ComponentSize::Small));
+            .footer(
+                self.demo_button("view-report", "View report", ButtonVariant::Secondary, cx)
+                    .size(ComponentSize::Small),
+            );
 
         let panel = Panel::new("catalog-filters", "Filters")
             .collapsible(true)
             .collapsed(self.filters_collapsed)
-            .actions(Badge::new("3"))
+            .actions(Badge::new(
+                (usize::from(self.filter_open_checked) + usize::from(self.filter_mine_checked))
+                    .to_string(),
+            ))
             .on_toggle(cx.listener(|this, collapsed, _, cx| {
                 this.filters_collapsed = *collapsed;
                 cx.notify();
             }))
-            .child(Checkbox::new("catalog-filter-open").label("Open issues"))
-            .child(Checkbox::new("catalog-filter-mine").label("Assigned to me"));
+            .child(
+                Checkbox::new("catalog-filter-open")
+                    .label("Open issues")
+                    .checked(self.filter_open_checked)
+                    .on_toggle(cx.listener(|this, checked, _, cx| {
+                        this.filter_open_checked = *checked;
+                        cx.notify();
+                    })),
+            )
+            .child(
+                Checkbox::new("catalog-filter-mine")
+                    .label("Assigned to me")
+                    .checked(self.filter_mine_checked)
+                    .on_toggle(cx.listener(|this, checked, _, cx| {
+                        this.filter_mine_checked = *checked;
+                        cx.notify();
+                    })),
+            );
 
         let breadcrumb = Breadcrumb::new("catalog-breadcrumb")
             .items(vec![
@@ -601,9 +1020,9 @@ impl StoryRoot {
                 TabItem::new("activity", "Activity"),
                 TabItem::new("settings", "Settings"),
             ])
-            .selected(self.active_tab)
+            .selected(self.active_tab_menu)
             .on_select(cx.listener(|this, index, _, cx| {
-                this.active_tab = *index;
+                this.active_tab_menu = *index;
                 cx.notify();
             }));
 
@@ -702,6 +1121,7 @@ impl StoryRoot {
             .child(Label::new("Catalog"))
             .child(identity_row)
             .child(toolbar)
+            .child(Label::new(self.last_action.clone()).muted(true))
             .child(
                 div()
                     .flex()
@@ -712,7 +1132,24 @@ impl StoryRoot {
                     .child(div().w_full().max_w(px(320.0)).child(panel)),
             )
             .child(breadcrumb)
+            .child(
+                Label::new(format!(
+                    "Selected location: {}",
+                    ["Home", "Workspace", "Components"][self.breadcrumb_index]
+                ))
+                .muted(true),
+            )
             .child(tab_menu)
+            .child(
+                Label::new(
+                    [
+                        "Workspace overview",
+                        "Recent activity",
+                        "Workspace settings",
+                    ][self.active_tab_menu],
+                )
+                .muted(true),
+            )
             .child(
                 div()
                     .w_full()
@@ -955,7 +1392,11 @@ impl StoryRoot {
                     "gallery-confirm-popup",
                     Button::new("Archive project")
                         .secondary()
-                        .size(ComponentSize::Small),
+                        .size(ComponentSize::Small)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.confirm_popup_open = !this.confirm_popup_open;
+                            cx.notify();
+                        })),
                 )
                 .open(self.confirm_popup_open)
                 .message("Archive this project? You can restore it later.")
@@ -969,15 +1410,6 @@ impl StoryRoot {
                     this.confirm_popup_open = false;
                     cx.notify();
                 })),
-            )
-            .child(
-                Button::new("Confirm archive")
-                    .secondary()
-                    .size(ComponentSize::Small)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.confirm_popup_open = !this.confirm_popup_open;
-                        cx.notify();
-                    })),
             )
             .child(Label::new(self.confirm_log.clone()).muted(true));
 
@@ -1192,56 +1624,9 @@ impl StoryRoot {
                 });
             });
 
-        let chips = div()
-            .flex()
-            .gap_2()
-            .flex_wrap()
-            .child(Chip::new("Native").selected(true))
-            .child(Chip::new("Accessible").selected(true).removable(true))
-            .child(Chip::new("Blocked").disabled(true));
-
-        let fieldset = Fieldset::new()
-            .legend("Preferences")
-            .description("Grouped controls share one labelled surface.")
-            .child(
-                Checkbox::new("forms-fieldset-notifications")
-                    .label("Enable notifications")
-                    .checked(true),
-            )
-            .child(
-                Radio::new("forms-fieldset-native")
-                    .label("Native renderer")
-                    .checked(true),
-            )
-            .child(
-                Switch::new("forms-fieldset-preview")
-                    .label("Preview mode")
-                    .checked(true),
-            );
-
-        let form = Form::new("gallery-form")
-            .label("Account form")
-            .child(FormSummary::new(
-                "gallery-form-summary",
-                vec![ValidationIssue::error(
-                    "notifications",
-                    "Notifications",
-                    "Choose a delivery channel",
-                )],
-            ))
-            .child(
-                FormField::new(
-                    "notifications",
-                    "Notifications",
-                    Checkbox::new("gallery-form-notifications")
-                        .label("Send release notifications")
-                        .checked(false),
-                )
-                .required(true)
-                .description("Controls product release alerts")
-                .validation(ValidationSeverity::Error, "Choose a delivery channel"),
-            )
-            .action(Button::new("Save"));
+        let chips = self.render_chips(cx);
+        let fieldset = self.render_preferences(cx);
+        let form = self.render_notification_form(cx);
 
         let image = Image::new("gallery-preview.png")
             .alt("Gallery image fallback")
@@ -1390,7 +1775,7 @@ impl StoryRoot {
             ])
             .rows(vec![
                 TreeTableRow::new("components", vec!["Components", "Ready", "UI"])
-                    .expanded(true)
+                    .expanded(self.tree_table_components_expanded)
                     .selected(self.tree_table_selected == "components")
                     .children(vec![
                         TreeTableRow::new("inputs", vec!["Inputs", "Ready", "Forms"])
@@ -1411,8 +1796,12 @@ impl StoryRoot {
                 cx.notify();
             }))
             .on_toggle(cx.listener(|this, id: &SharedString, _, cx| {
-                if id.as_ref() == "docs" {
-                    this.tree_table_docs_expanded = !this.tree_table_docs_expanded;
+                match id.as_ref() {
+                    "docs" => this.tree_table_docs_expanded = !this.tree_table_docs_expanded,
+                    "components" => {
+                        this.tree_table_components_expanded = !this.tree_table_components_expanded
+                    }
+                    _ => {}
                 }
                 cx.notify();
             }));
@@ -1463,9 +1852,24 @@ impl StoryRoot {
         let editor = CodeEditor::new("gallery-code-editor", self.editor_session.buffer().clone())
             .selections(self.editor_session.selections().to_vec())
             .focusable(self.editor_focus.clone())
-            .options(CodeEditorOptions::default().visible_lines(8))
+            .options(
+                CodeEditorOptions::default()
+                    .visible_lines(8)
+                    .soft_wrap(true),
+            )
             .on_edit(cx.listener(|this, edit: &EditorEdit, _, cx| {
                 this.editor_session.apply(edit.clone());
+                cx.notify();
+            }))
+            .on_command(cx.listener(|this, command, _, cx| {
+                match command {
+                    guic::editor::EditorCommand::Undo => {
+                        this.editor_session.undo();
+                    }
+                    guic::editor::EditorCommand::Redo => {
+                        this.editor_session.redo();
+                    }
+                }
                 cx.notify();
             }));
 
@@ -1710,75 +2114,9 @@ impl Render for StoryRoot {
             PropertyItem::new("Progress", format!("{}%", self.progress as i32)),
         ]);
 
-        let rows = self.release_rows();
+        let table = self.render_release_table(cx);
 
-        let table = self
-            .release_table_model()
-            .title("Release Checklist")
-            .rows(rows)
-            .focusable(self.table_focus.clone())
-            .on_sort(cx.listener(|this, sort, _, cx| this.set_table_sort(sort, cx)))
-            .on_column_resize(cx.listener(|this, resize: &DataColumnResize, _, cx| {
-                if resize.column_id().as_ref() == "status" {
-                    this.status_column_width = resize.width();
-                    cx.notify();
-                }
-            }))
-            .on_row_select(cx.listener(|this, row_id: &SharedString, _, cx| {
-                this.set_table_row(row_id.as_ref(), cx)
-            }))
-            .render_cell(|cell| {
-                if cell.column_id().as_ref() == "status" {
-                    let badge = match cell.value().as_ref() {
-                        "Ready" => Badge::new(cell.value().clone()).success(),
-                        "Review" => Badge::new(cell.value().clone()).warning(),
-                        _ => Badge::new(cell.value().clone()),
-                    };
-                    badge.into_any_element()
-                } else {
-                    Label::new(cell.value().clone()).into_any_element()
-                }
-            })
-            .render_row_actions(|_| {
-                Button::new("Inspect")
-                    .secondary()
-                    .size(ComponentSize::Small)
-                    .into_any_element()
-            })
-            .max_height(220.0);
-
-        let virtualized_table = DataTable::new("story-data-table-virtualized")
-            .title("Large Dataset Preview")
-            .columns(vec![
-                DataColumn::new("index", "Row")
-                    .width(88.0)
-                    .pin(DataColumnPin::Start),
-                DataColumn::new("owner", "Owner").width(180.0),
-                DataColumn::new("status", "Status").width(140.0),
-                DataColumn::new("notes", "Notes")
-                    .width(240.0)
-                    .pin(DataColumnPin::End),
-            ])
-            .rows(
-                (0..200)
-                    .map(|index| {
-                        DataRow::new(
-                            format!("build-{index}"),
-                            vec![
-                                format!("#{}", index + 1),
-                                format!("Team {}", index % 8 + 1),
-                                if index % 5 == 0 { "Review" } else { "Ready" }.to_string(),
-                                format!("Virtualized row {}", index + 1),
-                            ],
-                        )
-                    })
-                    .collect(),
-            )
-            .row_height(36.0)
-            .viewport(DataTableViewport::new(540.0, 180.0).overscan(2))
-            .column_viewport(DataTableColumnViewport::new(80.0, 260.0).overscan(40.0))
-            .max_height(180.0)
-            .state(DataTableState::Ready);
+        let virtualized_table = self.large_dataset_table();
 
         let tree_model = self.workspace_tree_model();
         let visible_tree_count = tree_model.visible_node_ids().len();
@@ -1791,22 +2129,7 @@ impl Render for StoryRoot {
             .on_toggle(cx.listener(|this, node_id: &SharedString, _, cx| {
                 this.toggle_tree_node(node_id.as_ref(), cx);
             }));
-        let virtualized_tree = TreeView::new("story-tree-virtualized")
-            .title("Large Workspace Preview")
-            .nodes(
-                (0..10_000)
-                    .map(|index| {
-                        TreeNode::new(
-                            format!("generated-node-{index}"),
-                            format!("Generated node {index}"),
-                        )
-                        .detail(format!("virtual item {index}"))
-                    })
-                    .collect(),
-            )
-            .row_height(36.0)
-            .viewport(TreeViewport::new(90_000.0, 216.0).overscan(2))
-            .max_height(216.0);
+        let virtualized_tree = self.large_workspace_tree();
 
         let table_navigation = div()
             .max_w(px(760.0))
@@ -1994,12 +2317,7 @@ impl Render for StoryRoot {
         );
         let dock_leaf_count = self.dock_layout.leaf_count();
         let dock_tab_count = self.dock_layout.tab_count();
-        let dock = Dock::new("story-dock", self.dock_layout.clone())
-            .title("Workspace Dock")
-            .focusable(self.dock_focus.clone())
-            .on_command(cx.listener(|this, command: &DockCommand, _, cx| {
-                this.apply_dock_command(command, cx);
-            }));
+        let dock = self.render_workspace_dock(cx);
 
         let catalog = self.render_catalog(cx);
         let menus = self.render_menus(cx);
@@ -2058,32 +2376,7 @@ impl Render for StoryRoot {
             .child(Separator::new())
             .child(subsystems)
             .child(Separator::new())
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_3()
-                    .child(Label::new("Buttons"))
-                    .child(
-                        div()
-                            .flex()
-                            .gap_3()
-                            .flex_wrap()
-                            .items_center()
-                            .child(
-                                Button::new("Primary Action").primary().on_click(
-                                    cx.listener(|this, _, _, cx| this.advance_progress(cx)),
-                                ),
-                            )
-                            .child(Button::new("Secondary").secondary())
-                            .child(Button::new("Ghost").ghost())
-                            .child(Button::new("Danger").danger())
-                            .child(Button::new("Disabled").disabled(true))
-                            .child(
-                                IconButton::new(IconName::Search).variant(ButtonVariant::Secondary),
-                            ),
-                    ),
-            )
+            .child(self.render_buttons(cx))
             .child(
                 div()
                     .flex()
@@ -2215,9 +2508,13 @@ impl Render for StoryRoot {
                                     .gap_3()
                                     .items_center()
                                     .child(Tooltip::new(
-                                        Button::new("Hover for Tooltip")
-                                            .ghost()
-                                            .size(ComponentSize::Small),
+                                        self.demo_button(
+                                            "tooltip-demo",
+                                            "Hover for Tooltip",
+                                            ButtonVariant::Ghost,
+                                            cx,
+                                        )
+                                        .size(ComponentSize::Small),
                                         "Tooltips use GPUI's native tooltip lifecycle.",
                                     ))
                                     .child(
@@ -2241,7 +2538,7 @@ impl Render for StoryRoot {
                     .child(div().max_w(px(520.0)).child(property_list))
                     .child(
                         div()
-                            .max_w(px(860.0))
+                            .max_w(px(1100.0))
                             .flex()
                             .flex_col()
                             .gap_2()
@@ -2253,9 +2550,28 @@ impl Render for StoryRoot {
                                 ))
                                 .muted(true),
                             )
-                            .child(div().h(px(360.0)).child(dock)),
+                            .child(
+                                Button::new("Reset dock layout")
+                                    .secondary()
+                                    .size(ComponentSize::Small)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.dock_layout = Self::initial_dock_layout();
+                                        for handle in &this.dock_tab_scroll {
+                                            handle.set_offset(point(px(0.0), px(0.0)));
+                                        }
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(div().h(px(480.0)).child(dock)),
                     )
                     .child(div().max_w(px(760.0)).child(table))
+                    .child(
+                        Label::new(self.inspected_row.as_ref().map_or_else(
+                            || "Choose Inspect to view a row".to_string(),
+                            |row| format!("Inspecting checklist row: {row}"),
+                        ))
+                        .muted(true),
+                    )
                     .child(table_navigation)
                     .child(div().max_w(px(760.0)).child(virtualized_table))
                     .child(
@@ -2355,4 +2671,467 @@ pub fn run() {
         })
         .expect("failed to open GUIC component gallery window");
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{Modifiers, TestAppContext};
+
+    #[gpui::test]
+    fn gallery_filters_toggle_and_preserve_selection_when_collapsed(cx: &mut TestAppContext) {
+        cx.update(guic::init);
+        let view = cx.new(StoryRoot::new);
+        let (_, cx) =
+            cx.add_window_view(|window, cx| guic::core::Root::new(view.clone(), window, cx));
+        cx.simulate_resize(gpui::size(px(1200.0), px(900.0)));
+        for selector in [
+            "guic-checkbox-catalog-filter-open",
+            "guic-checkbox-catalog-filter-mine",
+        ] {
+            let checkbox = cx.debug_bounds(selector).expect("filter checkbox");
+            cx.simulate_click(checkbox.center(), Modifiers::none());
+        }
+        view.update(cx, |view, _| {
+            assert!(view.filter_open_checked);
+            assert!(view.filter_mine_checked);
+        });
+        let header = cx
+            .debug_bounds("guic-panel-header-catalog-filters")
+            .expect("filter header");
+        let chevron = point(header.left() + px(24.0), header.center().y);
+        cx.simulate_click(chevron, Modifiers::none());
+        view.update(cx, |view, _| assert!(view.filters_collapsed));
+        assert!(
+            cx.debug_bounds("guic-checkbox-catalog-filter-open")
+                .is_none()
+        );
+        // The surrounding header padding is also part of the disclosure target.
+        cx.simulate_click(
+            point(header.left() + px(4.0), header.center().y),
+            Modifiers::none(),
+        );
+        view.update(cx, |view, _| {
+            assert!(!view.filters_collapsed);
+            assert!(view.filter_open_checked);
+            assert!(view.filter_mine_checked);
+        });
+        assert!(
+            cx.debug_bounds("guic-checkbox-catalog-filter-open")
+                .is_some()
+        );
+        let checkbox = cx
+            .debug_bounds("guic-checkbox-catalog-filter-open")
+            .expect("open filter");
+        cx.simulate_click(checkbox.center(), Modifiers::none());
+        view.update(cx, |view, _| {
+            assert!(!view.filter_open_checked);
+            assert!(view.filter_mine_checked);
+        });
+    }
+
+    struct DatasetHarness(Entity<StoryRoot>);
+
+    impl Render for DatasetHarness {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .w(px(760.0))
+                .child(self.0.read(cx).large_dataset_table())
+        }
+    }
+
+    #[gpui::test]
+    fn large_dataset_renders_initial_rows_and_follows_scrolling(cx: &mut TestAppContext) {
+        cx.update(guic::init);
+        let story = cx.new(StoryRoot::new);
+        let (_, cx) = cx.add_window_view(|_, _| DatasetHarness(story));
+        let body = cx
+            .debug_bounds("guic-data-table-body-story-data-table-virtualized")
+            .expect("table viewport");
+        let first = cx
+            .debug_bounds("guic-data-table-row-build-0")
+            .expect("first row");
+        let second = cx
+            .debug_bounds("guic-data-table-row-build-1")
+            .expect("second row");
+        assert_eq!(first.top(), body.top());
+        assert_eq!(first.size.height, px(36.0));
+        assert_eq!(second.top() - first.top(), px(36.0));
+        assert!(cx.debug_bounds("guic-data-table-row-build-199").is_none());
+
+        for (delta, selector) in [
+            (-540.0, "guic-data-table-row-build-15"),
+            (-100_000.0, "guic-data-table-row-build-199"),
+            (100_000.0, "guic-data-table-row-build-0"),
+        ] {
+            cx.simulate_event(gpui::ScrollWheelEvent {
+                position: body.center(),
+                delta: gpui::ScrollDelta::Pixels(point(px(0.0), px(delta))),
+                modifiers: Modifiers::none(),
+                touch_phase: gpui::TouchPhase::Moved,
+            });
+            let row = cx.debug_bounds(selector).expect("scrolled row");
+            assert!(row.top() >= body.top(), "{row:?} above {body:?}");
+            assert!(row.bottom() <= body.bottom(), "{row:?} below {body:?}");
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    enum Section {
+        Buttons,
+        Preferences,
+        Form,
+        Chips,
+        Catalog,
+        Feedback,
+        Inputs,
+        Collections,
+        Dock,
+        Workspace,
+        Checklist,
+    }
+
+    struct SectionHarness {
+        story: Entity<StoryRoot>,
+        section: Section,
+        _subscription: gpui::Subscription,
+    }
+
+    impl Render for SectionHarness {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            self.story.update(cx, |story, cx| match self.section {
+                Section::Buttons => story.render_buttons(cx).into_any_element(),
+                Section::Preferences => story.render_preferences(cx).into_any_element(),
+                Section::Form => story.render_notification_form(cx).into_any_element(),
+                Section::Chips => story.render_chips(cx).into_any_element(),
+                Section::Catalog => story.render_catalog(cx).into_any_element(),
+                Section::Feedback => story.render_feedback(cx).into_any_element(),
+                Section::Inputs => story.render_inputs(cx).into_any_element(),
+                Section::Collections => story.render_collections(cx).into_any_element(),
+                Section::Dock => div()
+                    .w_full()
+                    .h(px(480.0))
+                    .child(story.render_workspace_dock(cx))
+                    .into_any_element(),
+                Section::Checklist => div()
+                    .w(px(760.0))
+                    .child(story.render_release_table(cx))
+                    .into_any_element(),
+                Section::Workspace => div()
+                    .w(px(320.0))
+                    .child(story.large_workspace_tree())
+                    .into_any_element(),
+            })
+        }
+    }
+
+    fn section(
+        cx: &mut TestAppContext,
+        section: Section,
+    ) -> (Entity<StoryRoot>, &mut gpui::VisualTestContext) {
+        cx.update(guic::init);
+        let story = cx.new(StoryRoot::new);
+        let (_, cx) = cx.add_window_view(|_, cx| SectionHarness {
+            story: story.clone(),
+            section,
+            _subscription: cx.observe(&story, |_, _, cx| cx.notify()),
+        });
+        cx.simulate_resize(gpui::size(px(1200.0), px(900.0)));
+        (story, cx)
+    }
+
+    fn click(cx: &mut gpui::VisualTestContext, selector: &'static str) {
+        let bounds = cx.debug_bounds(selector).expect(selector);
+        cx.simulate_click(bounds.center(), Modifiers::none());
+    }
+
+    #[gpui::test]
+    fn buttons_report_each_action_and_keep_the_disabled_example_inactive(cx: &mut TestAppContext) {
+        let (story, cx) = section(cx, Section::Buttons);
+        for (index, selector) in [
+            "guic-button-Primary Action",
+            "guic-button-button-secondary",
+            "guic-button-button-ghost",
+            "guic-button-button-danger",
+            "guic-icon-button-button-search",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            click(cx, selector);
+            story.update(cx, |story, _| assert_eq!(story.action_count, index + 1));
+        }
+        click(cx, "guic-button-Disabled");
+        story.update(cx, |story, _| {
+            assert_eq!(story.action_count, 5);
+            assert!(story.last_action.starts_with("Last action: Search"));
+        });
+    }
+
+    #[gpui::test]
+    fn preferences_can_toggle_and_choose_either_radio_option(cx: &mut TestAppContext) {
+        let (story, cx) = section(cx, Section::Preferences);
+        for enabled in [false, true] {
+            click(cx, "guic-checkbox-forms-fieldset-notifications");
+            click(cx, "gallery-preference-preview");
+            click(
+                cx,
+                if enabled {
+                    "gallery-preference-native"
+                } else {
+                    "gallery-preference-automatic"
+                },
+            );
+            story.update(cx, |story, _| {
+                assert_eq!(story.preferences_notifications, enabled);
+                assert_eq!(story.preferences_preview, enabled);
+                assert_eq!(story.preferences_native, enabled);
+            });
+        }
+    }
+
+    #[gpui::test]
+    fn notification_form_validates_saves_and_invalidates_after_editing(cx: &mut TestAppContext) {
+        let (story, cx) = section(cx, Section::Form);
+        click(cx, "guic-button-notification-save");
+        story.update(cx, |story, _| assert!(!story.form_saved));
+        click(cx, "guic-checkbox-gallery-form-notifications");
+        click(cx, "guic-button-notification-save");
+        story.update(cx, |story, _| {
+            assert!(story.form_notifications);
+            assert!(story.form_saved);
+        });
+        click(cx, "guic-checkbox-gallery-form-notifications");
+        story.update(cx, |story, _| {
+            assert!(!story.form_notifications);
+            assert!(!story.form_saved);
+        });
+    }
+
+    #[gpui::test]
+    fn chips_toggle_remove_and_restore_without_cross_toggling(cx: &mut TestAppContext) {
+        let (story, cx) = section(cx, Section::Chips);
+        click(cx, "guic-chip-gallery-chip-native");
+        let chip = cx
+            .debug_bounds("guic-chip-gallery-chip-accessible")
+            .expect("chip");
+        cx.simulate_click(
+            point(chip.left() + px(20.0), chip.center().y),
+            Modifiers::none(),
+        );
+        click(cx, "guic-icon-button-gallery-chip-accessible-remove");
+        story.update(cx, |story, _| {
+            assert!(!story.native_chip_selected);
+            assert!(!story.accessible_chip_selected);
+            assert!(!story.accessible_chip_visible);
+        });
+        assert!(
+            cx.debug_bounds("guic-chip-gallery-chip-accessible")
+                .is_none()
+        );
+        click(cx, "guic-button-Restore chip");
+        assert!(
+            cx.debug_bounds("guic-chip-gallery-chip-accessible")
+                .is_some()
+        );
+    }
+
+    #[gpui::test]
+    fn toolbar_tag_and_navigation_examples_update_visible_state(cx: &mut TestAppContext) {
+        let (story, cx) = section(cx, Section::Catalog);
+        for selector in [
+            "guic-button-toolbar-new",
+            "guic-button-toolbar-open",
+            "guic-button-toolbar-save",
+            "guic-icon-button-toolbar-search",
+            "guic-button-view-report",
+        ] {
+            click(cx, selector);
+        }
+        click(cx, "guic-icon-button-catalog-backend-tag-remove");
+        story.update(cx, |story, _| {
+            assert_eq!(story.action_count, 5);
+            assert!(!story.backend_tag_visible);
+        });
+        click(cx, "guic-button-Restore tag");
+        click(cx, "guic-breadcrumb-home");
+        story.update(cx, |story, _| {
+            assert!(story.backend_tag_visible);
+            assert_eq!(story.breadcrumb_index, 0);
+        });
+    }
+
+    #[gpui::test]
+    fn archive_trigger_opens_the_confirmation_popup(cx: &mut TestAppContext) {
+        let (story, cx) = section(cx, Section::Feedback);
+        click(cx, "guic-button-Archive project");
+        story.update(cx, |story, _| assert!(story.confirm_popup_open));
+        click(cx, "guic-button-Archive");
+        story.update(cx, |story, _| {
+            assert!(!story.confirm_popup_open);
+            assert_eq!(story.confirm_log.as_ref(), "Project archived");
+        });
+    }
+
+    #[gpui::test]
+    fn slider_changes_notify_the_gallery_value_label(cx: &mut TestAppContext) {
+        let (story, cx) = section(cx, Section::Inputs);
+        let notifications = std::rc::Rc::new(std::cell::Cell::new(0));
+        let count = notifications.clone();
+        let _subscription =
+            cx.update(|_, cx| cx.observe(&story, move |_, _| count.set(count.get() + 1)));
+        let slider = cx
+            .debug_bounds("guic-slider-gallery-slider")
+            .expect("slider");
+        cx.simulate_click(
+            point(slider.right() - px(10.0), slider.center().y),
+            Modifiers::none(),
+        );
+        story.update(cx, |story, cx| {
+            assert!(story.slider.read(cx).current_value() > 40.0)
+        });
+        assert!(notifications.get() > 0);
+    }
+
+    #[gpui::test]
+    fn both_tree_table_branches_can_collapse_and_expand(cx: &mut TestAppContext) {
+        let (story, cx) = section(cx, Section::Collections);
+        for expanded in [false, true] {
+            for selector in ["guic-tree-table-row-components", "guic-tree-table-row-docs"] {
+                let row = cx.debug_bounds(selector).expect("tree table row");
+                cx.simulate_click(
+                    point(row.left() + px(19.0), row.center().y),
+                    Modifiers::none(),
+                );
+            }
+            story.update(cx, |story, _| {
+                assert_eq!(story.tree_table_components_expanded, expanded);
+                assert_eq!(story.tree_table_docs_expanded, expanded);
+            });
+            assert_eq!(
+                cx.debug_bounds("guic-tree-table-row-inputs").is_some(),
+                expanded
+            );
+            assert_eq!(
+                cx.debug_bounds("guic-tree-table-row-guides").is_some(),
+                expanded
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn gallery_dock_tabs_fit_and_every_pane_has_visible_content(cx: &mut TestAppContext) {
+        let (story, cx) = section(cx, Section::Dock);
+        for width in [760.0, 1100.0] {
+            cx.simulate_resize(gpui::size(px(width), px(600.0)));
+            for (strip, first, last, body) in [
+                (
+                    "guic-dock-tab-strip-sidebar",
+                    "guic-dock-tab-sidebar-files",
+                    "guic-dock-tab-sidebar-search",
+                    "guic-dock-body-sidebar",
+                ),
+                (
+                    "guic-dock-tab-strip-editor",
+                    "guic-dock-tab-editor-main",
+                    "guic-dock-tab-editor-todo",
+                    "guic-dock-body-editor",
+                ),
+                (
+                    "guic-dock-tab-strip-console",
+                    "guic-dock-tab-console-logs",
+                    "guic-dock-tab-console-problems",
+                    "guic-dock-body-console",
+                ),
+            ] {
+                let strip = cx.debug_bounds(strip).expect("strip");
+                let first = cx.debug_bounds(first).expect("first tab");
+                let last = cx.debug_bounds(last).expect("last tab");
+                let body = cx.debug_bounds(body).expect("pane body");
+                assert!(strip.size.height <= px(32.0), "{strip:?}");
+                assert!(first.left() >= strip.left(), "{first:?} outside {strip:?}");
+                assert!(last.right() <= strip.right(), "{last:?} outside {strip:?}");
+                assert!(body.size.height >= px(80.0), "{body:?}");
+            }
+        }
+        let body = cx
+            .debug_bounds("guic-dock-body-console")
+            .expect("console viewport");
+        let header = cx
+            .debug_bounds("guic-dock-header-console")
+            .expect("console header");
+        let content = cx
+            .debug_bounds("guic-dock-content-console")
+            .expect("console content");
+        assert!(content.bottom() > body.bottom());
+        cx.simulate_event(gpui::ScrollWheelEvent {
+            position: body.center(),
+            delta: gpui::ScrollDelta::Pixels(point(px(0.0), px(-1000.0))),
+            modifiers: Modifiers::none(),
+            touch_phase: gpui::TouchPhase::Moved,
+        });
+        let scrolled = cx
+            .debug_bounds("guic-dock-content-console")
+            .expect("scrolled content");
+        assert!(scrolled.top() < content.top());
+        assert!(scrolled.bottom() <= body.bottom());
+        assert_eq!(cx.debug_bounds("guic-dock-header-console"), Some(header));
+        click(cx, "guic-dock-tab-sidebar-search");
+        story.update(cx, |story, _| {
+            assert_eq!(
+                story
+                    .dock_layout
+                    .active_selection_in("sidebar")
+                    .expect("selection")
+                    .tab_id()
+                    .as_ref(),
+                "search"
+            )
+        });
+        click(cx, "guic-dock-tab-close-sidebar-search");
+        story.update(cx, |story, _| assert_eq!(story.dock_layout.tab_count(), 5));
+    }
+
+    #[gpui::test]
+    fn large_workspace_preview_starts_with_rows_and_scrolls_to_the_end(cx: &mut TestAppContext) {
+        let (_, cx) = section(cx, Section::Workspace);
+        let body = cx
+            .debug_bounds("guic-tree-body-story-tree-virtualized")
+            .expect("tree viewport");
+        let first = cx
+            .debug_bounds("guic-tree-row-generated-node-0")
+            .expect("first row");
+        assert!(first.top() >= body.top());
+        assert!(first.bottom() <= body.bottom());
+        for (delta, selector) in [
+            (-360.0, "guic-tree-row-generated-node-10"),
+            (-1_000_000.0, "guic-tree-row-generated-node-9999"),
+            (1_000_000.0, "guic-tree-row-generated-node-0"),
+        ] {
+            cx.simulate_event(gpui::ScrollWheelEvent {
+                position: body.center(),
+                delta: gpui::ScrollDelta::Pixels(point(px(0.0), px(delta))),
+                modifiers: Modifiers::none(),
+                touch_phase: gpui::TouchPhase::Moved,
+            });
+            let row = cx.debug_bounds(selector).expect("visible row");
+            assert!(row.top() >= body.top(), "{row:?} above {body:?}");
+            assert!(row.bottom() <= body.bottom(), "{row:?} below {body:?}");
+        }
+    }
+
+    #[gpui::test]
+    fn checklist_inspect_actions_identify_the_clicked_row(cx: &mut TestAppContext) {
+        let (story, cx) = section(cx, Section::Checklist);
+        for (selector, id) in [
+            ("guic-button-inspect-runtime", "runtime"),
+            ("guic-button-inspect-advanced", "advanced"),
+            ("guic-button-inspect-cross-platform", "cross-platform"),
+        ] {
+            click(cx, selector);
+            story.update(cx, |story, _| {
+                assert_eq!(story.inspected_row.as_deref(), Some(id))
+            });
+        }
+    }
 }

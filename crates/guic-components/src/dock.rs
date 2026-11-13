@@ -1756,6 +1756,26 @@ impl Dock {
 impl RenderOnce for Dock {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = Theme::global(cx).clone();
+        let revealed_tabs =
+            _window.use_keyed_state(format!("{}-revealed-tabs", self.id), cx, |_, _| {
+                HashMap::<SharedString, (SharedString, usize)>::new()
+            });
+        revealed_tabs.update(cx, |previous, _| {
+            let mut current = HashMap::new();
+            for (stack_id, handle) in &self.tab_scroll_handles {
+                if let Some(selection) = self.layout.active_selection_in(stack_id)
+                    && let Some((index, _)) =
+                        self.layout.root.tab_index(stack_id, selection.tab_id())
+                {
+                    let selected = (selection.tab_id().clone(), index);
+                    if previous.get(stack_id) != Some(&selected) {
+                        handle.scroll_to_item(index);
+                    }
+                    current.insert(stack_id.clone(), selected);
+                }
+            }
+            *previous = current;
+        });
         let dock_id = self.id.clone();
         let root_selector = format!("guic-dock-root-{}", self.id);
         let active_selection = self
@@ -2132,7 +2152,6 @@ fn render_tabs_leaf(tabs: DockTabs, theme: &Theme, handlers: DockRenderHandlers)
         .overflow_x_scroll();
 
     if let Some(scroll_handle) = handlers.tab_scroll_handles.get(&tabs.id) {
-        scroll_handle.scroll_to_item(tabs.active_tab);
         tab_strip = tab_strip.track_scroll(scroll_handle);
     }
 
@@ -2160,6 +2179,10 @@ fn render_tabs_leaf(tabs: DockTabs, theme: &Theme, handlers: DockRenderHandlers)
             } else {
                 px(8.)
             });
+
+        if handlers.density == DockDensity::Compact {
+            chip = chip.text_size(px(theme.typography.text_sm));
+        }
 
         if tab_focus {
             chip = chip.border_b_2().border_color(if selected {
@@ -2316,7 +2339,12 @@ fn render_tabs_leaf(tabs: DockTabs, theme: &Theme, handlers: DockRenderHandlers)
     }
 
     let mut header = div()
+        .debug_selector({
+            let stack_id = tabs.id.clone();
+            move || format!("guic-dock-header-{stack_id}")
+        })
         .w_full()
+        .flex_shrink_0()
         .min_w_0()
         .flex()
         .gap_2()
@@ -2426,12 +2454,26 @@ fn render_tabs_leaf(tabs: DockTabs, theme: &Theme, handlers: DockRenderHandlers)
                 renderer(&selection, &tab)
             } else {
                 div()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .p_4()
-                    .child(Label::new(tab.title))
-                    .child(Label::new(tab.body).muted(true))
+                    .id(format!("guic-dock-body-{}", tabs.id))
+                    .debug_selector({
+                        let stack_id = tabs.id.clone();
+                        move || format!("guic-dock-body-{stack_id}")
+                    })
+                    .size_full()
+                    .overflow_y_scroll()
+                    .child(
+                        div()
+                            .debug_selector({
+                                let stack_id = tabs.id.clone();
+                                move || format!("guic-dock-content-{stack_id}")
+                            })
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .p_3()
+                            .child(Label::new(tab.title))
+                            .child(Label::new(tab.body).muted(true)),
+                    )
                     .into_any_element()
             }
         },
@@ -2688,6 +2730,7 @@ mod tests {
 
     struct OverflowDockHarness {
         scroll_handle: ScrollHandle,
+        active_tab: usize,
     }
 
     impl Render for OverflowDockHarness {
@@ -2701,10 +2744,12 @@ mod tests {
                     DockTab::new(format!("tab-{index}"), format!("Long tab {index}"), "body")
                 })
                 .collect();
-            div().w(px(360.0)).child(
+            div().w(px(360.0)).h(px(240.0)).child(
                 Dock::new(
                     "overflow-dock",
-                    DockLayout::new(DockNode::Tabs(DockTabs::new("overflow", tabs))),
+                    DockLayout::new(DockNode::Tabs(
+                        DockTabs::new("overflow", tabs).active_tab(self.active_tab),
+                    )),
                 )
                 .track_tab_scroll("overflow", self.scroll_handle.clone()),
             )
@@ -3264,11 +3309,49 @@ mod tests {
         });
         let scroll_handle = ScrollHandle::new();
         let expected_handle = scroll_handle.clone();
-        let (_view, cx) = cx.add_window_view(|_, _| OverflowDockHarness { scroll_handle });
+        let (_view, cx) = cx.add_window_view(|_, _| OverflowDockHarness {
+            scroll_handle,
+            active_tab: 0,
+        });
 
         cx.debug_bounds("guic-dock-tab-strip-overflow")
             .expect("overflow tab strip should render");
         assert!(expected_handle.max_offset().x > px(0.0));
+    }
+
+    #[gpui::test]
+    fn manual_tab_scrolling_is_preserved_until_selection_changes(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            guic_core::init(cx);
+            guic_tokens::init(cx);
+            crate::init(cx);
+        });
+        let handle = ScrollHandle::new();
+        let (view, cx) = cx.add_window_view(|_, _| OverflowDockHarness {
+            scroll_handle: handle.clone(),
+            active_tab: 0,
+        });
+        let strip = cx
+            .debug_bounds("guic-dock-tab-strip-overflow")
+            .expect("tab strip");
+        cx.simulate_event(gpui::ScrollWheelEvent {
+            position: strip.center(),
+            delta: gpui::ScrollDelta::Pixels(gpui::point(px(-200.0), px(0.0))),
+            modifiers: Modifiers::none(),
+            touch_phase: gpui::TouchPhase::Moved,
+        });
+        cx.debug_bounds("guic-dock-tab-strip-overflow")
+            .expect("scrolled strip");
+        assert!(handle.offset().x < px(-100.0));
+        view.update(cx, |view, cx| {
+            view.active_tab = 23;
+            cx.notify();
+        });
+        let selected = cx
+            .debug_bounds("guic-dock-tab-overflow-tab-23")
+            .expect("selected tab");
+        assert!(selected.left() >= strip.left());
+        assert!(selected.right() <= strip.right());
     }
 
     #[gpui::test]

@@ -116,14 +116,14 @@ invoke commands removed from a menu.
 | Windows | Native menu attached with `attach_window` | Notification-area icon; PNG/ICO required |
 | Linux | `Menubar::native(&handle.menu())` in the GPUI window | StatusNotifierItem over D-Bus; PNG/ICO required |
 
-On Windows, native menubars need GPUI's non-DirectComposition
-rendering path: set `GPUI_DISABLE_DIRECT_COMPOSITION=1` before constructing the
-GPUI application. Its default `WS_EX_NOREDIRECTIONBITMAP` windows can display
-a transparent menubar even though menu commands remain accessible. The desktop
-shell sample selects this fallback at startup unless the environment already
-contains an explicit override. `guic-native` does not change process environment
-or replace the application's renderer. Applications retaining DirectComposition
-should use the in-window menu instead. Menu attachment retains ownership and
+On Windows, native menubars need GPUI's non-DirectComposition rendering path.
+Set `WindowOptions::windows_composition` to
+`gpui::WindowsCompositionMode::RedirectionBitmap` before creating a window with a
+native menu. The desktop shell sample does this for each menu-bearing window.
+Other windows can retain DirectComposition. `GPUI_DISABLE_DIRECT_COMPOSITION=1`
+remains available as a process-wide default for windows using `Auto`.
+`guic-native` does not change process environment or replace an existing renderer.
+Applications retaining DirectComposition should use the in-window menu instead. Menu attachment retains ownership and
 detaches before window destruction, so closing one window does not destroy the
 shared menu used by other or subsequently reopened windows.
 

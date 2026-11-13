@@ -13,11 +13,15 @@ DatePicker::new("due-date")
     .on_change(|_date, _window, _cx| { /* store the selected date */ })
 ```
 
-Dates use `YYYY-MM-DD`. The calendar shows the selected month; an absent or
-invalid date falls back to June 2026. It has no month-switching controls.
-Set the date from application state to show another month, or use
-`on_request_open` to open a custom date-selection interface.
+Dates use `YYYY-MM-DD` with years from 1 through 9999. The calendar initially
+shows the selected month, or the current local month when the date is absent or
+invalid. Previous/next controls browse months without changing the selected date.
+An authoritative selected-date change resets the displayed month.
+`on_request_open` remains available for custom date-selection interfaces.
 
 Enter/Space activates the trigger or a focused day. Arrow keys move through
 days within the displayed month; Home/End moves to its first/last day.
 Selecting a date calls `on_change` and requests closure through `on_open_change`.
+
+PageUp/PageDown browses months; Shift+PageUp/PageDown browses years. Escape
+requests closure. Labels and weekdays use the application translation catalog.

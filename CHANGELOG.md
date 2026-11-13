@@ -2,7 +2,75 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## 0.6.0 - 2026-11-10
+
+### Added
+
+- Add `guic::application()`, `guic::open_window()`, and a matching `gpui` re-export
+  for applications using a single toolkit dependency.
+- Add application-owned translation catalogs, editable numeric inputs, calendar
+  month/year navigation, shared table rows, and variable-height virtual lists.
+- Render Markdown inline styles and clickable links with cached parsing.
+- Add native editor IME composition, shaped selection and hit testing, soft
+  wrapping, draggable scrollbars, rectangular selection, and secondary cursors.
+- Prepare large editor edits and clipboard pastes asynchronously while preserving
+  input order, pointer selections, undo/redo, and composition.
+- Add shared editor snapshots and position indexes, background reflow, horizontal
+  virtualization of long lines, and `EditorSession::clear_history()`.
+- Add TextInput undo/redo and retained-entity `set_value`/`set_disabled` methods.
+- Expose disabled accessibility semantics, numeric actions, and password and
+  multiline text roles.
+
+### Changed
+
+- Maintain the packaging backend, updater, utilities, and resource resolver as
+  workspace-owned `guic-packager` crates. Keep existing GUIC configuration keys.
+- Pin the runtime and platform family to `guic-gpui` 0.6.2, including fixes
+  for native child-window resizing and transparent backgrounds on Linux with
+  the VMware SVGA3D OpenGL renderer.
+- Use per-window composition settings in Windows native-menu and WebView examples.
+- Replace the local XML compatibility patch with `zbus_xml` 5.2.1, which no longer
+  uses the affected parser. Replace yanked lockfile entries for `spin`,
+  `async-executor`, and `num-modular` with compatible available releases.
+- Verify all public crate archives together before publication. Run Windows
+  sidecar cleanup tests in the existing CI job.
+
+### Fixed
+
+- Pass macOS signing requirements as inline expressions during verification.
+- Validate macOS update archives and atomically replace application bundles.
+  Request system authorization when needed and preserve the old app on cancellation.
+- Resolve umbrella string macros through GUIC for single-dependency applications.
+- Decrement the mounted-root count when a root view is released.
+- Prevent password Copy/Cut actions from exposing secrets through the clipboard.
+- Preserve asynchronous clipboard order and reject stale edits after host
+  replacement, disabling, or editor removal.
+- Correct Unicode and normalized-newline selection offsets, native range bounds,
+  and composition undo boundaries. Reject native edits on disabled text inputs.
+- Avoid idle TextInput redraws and repeated large-document scans during editing.
+- Make dense editor search walk each line's grapheme boundaries once.
+- Preserve Markdown quote and list structure, ordered-list starting numbers,
+  literal ampersands, and suppressed inline HTML content.
+- Reject Windows device names containing superscript digits in packaged resources.
+- Bound the total activation-request receive time so trickling clients cannot
+  keep application shutdown waiting indefinitely.
+
+### Migration notes
+
+- Update direct GUIC crate dependencies to 0.6.0. Applications with explicit
+  `guic-gpui` or `guic-gpui-platform` dependencies must pin them to `=0.6.2`.
+- `guic::updater` now re-exports `guic-packager-updater`. Direct upstream types
+  are distinct. `Config` adds `dangerous_insecure_transport_protocol`; set it
+  to `false` or use `..Default::default()`. The HTTP client re-export uses reqwest 0.13.
+- `application` joins the default features and selects the platform backend.
+  Applications supplying their own backend can disable default features and
+  explicitly enable the required subsystems.
+- Keep a stable CodeEditor ID to retain composition and scrolling. `visible_lines`
+  defines a fixed-height viewport; changing `first_line` repositions it.
+- Editor preedit updates stay local until committed. Apply undo/redo synchronously
+  in `on_command` and notify the host so queued input can resume.
+- EditorBuffer normalizes line endings to LF. Preserve file newline conventions
+  in the application's save layer when required.
 
 ## 0.5.0 - 2026-11-03
 

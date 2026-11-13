@@ -195,7 +195,7 @@ impl RenderOnce for Drawer {
 
         let mut panel = div()
             .id(self.id.clone())
-            .accessibility(AccessibilityProps::new(Role::Dialog).label(accessibility_label))
+            .accessible(AccessibilityProps::new(Role::Dialog).label(accessibility_label))
             .debug_selector(|| "guic-drawer-panel".to_owned())
             .absolute()
             .flex()

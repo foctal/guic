@@ -189,7 +189,7 @@ impl RenderOnce for ConfirmDialog {
         let mut card = div()
             .occlude()
             .id(self.id.clone())
-            .accessibility(
+            .accessible(
                 AccessibilityProps::new(Role::AlertDialog)
                     .label(self.title.clone())
                     .description(self.message.clone().unwrap_or_default()),

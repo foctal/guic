@@ -35,6 +35,7 @@ impl Root {
         let window_id = window.window_handle().window_id();
 
         cx.on_release(move |_, cx| {
+            GlobalState::global_mut(cx).unmount_root();
             FocusManager::global_mut(cx).unregister_scope(focus_scope);
             OverlayManager::global_mut(cx).close_window(window_id);
         })
@@ -152,5 +153,37 @@ impl Render for Root {
                     .top_0()
                     .right_0(),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::AppContext as _;
+
+    struct Empty;
+    impl Render for Empty {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+        }
+    }
+
+    #[gpui::test]
+    fn mounted_root_count_tracks_released_views(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            crate::init(cx);
+            guic_tokens::init(cx);
+        });
+        let (_, cx) = cx.add_window_view(|_, _| Empty);
+        let root = cx.update(|window, cx| {
+            let content = cx.new(|_| Empty);
+            cx.new(|cx| Root::new(content, window, cx))
+        });
+        cx.cx.update(|cx| {
+            assert_eq!(GlobalState::global(cx).mounted_roots(), 1);
+            drop(root);
+        });
+        cx.cx
+            .update(|cx| assert_eq!(GlobalState::global(cx).mounted_roots(), 0));
     }
 }

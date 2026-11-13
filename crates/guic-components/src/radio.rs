@@ -120,7 +120,7 @@ impl RenderOnce for Radio {
         let accessibility_label = self.label.clone().unwrap_or_else(|| self.id.clone());
         let mut row = div()
             .id(self.id.clone())
-            .accessibility(
+            .accessible(
                 AccessibilityProps::new(Role::Radio)
                     .label(accessibility_label)
                     .checked(self.checked)

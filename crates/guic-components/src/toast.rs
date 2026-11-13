@@ -149,7 +149,7 @@ impl RenderOnce for Toast {
 
         div()
             .id(self.id.clone())
-            .accessibility(accessibility)
+            .accessible(accessibility)
             .debug_selector(move || selector.clone())
             .w(px(320.0))
             .max_w_full()

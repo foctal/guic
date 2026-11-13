@@ -9,7 +9,9 @@ mod element_ext;
 mod events;
 mod focus;
 mod keyboard;
+mod localization;
 mod measure;
+pub use localization::{Localization, set_locale, translate};
 mod overlay;
 pub use overlay::OverlayGroupMember;
 mod focus_trap;
@@ -23,7 +25,7 @@ mod services;
 mod state;
 mod window_ext;
 
-pub use accessibility::{AccessibilityElementExt, AccessibilityProps, Role};
+pub use accessibility::{AccessibilityElementExt, AccessibilityProps, AccessibleElement, Role};
 pub use app::init;
 pub use element_ext::ElementExt;
 pub use events::{SelectionChange, ValueChange};

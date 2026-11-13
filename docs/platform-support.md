@@ -8,12 +8,10 @@ limitations are described in [API stability](api-stability.md).
 | Runner | Checks |
 | --- | --- |
 | macOS | Workspace library tests and CLI/build-helper tests |
-| Windows | Workspace library tests, CLI/build-helper tests, and packaging example builds |
+| Windows | Workspace library tests, CLI/build-helper and sidecar cleanup tests, and packaging example builds |
 | Ubuntu | Workspace tests, formatting, strict full/minimal rustdoc, documentation examples, and theme schema |
 
 The [CI workflow](../.github/workflows/ci.yml) defines the exact commands.
-Native input, accessibility, rendering, and installed application behavior
-require the [platform smoke checks](platform-smoke.md).
 
 ## Linux
 

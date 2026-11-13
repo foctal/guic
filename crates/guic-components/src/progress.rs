@@ -109,7 +109,7 @@ impl RenderOnce for Progress {
 
         div()
             .id(self.id)
-            .accessibility(accessibility)
+            .accessible(accessibility)
             .w_full()
             .relative()
             .overflow_hidden()

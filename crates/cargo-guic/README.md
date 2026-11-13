@@ -4,6 +4,9 @@ Application development and packaging tooling for GUIC. See the
 [usage guide](https://github.com/foctal/guic/blob/main/docs/cargo-guic.md) and
 [configuration schema](https://github.com/foctal/guic/blob/main/docs/cargo-guic.schema.json).
 
+The packaging backend is the workspace-owned `guic-packager` fork.
+The existing `[backend.cargo-packager]` configuration key is retained.
+
 The CLI supports project discovery, configuration inspection, prerequisite checks,
 development execution and immutable build records. `build` compiles and packages;
 `bundle` packages a saved executable. Native formats include macOS app/DMG,
@@ -24,9 +27,7 @@ cargo install cargo-guic --locked
 cargo guic --help
 ```
 
-Use `--locked` to retain the packaged dependency versions. See the
-[dependency policy](https://github.com/foctal/guic/blob/main/docs/dependency-policy.md#cargo-guic-backend)
-for resolution constraints and known advisories.
+Use `--locked` to retain the packaged dependency versions. 
 
 To install from source, run from the repository root:
 

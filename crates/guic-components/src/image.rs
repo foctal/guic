@@ -144,7 +144,7 @@ impl RenderOnce for Image {
         };
         let mut frame = div()
             .id(self.id)
-            .accessibility(accessibility)
+            .accessible(accessibility)
             .debug_selector(|| "guic-image-frame".to_owned())
             .overflow_hidden()
             .border_1()

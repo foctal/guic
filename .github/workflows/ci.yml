@@ -37,7 +37,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.95.0
         with:
-          components: rustfmt
+          components: rustfmt, clippy
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
       - name: Install Linux dependencies
@@ -46,21 +46,27 @@ jobs:
       - name: Format
         if: runner.os == 'Linux'
         run: cargo fmt --all -- --check
+      - name: Clippy
+        if: runner.os == 'Linux'
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - name: cargo-guic CLI tests
         if: runner.os != 'Linux'
         run: cargo test -p cargo-guic -p guic-build --locked
       - name: Windows tests
         if: runner.os == 'Windows'
-        run: cargo test --workspace --all-features --lib
+        run: cargo test --workspace --all-features --locked --lib
+      - name: Windows sidecar process cleanup
+        if: runner.os == 'Windows'
+        run: cargo test -p guic-native --test windows_sidecar --locked
       - name: Windows packaging example executables
         if: runner.os == 'Windows'
         run: cargo build -p guic-example-assets-demo -p guic-example-webview --all-features --locked
       - name: macOS library tests
         if: runner.os == 'macOS'
-        run: cargo test --workspace --all-features --lib
+        run: cargo test --workspace --all-features --locked --lib
       - name: Test
         if: runner.os == 'Linux'
-        run: cargo test --workspace --all-features
+        run: cargo test --workspace --all-features --locked
       - name: Docs
         if: runner.os == 'Linux'
         env:
@@ -73,10 +79,10 @@ jobs:
         run: cargo doc -p guic-components --no-default-features --no-deps --locked
       - name: Minimal feature documentation examples
         if: runner.os == 'Linux'
-        run: cargo test -p guic --no-default-features --doc
+        run: cargo test -p guic --no-default-features --locked --doc
       - name: Theme schema
         if: runner.os == 'Linux'
-        run: cargo run -p xtask -- schema --check
+        run: cargo run -p xtask --locked -- schema --check
 
   dependencies:
     name: dependency policy

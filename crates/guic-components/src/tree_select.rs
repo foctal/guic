@@ -159,7 +159,7 @@ impl RenderOnce for TreeSelect {
         let mut root = div().w_full().flex().flex_col().gap_2();
         let trigger = div()
             .id(self.id.clone())
-            .accessibility(
+            .accessible(
                 AccessibilityProps::new(Role::Button)
                     .label(self.placeholder.clone())
                     .expanded(self.expanded)
@@ -233,9 +233,7 @@ impl RenderOnce for TreeSelect {
             root = root.child(
                 div()
                     .id(format!("{}-tree", self.id))
-                    .accessibility(
-                        AccessibilityProps::new(Role::Tree).label(self.placeholder.clone()),
-                    )
+                    .accessible(AccessibilityProps::new(Role::Tree).label(self.placeholder.clone()))
                     .child(panel),
             );
         }
@@ -259,7 +257,7 @@ fn render_tree_select_node(
     let label = node.label.clone();
     let mut row = div()
         .id(node.id.clone())
-        .accessibility(
+        .accessible(
             AccessibilityProps::new(Role::TreeItem)
                 .label(label)
                 .selected(selected)

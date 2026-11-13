@@ -196,7 +196,7 @@ impl RenderOnce for TreeTable {
         if self.rows.is_empty() {
             return div()
                 .id(root_id)
-                .accessibility(AccessibilityProps::new(Role::Table))
+                .accessible(AccessibilityProps::new(Role::Table))
                 .child(
                     root.child(
                         div()
@@ -224,7 +224,7 @@ impl RenderOnce for TreeTable {
 
         div()
             .id(root_id)
-            .accessibility(AccessibilityProps::new(Role::Table))
+            .accessible(AccessibilityProps::new(Role::Table))
             .child(root)
             .into_any_element()
     }
@@ -244,7 +244,7 @@ fn render_tree_table_row(
     let row_label = row.cells.first().cloned().unwrap_or_else(|| row.id.clone());
     let mut line = div()
         .id(row.id.clone())
-        .accessibility(
+        .accessible(
             AccessibilityProps::new(Role::Row)
                 .label(row_label)
                 .selected(row.selected)
@@ -287,7 +287,7 @@ fn render_tree_table_row(
                     let keyboard_handler = on_toggle.clone();
                     div()
                         .id(format!("guic-tree-table-toggle-{}", toggle_id))
-                        .accessibility(
+                        .accessible(
                             AccessibilityProps::new(Role::Button)
                                 .label(format!("Toggle {}", toggle_id))
                                 .expanded(row.expanded),

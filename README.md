@@ -9,23 +9,24 @@ themes, application primitives, and a broad component set for desktop apps.
 
 ## Status
 
-GUIC `0.5.x` is a preview release. Core APIs are usable, but breaking changes
-are expected. Editor and WebView integrations are experimental. See
-[API Stability](https://github.com/foctal/guic/blob/main/docs/api-stability.md)
+See [API Stability](https://github.com/foctal/guic/blob/main/docs/api-stability.md)
 and [Platform Support](https://github.com/foctal/guic/blob/main/docs/platform-support.md)
 before adopting GUIC in a product.
 
 ## Installation
 
-GUIC requires Rust 1.95 or newer. Follow the
-[installation guide](https://github.com/foctal/guic/blob/main/docs/installation.md)
-for Cargo dependencies and Linux packages. GUIC 0.5.0 uses the matching 0.5.0
-`guic-gpui` runtime and platform crates.
+Follow the [installation guide](https://github.com/foctal/guic/blob/main/docs/installation.md). 
+GUIC uses `guic-gpui`. A single dependency provides the toolkit and native backend:
+
+```toml
+[dependencies]
+guic = "0.6.0"
+```
 
 ## Quick Start
 
 ```rust,no_run
-use gpui::{AppContext as _, Context, IntoElement, Render, Window, div, prelude::*};
+use guic::gpui::{self, AppContext as _, ParentElement as _, div};
 use guic::prelude::*;
 
 struct AppView;
@@ -37,18 +38,14 @@ impl Render for AppView {
 }
 
 fn main() {
-    gpui_platform::application().run(|cx: &mut gpui::App| {
-        guic::init(cx);
-        cx.open_window(Default::default(), |window, cx| {
-            let view = cx.new(|_| AppView);
-            cx.new(|cx| guic::core::Root::new(view, window, cx))
-        })
-        .expect("failed to open window");
+    guic::application().run(|cx: &mut gpui::App| {
+        guic::open_window(cx, Default::default(), |_, cx| cx.new(|_| AppView))
+            .expect("failed to open window");
     });
 }
 ```
 
-Run the component gallery from a source checkout:
+Run the component gallery:
 
 ```bash
 cargo run -p guic-sample-component-gallery
@@ -68,20 +65,21 @@ cargo run -p guic-sample-component-gallery
 
 Subsystems are opt-in through the `charts`, `editor`, `webview`,
 `data-table`, `tree`, `dock`, `markdown`, and `updater` features. The default feature set
-includes the core component, icon, asset, and native APIs.
+includes the core component, icon, asset, and native APIs, plus the `application`
+feature for the native backend.
 
 ## Documentation
 
 - [cargo-guic: application development and packaging](docs/cargo-guic.md)
+- [guic-packager: packaging backend and updater](crates/guic-packager/README.md)
 - [Component behavior and host integration](docs/component-behavior.md)
 
 Start with [Getting Started](https://github.com/foctal/guic/blob/main/docs/getting-started.md),
 [Components](https://github.com/foctal/guic/blob/main/docs/components.md), and
-[Theming](https://github.com/foctal/guic/blob/main/docs/theming.md). Contributors
-should run `./scripts/check.sh` before submitting changes.
-
-See [NOTICE.md](https://github.com/foctal/guic/blob/main/NOTICE.md) for attribution.
+[Theming](https://github.com/foctal/guic/blob/main/docs/theming.md).  
+Contributors should run `./scripts/check.sh` before submitting changes.
 
 ## License
 
-Licensed under the Apache License, Version 2.0.
+Licensed under Apache-2.0. The `guic-packager` crate family
+retains its upstream Apache-2.0 OR MIT licensing.

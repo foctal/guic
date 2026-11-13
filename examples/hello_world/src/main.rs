@@ -2,6 +2,7 @@ use gpui::{
     AppContext as _, Bounds, Context, IntoElement, ParentElement as _, Render, Styled as _, Window,
     WindowBounds, WindowOptions, div, px, size,
 };
+use guic::gpui;
 use guic::prelude::{Alert, Badge, Button, Label, Progress, Separator, Spinner};
 
 struct AppView;
@@ -51,9 +52,7 @@ impl Render for AppView {
 }
 
 fn main() {
-    gpui_platform::application().run(|cx: &mut gpui::App| {
-        guic::init(cx);
-
+    guic::application().run(|cx: &mut gpui::App| {
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                 None,
@@ -67,10 +66,21 @@ fn main() {
             ..Default::default()
         };
 
-        cx.open_window(options, |window, cx| {
-            let app = cx.new(|_| AppView);
-            cx.new(|cx| guic::core::Root::new(app, window, cx))
-        })
-        .expect("failed to open hello world window");
+        guic::open_window(cx, options, |_, cx| cx.new(|_| AppView))
+            .expect("failed to open hello world window");
     })
+}
+
+#[cfg(test)]
+mod tests {
+    // This binary has only a GUIC dependency, so it also checks macro hygiene.
+    #[test]
+    fn umbrella_macros_do_not_require_direct_runtime_dependencies() {
+        assert_eq!(guic::shared_string!("hello").as_ref(), "hello");
+        assert_eq!(
+            guic::shared_format!("{count} items", count = 3).as_ref(),
+            "3 items"
+        );
+        assert_eq!(guic::theme_name!("Custom").to_string(), "Custom");
+    }
 }

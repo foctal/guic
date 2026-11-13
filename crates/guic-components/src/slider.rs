@@ -1,7 +1,7 @@
 use gpui::{
     App, Bounds, Context, FocusHandle, InteractiveElement as _, IntoElement, KeyDownEvent,
     MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement as _, Pixels, Render, SharedString,
-    Styled as _, Window, canvas, div, px, relative,
+    StatefulInteractiveElement as _, Styled as _, Window, canvas, div, px, relative,
 };
 use guic_core::{AccessibilityElementExt as _, AccessibilityProps, Role};
 use guic_tokens::Theme;
@@ -260,7 +260,7 @@ impl Render for Slider {
 
         let mut root = div()
             .id(self.id.clone())
-            .accessibility(
+            .accessible(
                 AccessibilityProps::new(Role::Slider)
                     .label(self.id.clone())
                     .disabled(disabled)
@@ -285,6 +285,44 @@ impl Render for Slider {
             root = root.opacity(0.55);
         } else {
             root = root
+                .aria_numeric_value_step(f64::from(self.keyboard_step()))
+                .on_a11y_action(gpui::accesskit::Action::Increment, {
+                    let entity = cx.entity().downgrade();
+                    move |_, window, cx| {
+                        let _ = entity.update(cx, |this, cx| {
+                            if !this.disabled {
+                                this.apply_value(this.value + this.keyboard_step(), window, cx);
+                            }
+                        });
+                    }
+                })
+                .on_a11y_action(gpui::accesskit::Action::Decrement, {
+                    let entity = cx.entity().downgrade();
+                    move |_, window, cx| {
+                        let _ = entity.update(cx, |this, cx| {
+                            if !this.disabled {
+                                this.apply_value(this.value - this.keyboard_step(), window, cx);
+                            }
+                        });
+                    }
+                })
+                .on_a11y_action(gpui::accesskit::Action::SetValue, {
+                    let entity = cx.entity().downgrade();
+                    move |data, window, cx| {
+                        let _ = entity.update(cx, |this, cx| {
+                            if !this.disabled
+                                && let Some(gpui::accesskit::ActionData::NumericValue(value)) = data
+                                && value.is_finite()
+                            {
+                                this.apply_value(
+                                    value.clamp(f64::from(this.min), f64::from(this.max)) as f32,
+                                    window,
+                                    cx,
+                                );
+                            }
+                        });
+                    }
+                })
                 .track_focus(&self.focus_handle)
                 .cursor_pointer()
                 .on_mouse_down(
@@ -521,5 +559,49 @@ mod interaction_tests {
 
         cx.dispatch_keystroke(window, Keystroke::parse("home").expect("keystroke parses"));
         view.update(cx, |slider, _| assert_eq!(slider.current_value(), 0.0));
+    }
+}
+
+#[cfg(test)]
+mod accessibility_tests {
+    use super::*;
+    use gpui::{Element as _, TestAppContext};
+
+    #[gpui::test]
+    fn accessible_range_actions_follow_disabled_and_continuous_states(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            guic_core::init(cx);
+            guic_tokens::init(cx);
+        });
+        let (entity, cx) = cx.add_window_view(|_, cx| Slider::new("accessible", cx).step(0.0));
+        cx.update(|window, cx| {
+            entity.update(cx, |slider, cx| {
+                for disabled in [false, true] {
+                    slider.disabled = disabled;
+                    let element = slider.render(window, cx).into_element();
+                    let mut node = gpui::accesskit::Node::new(element.a11y_role().expect("role"));
+                    element.write_a11y_info(&mut node);
+                    assert_eq!(node.is_disabled(), disabled);
+                    assert_eq!(
+                        node.supports_action(gpui::accesskit::Action::Increment),
+                        !disabled
+                    );
+                    assert_eq!(
+                        node.supports_action(gpui::accesskit::Action::Decrement),
+                        !disabled
+                    );
+                    assert_eq!(
+                        node.supports_action(gpui::accesskit::Action::SetValue),
+                        !disabled
+                    );
+                    if !disabled {
+                        assert_eq!(
+                            node.numeric_value_step(),
+                            Some(f64::from(slider.keyboard_step()))
+                        );
+                    }
+                }
+            })
+        });
     }
 }

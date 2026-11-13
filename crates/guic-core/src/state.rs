@@ -33,6 +33,10 @@ impl GlobalState {
         self.mounted_roots = self.mounted_roots.saturating_add(1);
     }
 
+    pub(crate) fn unmount_root(&mut self) {
+        self.mounted_roots = self.mounted_roots.saturating_sub(1);
+    }
+
     /// Returns the active theme name, if known.
     #[must_use]
     pub fn active_theme_name(&self) -> Option<&str> {

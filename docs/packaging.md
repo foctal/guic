@@ -12,8 +12,7 @@ explicit `--execute-signing`. See the CLI guide for commands and configuration.
 Release execution and approval remain application-owner responsibilities.
 
 cargo-guic supports app/DMG, NSIS/MSI/MSIX, and deb/AppImage on their native
-hosts. The following checklists cover application distribution. Toolkit crate
-publication is described [separately](publication.md).
+hosts. The following checklists cover application distribution. 
 
 ## macOS
 

@@ -2,7 +2,7 @@
 
 `cargo-guic` supports development and native packaging of GUIC applications.
 It resolves Cargo projects, runs development builds, and packages recorded
-executables through cargo-packager. The CLI has no GUIC or GPUI runtime
+executables through guic-packager. The CLI has no GUIC or GPUI runtime
 dependency and does not add packaging dependencies to applications.
 
 `build` compiles the application and generates its configured native packages.
@@ -27,9 +27,7 @@ cargo install cargo-guic --locked
 cargo guic --help
 ```
 
-`--locked` is currently required: `cargo-packager 0.11.8` depends on
-`zip 0.6`, whose releases are all yanked. The packaged lockfile retains the
-resolved version; installation without `--locked` fails dependency resolution.
+Use `--locked` to install with the dependency versions validated for the release.
 
 To install from source, run from this repository's root:
 
@@ -516,7 +514,8 @@ compiler, Cargo configuration, declared input, and build-hook changes are treate
 conservatively as build-affecting. Identity changes require a new build; installer
 upgrade continuity still requires native acceptance.
 
-The adapter uses `cargo-packager` 0.11.8, with its CLI feature disabled. Packaging
+The adapter uses the workspace fork `guic-packager` 0.1.0, with its CLI feature
+disabled. The existing `[backend.cargo-packager]` configuration key is retained. Packaging
 runs in an isolated worker with copied inputs, a controlled environment and
 serial access to the shared backend cache. Missing or invalid outputs fail the
 operation. If a later format fails, earlier outputs remain available with an
@@ -615,8 +614,10 @@ Universal app payloads are listed for both `macos-aarch64` and `macos-x86_64`.
 Overlapping platform entries are rejected. The CLI does not upload anything;
 host the generated directory at the specified HTTPS location manually.
 
-Enable `guic`'s `updater` feature. The
-`guic::updater` module exposes `cargo-packager-updater` 0.2.3:
+Enable `guic`'s `updater` feature. The `guic::updater` module exposes the workspace
+fork `guic-packager-updater` 0.1.0. macOS installation uses an atomic bundle swap
+and requests system authorization when necessary. Cancellation leaves the old
+application intact. 
 
 ```rust,no_run
 fn check_for_updates() -> Result<(), Box<dyn std::error::Error>> {

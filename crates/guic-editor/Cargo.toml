@@ -1,6 +1,6 @@
 [package]
 name = "guic-editor"
-version = "0.5.0"
+version = "0.6.0"
 description = "Native code editor primitives for GUIC."
 edition.workspace = true
 license.workspace = true
@@ -13,9 +13,10 @@ rust-version.workspace = true
 
 [dependencies]
 gpui.workspace = true
-guic-core = { version = "0.5.0", path = "../guic-core" }
-guic-tokens = { version = "0.5.0", path = "../guic-tokens" }
+guic-core = { version = "0.6.0", path = "../guic-core" }
+guic-tokens = { version = "0.6.0", path = "../guic-tokens" }
 unicode-segmentation.workspace = true
+unicode-linebreak.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

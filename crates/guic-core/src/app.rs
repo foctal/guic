@@ -6,6 +6,10 @@ use gpui::App;
 /// The initialization is idempotent and only installs globals that are not yet
 /// present in the GPUI application context.
 pub fn init(cx: &mut App) {
+    if !cx.has_global::<crate::Localization>() {
+        cx.set_global(crate::Localization::default());
+    }
+
     if !cx.has_global::<GlobalState>() {
         cx.set_global(GlobalState::default());
     }

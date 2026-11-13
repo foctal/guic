@@ -4,13 +4,17 @@
 #![warn(missing_docs)]
 
 use gpui::{
-    App, ClipboardItem, FocusHandle, FontWeight, InteractiveElement as _, IntoElement,
-    KeyDownEvent, ParentElement as _, RenderOnce, SharedString, StatefulInteractiveElement as _,
-    Styled as _, Window, div, px,
+    App, ClipboardItem, FocusHandle, IntoElement, KeyDownEvent, RenderOnce, SharedString, Window,
 };
 use guic_tokens::Theme;
 use std::{ops::Range, rc::Rc};
 use unicode_segmentation::UnicodeSegmentation;
+
+mod analysis;
+mod retirement;
+mod storage;
+mod surface;
+use storage::LineStore;
 
 type PositionHandler = Rc<dyn Fn(&EditorPosition, &mut Window, &mut App)>;
 type TextChangeHandler = Rc<dyn Fn(&EditorBuffer, &mut Window, &mut App)>;
@@ -250,23 +254,40 @@ pub struct SyntaxToken {
 }
 
 /// A large-buffer friendly text model split by lines.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct EditorBuffer {
-    lines: Vec<SharedString>,
+    lines: LineStore,
+    // Enabled only while preparing an interactive transaction. Byte changes
+    // rebase pointer selections captured against the still-visible snapshot.
+    replacements: Option<Vec<(Range<usize>, usize)>>,
 }
 
+impl PartialEq for EditorBuffer {
+    fn eq(&self, other: &Self) -> bool {
+        self.lines == other.lines
+    }
+}
+impl Eq for EditorBuffer {}
+
 impl EditorBuffer {
-    /// Creates a buffer from text.
+    /// Creates a buffer from text, normalizing CRLF and CR line endings to LF.
     #[must_use]
     pub fn from_text(text: impl AsRef<str>) -> Self {
-        let mut lines: Vec<SharedString> = text.as_ref().split('\n').map(Into::into).collect();
+        let text = normalize_newlines(text.as_ref());
+        let mut lines: Vec<SharedString> = text
+            .split('\n')
+            .map(|line| SharedString::from(line.to_owned()))
+            .collect();
         if lines.is_empty() {
             lines.push(SharedString::from(""));
         }
-        Self { lines }
+        Self {
+            lines: lines.into(),
+            replacements: None,
+        }
     }
 
-    /// Returns the full buffer text.
+    /// Returns the full buffer text with LF line endings.
     #[must_use]
     pub fn text(&self) -> String {
         self.lines
@@ -276,10 +297,22 @@ impl EditorBuffer {
             .join("\n")
     }
 
-    /// Returns all lines.
+    /// Returns all lines, materializing and caching a contiguous view.
+    /// Prefer [`Self::line`] or [`Self::iter_lines`] for large documents.
     #[must_use]
     pub fn lines(&self) -> &[SharedString] {
-        &self.lines
+        self.lines.flattened()
+    }
+
+    /// Returns one line without materializing the document.
+    #[must_use]
+    pub fn line(&self, index: usize) -> Option<&SharedString> {
+        self.lines.get(index)
+    }
+
+    /// Iterates over shared lines without allocating a contiguous view.
+    pub fn iter_lines(&self) -> impl Iterator<Item = &SharedString> {
+        self.lines.iter()
     }
 
     /// Returns the line count.
@@ -291,17 +324,21 @@ impl EditorBuffer {
     /// Returns the grapheme count of a line, or zero when the line does not exist.
     #[must_use]
     pub fn line_len(&self, line: usize) -> usize {
-        self.lines
-            .get(line)
-            .map(|line| line.graphemes(true).count())
-            .unwrap_or(0)
+        self.lines.column_count(line)
     }
 
     /// Clamps a position to a valid grapheme boundary in this buffer.
     #[must_use]
     pub fn clamp_position(&self, position: EditorPosition) -> EditorPosition {
         let line = position.line.min(self.lines.len().saturating_sub(1));
-        EditorPosition::new(line, position.column.min(self.line_len(line)))
+        EditorPosition::new(
+            line,
+            if position.column == 0 {
+                0
+            } else {
+                position.column.min(self.line_len(line))
+            },
+        )
     }
 
     /// Returns the text covered by a range.
@@ -314,15 +351,15 @@ impl EditorBuffer {
         } else {
             (end, start)
         };
-        let start_byte = grapheme_to_byte(&self.lines[start.line], start.column);
-        let end_byte = grapheme_to_byte(&self.lines[end.line], end.column);
+        let start_byte = self.lines.column_byte(start.line, start.column);
+        let end_byte = self.lines.column_byte(end.line, end.column);
         if start.line == end.line {
             return self.lines[start.line][start_byte..end_byte].to_string();
         }
         let mut text = String::from(&self.lines[start.line][start_byte..]);
-        for line in &self.lines[start.line + 1..end.line] {
+        for line in start.line + 1..end.line {
             text.push('\n');
-            text.push_str(line);
+            text.push_str(&self.lines[line]);
         }
         text.push('\n');
         text.push_str(&self.lines[end.line][..end_byte]);
@@ -331,6 +368,8 @@ impl EditorBuffer {
 
     /// Replaces a range with new text.
     pub fn replace_range(&mut self, range: Range<EditorPosition>, replacement: &str) {
+        let normalized = normalize_newlines(replacement);
+        let replacement = normalized.as_ref();
         let start = self.clamp_position(range.start);
         let end = self.clamp_position(range.end);
         let (start, end) = if start <= end {
@@ -338,33 +377,11 @@ impl EditorBuffer {
         } else {
             (end, start)
         };
-        let start_byte = grapheme_to_byte(&self.lines[start.line], start.column);
-        let end_byte = grapheme_to_byte(&self.lines[end.line], end.column);
-        let prefix = &self.lines[start.line][..start_byte];
-        let suffix = &self.lines[end.line][end_byte..];
-        let replacement_lines = replacement.split('\n').collect::<Vec<_>>();
-        let mut inserted = Vec::with_capacity(replacement_lines.len());
-        if replacement_lines.len() == 1 {
-            inserted.push(SharedString::from(format!(
-                "{prefix}{}{suffix}",
-                replacement_lines[0]
-            )));
-        } else {
-            inserted.push(SharedString::from(format!(
-                "{prefix}{}",
-                replacement_lines[0]
-            )));
-            inserted.extend(
-                replacement_lines[1..replacement_lines.len() - 1]
-                    .iter()
-                    .map(|line| SharedString::from((*line).to_string())),
-            );
-            inserted.push(SharedString::from(format!(
-                "{}{suffix}",
-                replacement_lines[replacement_lines.len() - 1]
-            )));
-        }
-        self.lines.splice(start.line..=end.line, inserted);
+        let start_byte =
+            self.lines.line_byte(start.line) + self.lines.column_byte(start.line, start.column);
+        let end_byte =
+            self.lines.line_byte(end.line) + self.lines.column_byte(end.line, end.column);
+        self.replace_bytes(start_byte..end_byte, replacement);
     }
 
     /// Inserts text at a position.
@@ -384,15 +401,26 @@ impl EditorBuffer {
         let mut matches = Vec::new();
         for (line_index, line) in self.lines.iter().enumerate() {
             let mut byte_start = 0usize;
+            let mut boundaries = line.grapheme_indices(true).enumerate().peekable();
+            let mut boundary = (0, 0);
+            // Search matches are ordered. Walk grapheme boundaries once per
+            // line instead of rescanning its prefix for every match.
+            let mut column_at = |byte| {
+                while let Some(&(column, (offset, _))) = boundaries.peek() {
+                    if offset > byte {
+                        break;
+                    }
+                    boundary = (column, offset);
+                    boundaries.next();
+                }
+                boundary
+            };
             while let Some(offset) = line.as_ref()[byte_start..].find(query) {
                 let start_byte = byte_start + offset;
                 let end_byte = start_byte + query.len();
-                let start = line
-                    .grapheme_indices(true)
-                    .take_while(|(index, _)| *index <= start_byte)
-                    .count()
-                    .saturating_sub(1);
-                let end = byte_to_grapheme(line, end_byte);
+                let (start, _) = column_at(start_byte);
+                let (end_column, end_boundary) = column_at(end_byte);
+                let end = end_column + usize::from(end_byte > end_boundary);
                 matches.push(EditorSearchMatch {
                     range: EditorPosition::new(line_index, start)
                         ..EditorPosition::new(line_index, end),
@@ -409,12 +437,14 @@ impl EditorBuffer {
     /// Returns the number of matches. Only the matched text is replaced, even
     /// when it is part of a grapheme; unmatched combining marks are preserved.
     pub fn replace_all(&mut self, query: &str, replacement: &str) -> usize {
+        let normalized = normalize_newlines(replacement);
+        let replacement = normalized.as_ref();
         if query.is_empty() {
             return 0;
         }
         let mut count = 0;
         let mut lines = Vec::new();
-        for line in &self.lines {
+        for line in self.lines.iter() {
             let matches = line.matches(query).count();
             if matches == 0 {
                 lines.push(line.clone());
@@ -428,17 +458,21 @@ impl EditorBuffer {
                     .map(|line| SharedString::from(line.to_owned())),
             );
         }
-        self.lines = lines;
+        if count > 0 {
+            self.lines = lines.into();
+        }
         count
     }
 
     /// Classifies a line with the built-in lightweight syntax strategy.
+    ///
+    /// Reuses analysis shared with editor rendering and immutable snapshots.
+    /// An explicit cache miss is synchronous; the returned token list is owned.
     #[must_use]
     pub fn syntax_tokens(&self, line_index: usize) -> Vec<SyntaxToken> {
-        let Some(line) = self.lines.get(line_index) else {
-            return Vec::new();
-        };
-        classify_line(line)
+        self.lines
+            .analyze(line_index, &std::sync::atomic::AtomicBool::new(false))
+            .map_or_else(Vec::new, |analysis| analysis.tokens.clone())
     }
 }
 
@@ -494,6 +528,16 @@ impl EditorSession {
         self.selections = normalize_selections(&self.buffer, selections);
     }
 
+    /// Clears undo and redo without changing the current text or selections.
+    ///
+    /// Large retired batches are released by a bounded background worker. If
+    /// the worker is unavailable or its queue is full, release is synchronous.
+    pub fn clear_history(&mut self) {
+        let mut retired = std::mem::take(&mut self.undo);
+        retired.append(&mut self.redo);
+        retirement::retire(retired);
+    }
+
     /// Applies a controlled edit and records the previous state for undo.
     pub fn apply(&mut self, edit: EditorEdit) {
         let selections = normalize_selections(&edit.buffer, edit.selections);
@@ -504,10 +548,12 @@ impl EditorSession {
         let previous = self.snapshot();
         self.buffer = edit.buffer;
         self.selections = selections;
-        self.redo.clear();
+        retirement::retire(std::mem::take(&mut self.redo));
         if self.history_limit > 0 {
             self.undo.push(previous);
             self.trim_history();
+        } else {
+            retirement::retire(vec![previous]);
         }
     }
 
@@ -618,8 +664,20 @@ impl EditorSession {
     fn trim_history(&mut self) {
         let excess = self.undo.len().saturating_sub(self.history_limit);
         if excess > 0 {
-            self.undo.drain(..excess);
+            retirement::retire(self.undo.drain(..excess).collect());
         }
+    }
+}
+
+impl Drop for EditorSession {
+    fn drop(&mut self) {
+        let mut retired = std::mem::take(&mut self.undo);
+        retired.append(&mut self.redo);
+        retired.push(EditorEdit::new(
+            std::mem::replace(&mut self.buffer, EditorBuffer::from_text("")),
+            std::mem::take(&mut self.selections),
+        ));
+        retirement::retire(retired);
     }
 }
 
@@ -630,6 +688,9 @@ pub struct CodeEditorOptions {
     visible_lines: usize,
     line_numbers: bool,
     syntax_highlighting: bool,
+    soft_wrap: bool,
+    scrollbars: bool,
+    cursor_blink: bool,
 }
 
 impl Default for CodeEditorOptions {
@@ -639,19 +700,23 @@ impl Default for CodeEditorOptions {
             visible_lines: 24,
             line_numbers: true,
             syntax_highlighting: true,
+            soft_wrap: false,
+            scrollbars: true,
+            cursor_blink: true,
         }
     }
 }
 
 impl CodeEditorOptions {
-    /// Sets the first rendered line.
+    /// Sets the initial first line, or repositions the viewport when this value changes.
+    /// Repeated renders with the same value preserve user scrolling.
     #[must_use]
     pub fn first_line(mut self, first_line: usize) -> Self {
         self.first_line = first_line;
         self
     }
 
-    /// Sets the maximum visible line count.
+    /// Sets the viewport height in lines, with a minimum of one line.
     #[must_use]
     pub fn visible_lines(mut self, visible_lines: usize) -> Self {
         self.visible_lines = visible_lines.max(1);
@@ -665,6 +730,29 @@ impl CodeEditorOptions {
         self
     }
 
+    /// Wraps long lines at word or grapheme boundaries without changing the buffer.
+    /// Disabled by default. Continuation rows start at the left text margin.
+    #[must_use]
+    pub fn soft_wrap(mut self, soft_wrap: bool) -> Self {
+        self.soft_wrap = soft_wrap;
+        self
+    }
+
+    /// Shows draggable scrollbars when content overflows. Enabled by default.
+    #[must_use]
+    pub fn scrollbars(mut self, scrollbars: bool) -> Self {
+        self.scrollbars = scrollbars;
+        self
+    }
+
+    /// Blinks the focused cursor when idle. Enabled by default.
+    /// Disable this to keep the cursor steady, including for reduced-motion preferences.
+    #[must_use]
+    pub fn cursor_blink(mut self, cursor_blink: bool) -> Self {
+        self.cursor_blink = cursor_blink;
+        self
+    }
+
     /// Sets whether built-in syntax highlighting is rendered.
     #[must_use]
     pub fn syntax_highlighting(mut self, syntax_highlighting: bool) -> Self {
@@ -674,7 +762,11 @@ impl CodeEditorOptions {
 }
 
 /// A controlled native code editor surface.
-#[derive(gpui::IntoElement)]
+///
+/// Keep its ID stable to retain composition and scroll state. Supply a focus
+/// handle and an edit callback to accept native text input. IME preedit is drawn
+/// locally; callbacks receive one committed edit when composition finishes.
+#[derive(Clone, gpui::IntoElement)]
 pub struct CodeEditor {
     id: SharedString,
     buffer: EditorBuffer,
@@ -736,7 +828,7 @@ impl CodeEditor {
         self
     }
 
-    /// Registers a cursor request handler.
+    /// Registers a handler for primary cursor changes, including glyph-based pointer hits.
     #[must_use]
     pub fn on_cursor(
         mut self,
@@ -760,7 +852,11 @@ impl CodeEditor {
     ///
     /// This is preferred over [`CodeEditor::on_change`] for editable surfaces
     /// because it preserves cursor and selection updates. When both handlers
-    /// are set, both are called.
+    /// are set, text changes call both; selection-only changes call `on_edit`.
+    /// IME preedit updates stay local until committed or unmarked. Apply the
+    /// resulting edit to an [`EditorSession`] to make composition one undo step.
+    /// Large pastes publish asynchronously, with subsequent edits kept in order.
+    /// Supplying a replacement host value cancels pending preparation.
     #[must_use]
     pub fn on_edit(
         mut self,
@@ -771,6 +867,8 @@ impl CodeEditor {
     }
 
     /// Registers a handler for undo and redo shortcuts.
+    /// Update the controlled session and notify the host synchronously in this
+    /// callback. Queued input resumes after the command result is rendered.
     #[must_use]
     pub fn on_command(
         mut self,
@@ -792,139 +890,12 @@ impl CodeEditor {
 }
 
 impl RenderOnce for CodeEditor {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = Theme::global(cx);
-        let end = self
-            .options
-            .first_line
-            .saturating_add(self.options.visible_lines)
-            .min(self.buffer.line_count());
-        let mut root = div()
-            .id(self.id)
-            .w_full()
-            .rounded(px(theme.radius.lg))
-            .border_1()
-            .border_color(theme.border())
-            .bg(theme.background())
-            .overflow_hidden()
-            .flex()
-            .flex_col();
-        if let Some(handle) = &self.focus_handle {
-            root = root.key_context("GuicCodeEditor").track_focus(handle);
-        }
-        if let Some(handle) = self.focus_handle.clone()
-            && (self.on_change.is_some() || self.on_edit.is_some() || self.on_command.is_some())
-        {
-            let base_buffer = self.buffer.clone();
-            let base_selections = normalize_selections(&base_buffer, self.selections.clone());
-            let on_change = self.on_change.clone();
-            let on_edit = self.on_edit.clone();
-            let on_command = self.on_command.clone();
-            let page_lines = self.options.visible_lines;
-            root = root
-                .cursor_text()
-                .on_click(move |_, window, cx| window.focus(&handle, cx))
-                .on_key_down(move |event: &KeyDownEvent, window, cx| {
-                    let handled = editor_key_is_handled(event);
-                    let command = editor_key_command(event);
-                    let edit =
-                        editor_key_edit(event, &base_buffer, &base_selections, page_lines, cx);
-                    if handled {
-                        cx.stop_propagation();
-                    }
-                    if let (Some(command), Some(on_command)) = (command, on_command.as_ref()) {
-                        on_command(&command, window, cx);
-                    }
-                    let Some(edit) = edit else {
-                        return;
-                    };
-                    if let Some(on_change) = &on_change {
-                        on_change(&edit.buffer, window, cx);
-                    }
-                    if let Some(on_edit) = &on_edit {
-                        on_edit(&edit, window, cx);
-                    }
-                });
-        }
-
-        for line_index in self.options.first_line..end {
-            let mut row = div()
-                .w_full()
-                .min_h(px(22.0))
-                .flex()
-                .items_start()
-                .text_color(theme.foreground())
-                .font_family("monospace")
-                .text_size(px(13.0));
-            if self.options.line_numbers {
-                row = row.child(
-                    div()
-                        .w(px(52.0))
-                        .px_2()
-                        .text_color(theme.muted_foreground())
-                        .child(format!("{}", line_index + 1)),
-                );
-            }
-            let selected = self
-                .selections
-                .iter()
-                .any(|selection| selection_intersects_line(selection, line_index));
-            let mut code = div()
-                .flex_1()
-                .flex()
-                .flex_row()
-                .items_center()
-                .px_2()
-                .text_color(theme.foreground())
-                .bg(if selected {
-                    theme.secondary().opacity(0.32)
-                } else {
-                    theme.background()
-                });
-            if self.options.syntax_highlighting {
-                code = render_tokens(code, &self.buffer, line_index, theme);
-            } else if let Some(line) = self.buffer.lines().get(line_index) {
-                code = code.child(line.clone());
-            }
-            if let Some(diagnostic) = self
-                .diagnostics
-                .iter()
-                .find(|diagnostic| diagnostic.range.start.line == line_index)
-            {
-                let diagnostic = diagnostic.clone();
-                let badge = div()
-                    .ml_2()
-                    .text_color(severity_color(diagnostic.severity, theme))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(diagnostic.message.clone());
-                let badge = if let Some(handler) = self.on_diagnostic.clone() {
-                    badge
-                        .id(format!("guic-editor-diagnostic-{line_index}"))
-                        .cursor_pointer()
-                        .on_click(move |_, window, cx| {
-                            handler(&diagnostic, window, cx);
-                        })
-                        .into_any_element()
-                } else {
-                    badge.into_any_element()
-                };
-                code = code.child(badge);
-            }
-            let line = row.child(code);
-            root = if let Some(on_cursor) = self.on_cursor.clone() {
-                let position = EditorPosition::new(line_index, 0);
-                root.child(
-                    line.id(format!("guic-code-editor-line-{line_index}"))
-                        .cursor_text()
-                        .on_click(move |_, window, cx| {
-                            on_cursor(&position, window, cx);
-                        }),
-                )
-            } else {
-                root.child(line)
-            };
-        }
-        root
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let state = window.use_keyed_state(format!("{}-editor-surface", self.id), cx, |_, _| {
+            surface::EditorSurface::new(self.clone())
+        });
+        state.update(cx, |surface, cx| surface.configure(self, window, cx));
+        state
     }
 }
 
@@ -1085,8 +1056,7 @@ fn edit_indenting_lines(
     for line in lines.into_iter().rev() {
         let removes = dedent
             && next
-                .lines()
-                .get(line)
+                .line(line)
                 .is_some_and(|text| text.starts_with(indentation));
         if dedent && !removes {
             continue;
@@ -1144,6 +1114,8 @@ fn edit_replacing_selections(
     selections: &[EditorSelection],
     replacement: &str,
 ) -> EditorEdit {
+    let normalized = normalize_newlines(replacement);
+    let replacement = normalized.as_ref();
     let selections = normalize_selections(buffer, selections.to_vec());
     let mut ordered = selections
         .iter()
@@ -1160,48 +1132,30 @@ fn edit_replacing_selections(
             ranges.push(range);
         }
     }
-    ranges.sort_by_key(|range| std::cmp::Reverse(range.start));
-
+    // Resolve all positions against the original snapshot. Byte deltas also
+    // handle combining marks that merge with text adjacent to a paste.
+    let ranges = ranges
+        .into_iter()
+        .map(|range| {
+            surface::position_byte(buffer, range.start)..surface::position_byte(buffer, range.end)
+        })
+        .collect::<Vec<_>>();
     let mut next = buffer.clone();
-    let mut cursors: Vec<EditorSelection> = Vec::with_capacity(ranges.len());
-    for range in ranges {
-        let start = range.start;
-        for cursor in &mut cursors {
-            cursor.anchor =
-                translate_position_after_replacement(cursor.anchor, &range, replacement);
-            cursor.head = cursor.anchor;
-        }
-        next.replace_range(range, replacement);
-        cursors.push(EditorSelection::cursor(position_after_text(
-            start,
-            replacement,
-        )));
+    for range in ranges.iter().rev() {
+        next.replace_bytes(range.clone(), replacement);
     }
-    cursors.sort_by_key(|selection| selection.head);
+    let mut removed = 0;
+    let mut inserted = 0;
+    let cursors = ranges
+        .into_iter()
+        .map(|range| {
+            let byte = range.start - removed + inserted + replacement.len();
+            removed += range.len();
+            inserted += replacement.len();
+            EditorSelection::cursor(surface::byte_position(&next, byte))
+        })
+        .collect();
     EditorEdit::new(next, cursors)
-}
-
-fn translate_position_after_replacement(
-    position: EditorPosition,
-    range: &Range<EditorPosition>,
-    replacement: &str,
-) -> EditorPosition {
-    if position <= range.end {
-        return position;
-    }
-    let inserted_end = position_after_text(range.start, replacement);
-    if position.line == range.end.line {
-        EditorPosition::new(
-            inserted_end.line,
-            inserted_end.column + position.column.saturating_sub(range.end.column),
-        )
-    } else {
-        EditorPosition::new(
-            position.line - (range.end.line - range.start.line)
-                + (inserted_end.line - range.start.line),
-            position.column,
-        )
-    }
 }
 
 fn edit_deleting(
@@ -1297,53 +1251,9 @@ fn normalize_selections(
         .collect()
 }
 
-fn position_after_text(start: EditorPosition, text: &str) -> EditorPosition {
-    let mut parts = text.split('\n');
-    let first = parts.next().unwrap_or_default();
-    let remaining = parts.collect::<Vec<_>>();
-    if let Some(last) = remaining.last() {
-        EditorPosition::new(start.line + remaining.len(), last.graphemes(true).count())
-    } else {
-        EditorPosition::new(start.line, start.column + first.graphemes(true).count())
-    }
-}
-
 fn buffer_end(buffer: &EditorBuffer) -> EditorPosition {
     let line = buffer.line_count().saturating_sub(1);
     EditorPosition::new(line, buffer.line_len(line))
-}
-
-fn selection_intersects_line(selection: &EditorSelection, line: usize) -> bool {
-    let range = selection.ordered();
-    !selection.is_empty()
-        && (range.start.line..=range.end.line).contains(&line)
-        && !(range.end.line == line && range.end.column == 0 && range.start.line != line)
-}
-
-fn render_tokens(
-    mut code: gpui::Div,
-    buffer: &EditorBuffer,
-    line_index: usize,
-    theme: &Theme,
-) -> gpui::Div {
-    let Some(line) = buffer.lines().get(line_index) else {
-        return code;
-    };
-    let tokens = buffer.syntax_tokens(line_index);
-    if tokens.is_empty() {
-        return code.child(line.clone());
-    }
-    let graphemes = line.graphemes(true).collect::<Vec<_>>();
-    for token in tokens {
-        let text = graphemes[token.start..token.end].concat();
-        code = code.child(
-            div()
-                .text_color(token_color(token.kind, theme))
-                .whitespace_nowrap()
-                .child(text),
-        );
-    }
-    code
 }
 
 fn previous_position(buffer: &EditorBuffer, position: EditorPosition) -> EditorPosition {
@@ -1354,7 +1264,7 @@ fn previous_position(buffer: &EditorBuffer, position: EditorPosition) -> EditorP
         return position;
     }
     let previous_line = position.line - 1;
-    let previous_column = buffer.lines()[previous_line].graphemes(true).count();
+    let previous_column = buffer.line_len(previous_line);
     EditorPosition::new(previous_line, previous_column)
 }
 
@@ -1370,73 +1280,9 @@ fn next_position(buffer: &EditorBuffer, position: EditorPosition) -> EditorPosit
 }
 
 fn classify_line(line: &str) -> Vec<SyntaxToken> {
-    let graphemes = line.graphemes(true).collect::<Vec<_>>();
-    let mut tokens = Vec::new();
-    let mut index = 0usize;
-    while index < graphemes.len() {
-        let rest = graphemes[index..].concat();
-        if rest.starts_with("//") {
-            tokens.push(SyntaxToken {
-                kind: SyntaxTokenKind::Comment,
-                start: index,
-                end: graphemes.len(),
-            });
-            break;
-        }
-        if graphemes[index] == "\"" {
-            let start = index;
-            index += 1;
-            while index < graphemes.len() && graphemes[index] != "\"" {
-                index += 1;
-            }
-            index = (index + 1).min(graphemes.len());
-            tokens.push(SyntaxToken {
-                kind: SyntaxTokenKind::String,
-                start,
-                end: index,
-            });
-        } else if graphemes[index].chars().all(|c| c.is_ascii_digit()) {
-            let start = index;
-            while index < graphemes.len() && graphemes[index].chars().all(|c| c.is_ascii_digit()) {
-                index += 1;
-            }
-            tokens.push(SyntaxToken {
-                kind: SyntaxTokenKind::Number,
-                start,
-                end: index,
-            });
-        } else if graphemes[index]
-            .chars()
-            .all(|c| c.is_ascii_alphabetic() || c == '_')
-        {
-            let start = index;
-            while index < graphemes.len()
-                && graphemes[index]
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '_')
-            {
-                index += 1;
-            }
-            let word = graphemes[start..index].concat();
-            tokens.push(SyntaxToken {
-                kind: if is_keyword(&word) {
-                    SyntaxTokenKind::Keyword
-                } else {
-                    SyntaxTokenKind::Plain
-                },
-                start,
-                end: index,
-            });
-        } else {
-            tokens.push(SyntaxToken {
-                kind: SyntaxTokenKind::Plain,
-                start: index,
-                end: index + 1,
-            });
-            index += 1;
-        }
-    }
-    tokens
+    analysis::LineAnalysis::build(line, &std::sync::atomic::AtomicBool::new(false))
+        .expect("uncancelled classification")
+        .tokens
 }
 
 fn is_keyword(word: &str) -> bool {
@@ -1469,6 +1315,20 @@ fn is_keyword(word: &str) -> bool {
             | "where"
             | "while"
     )
+}
+
+fn normalize_newlines(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text.contains('\r') {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let mut normalized = String::with_capacity(text.len());
+    let mut parts = text.split('\r');
+    normalized.push_str(parts.next().unwrap_or_default());
+    for part in parts {
+        normalized.push('\n');
+        normalized.push_str(part.strip_prefix('\n').unwrap_or(part));
+    }
+    std::borrow::Cow::Owned(normalized)
 }
 
 fn grapheme_to_byte(line: &str, column: usize) -> usize {
@@ -1535,6 +1395,84 @@ mod tests {
     };
 
     #[test]
+    fn retiring_history_keeps_live_snapshots_and_branching_semantics() {
+        let original = EditorBuffer::from_text("日本🙂\n".repeat(2000));
+        let mut session = EditorSession::new(original.clone()).history_limit(2);
+        session.insert("first");
+        let snapshot = session.clone();
+        session.insert("second");
+        session.insert("third");
+        assert!(session.undo());
+        assert!(session.undo());
+        assert!(!session.undo());
+        session.insert("branch");
+        assert!(!session.redo());
+        assert_eq!(
+            snapshot.buffer().line(0).expect("line").as_ref(),
+            "first日本🙂"
+        );
+        assert_eq!(original.line(0).expect("original").as_ref(), "日本🙂");
+        let before_clear = session.buffer().clone();
+        let selections = session.selections().to_vec();
+        session.clear_history();
+        assert!(!session.undo());
+        assert!(!session.redo());
+        assert_eq!(session.buffer(), &before_clear);
+        assert_eq!(session.selections(), &selections);
+        let mut session = session.history_limit(0);
+        assert!(!session.undo());
+        session.insert("unrecorded");
+        assert!(!session.undo());
+        let current = session.buffer().clone();
+        drop(session);
+        assert!(
+            current
+                .line(0)
+                .expect("retained line")
+                .starts_with("firstbranchunrecorded")
+        );
+        assert_eq!(
+            snapshot.buffer().line(0).expect("snapshot").as_ref(),
+            "first日本🙂"
+        );
+    }
+    #[test]
+    fn paste_cursors_follow_merged_graphemes_and_history_restores_selections() {
+        let mut session = EditorSession::new(EditorBuffer::from_text("ab\nab"));
+        let selections = vec![
+            EditorSelection::cursor(EditorPosition::new(0, 1)),
+            EditorSelection::cursor(EditorPosition::new(1, 1)),
+        ];
+        session.set_selections(selections.clone());
+        session.insert("\u{301}");
+        assert_eq!(session.buffer().text(), "a\u{301}b\na\u{301}b");
+        assert_eq!(session.selections(), &selections);
+        assert!(session.undo());
+        assert_eq!(session.buffer().text(), "ab\nab");
+        assert_eq!(session.selections(), &selections);
+        assert!(session.redo());
+        assert_eq!(session.selections(), &selections);
+        session.insert("x\r\ny\rz");
+        assert_eq!(
+            session.buffer().text(),
+            "a\u{301}x\ny\nzb\na\u{301}x\ny\nzb"
+        );
+        assert_eq!(session.selections()[0].head, EditorPosition::new(2, 1));
+        assert_eq!(session.selections()[1].head, EditorPosition::new(5, 1));
+    }
+
+    #[test]
+    fn newline_normalization_borrows_unchanged_pastes_and_preserves_blank_lines() {
+        assert!(matches!(
+            super::normalize_newlines("a\nb"),
+            std::borrow::Cow::Borrowed(_)
+        ));
+        assert_eq!(
+            super::normalize_newlines("a\r\r\nb\r\nc\rd\n"),
+            "a\n\nb\nc\nd\n"
+        );
+    }
+    #[test]
     fn buffer_replaces_cross_line_range() {
         let mut buffer = EditorBuffer::from_text("let a = 1;\nlet b = 2;");
         buffer.replace_range(
@@ -1543,6 +1481,26 @@ mod tests {
         );
 
         assert_eq!(buffer.text(), "let value = 2;");
+    }
+
+    #[test]
+    fn dense_search_preserves_grapheme_ranges() {
+        let buffer = EditorBuffer::from_text("a\u{301}a\u{301} ".repeat(20_000));
+        let matches = buffer.search("\u{301}");
+        assert_eq!(matches.len(), 40_000);
+        for (index, matched) in matches.iter().enumerate() {
+            let column = index / 2 * 3 + index % 2;
+            assert_eq!(
+                matched.range,
+                EditorPosition::new(0, column)..EditorPosition::new(0, column + 1)
+            );
+        }
+        let matches = EditorBuffer::from_text("a".repeat(100_000)).search("a");
+        assert_eq!(matches.len(), 100_000);
+        assert_eq!(
+            matches.last().expect("last match").range,
+            EditorPosition::new(0, 99_999)..EditorPosition::new(0, 100_000)
+        );
     }
 
     #[test]

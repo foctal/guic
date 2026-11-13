@@ -122,13 +122,15 @@ fn open_main(cx: &mut App) -> anyhow::Result<()> {
     let menu = owner.menu.clone();
     let status = owner.status.clone();
     let dirty = owner.dirty.clone();
-    let options = state
+    let mut options = state
         .borrow()
         .windows
         .get("main")?
         .map(|saved| saved.options(cx))
         .transpose()?
         .unwrap_or_default();
+    // Native menus require a redirected window surface on Windows.
+    options.windows_composition = gpui::WindowsCompositionMode::RedirectionBitmap;
     let handle = cx.open_window(options, |window, cx| {
         let tracking = state.borrow().track_window("main", window, cx);
         cx.global_mut::<Owner>().tasks.push(tracking);
@@ -219,14 +221,6 @@ fn run_command(command: &CommandSpec, cx: &mut App) {
     }
 }
 fn main() -> anyhow::Result<()> {
-    // GPUI 0.4's DirectComposition windows do not provide the GDI surface used
-    // by native Win32 menubars. Select its supported swap-chain fallback before
-    // initializing the platform, while respecting an explicit user override.
-    #[cfg(target_os = "windows")]
-    if std::env::var_os("GPUI_DISABLE_DIRECT_COMPOSITION").is_none() {
-        // SAFETY: this runs at startup before this program creates any threads.
-        unsafe { std::env::set_var("GPUI_DISABLE_DIRECT_COMPOSITION", "1") };
-    }
     let state = DesktopState::open(guic::native::application_identity!()?)?;
     let Instance::Primary(activation) =
         Instance::acquire(&state.paths, ActivationRequest::current()?)?

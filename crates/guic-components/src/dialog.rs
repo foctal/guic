@@ -182,7 +182,7 @@ impl RenderOnce for Dialog {
             .occlude()
             .id(self.id)
             .track_focus(&fallback)
-            .accessibility(AccessibilityProps::new(Role::Dialog).label(dialog_label))
+            .accessible(AccessibilityProps::new(Role::Dialog).label(dialog_label))
             .debug_selector(|| "guic-dialog-card".to_owned())
             .w(px(480.0))
             .max_w((window.viewport_size().width - px(32.0)).max(px(0.0)))

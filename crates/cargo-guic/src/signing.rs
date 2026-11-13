@@ -193,11 +193,18 @@ pub(crate) fn finish(
         .macos_identity
         .as_deref()
         .context("signing identity")?;
+    // Without the leading equals sign, codesign treats the requirement as a file path.
     let requirement = if identity.len() == 40 && identity.bytes().all(|b| b.is_ascii_hexdigit()) {
-        format!("anchor apple generic and certificate leaf = H\"{identity}\"")
+        format!("=anchor apple generic and certificate leaf = H\"{identity}\"")
     } else {
-        let identity = identity.replace('\\', "\\\\").replace('"', "\\\"");
-        format!("anchor apple generic and certificate leaf[subject.CN] = \"{identity}\"")
+        // Hex-encode the UTF-8 value so requirement-language quoting cannot
+        // reinterpret certificate names containing quotes or backslashes.
+        let identity: String = identity
+            .as_bytes()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        format!("=anchor apple generic and certificate leaf[subject.CN] = 0x{identity}")
     };
     runner.run(
         "codesign",
@@ -322,6 +329,46 @@ mod tests {
         assert!(validate(&config(), "macos", false).is_err());
         Ok(())
     }
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn signing_requirements_are_accepted_by_the_system_parser() -> Result<()> {
+        for identity in [
+            "Developer ID Application: Fixture (TEAMID)",
+            "Fixture \"quoted\" \\ identity",
+            "0123456789abcdef0123456789abcdef01234567",
+        ] {
+            let config = Signing {
+                code_signing: Policy::Required,
+                macos_identity: Some(identity.into()),
+                ..Default::default()
+            };
+            let mut runner = Fake::default();
+            finish(
+                &config,
+                "macos",
+                Path::new("Fixture.app"),
+                "app",
+                &mut runner,
+            )?;
+            let args = &runner.calls[0].1;
+            let index = args
+                .iter()
+                .position(|arg| arg == "-R")
+                .context("requirement argument")?;
+            let output = Command::new("/usr/bin/csreq")
+                .arg("-r")
+                .arg(&args[index + 1])
+                .arg("-t")
+                .output()?;
+            ensure!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        Ok(())
+    }
+
     #[test]
     fn notarization_acceptance_and_stapling_are_independently_verified() -> Result<()> {
         let mut runner = Fake::default();

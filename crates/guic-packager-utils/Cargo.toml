@@ -1,0 +1,24 @@
+[package]
+name = "guic-packager-utils"
+description = "Utilities for cargo-packager crates"
+version = "0.1.0"
+authors = ["CrabNebula Ltd."]
+edition = "2021"
+license = "Apache-2.0 OR MIT"
+repository.workspace = true
+rust-version.workspace = true
+readme = "README.md"
+
+[dependencies]
+ctor = { version = "1.0", default-features = false, features = ["std", "proc_macro"] }
+schemars = { version = "1", features = ["url2", "preserve_order", "derive"], optional = true }
+clap = { version = "4.5", features = ["derive"], optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+
+[features]
+default = [ "cli" ]
+cli = [ ]
+schema = [ "schemars" ]
+clap = [ "dep:clap" ]
+serde = [ "dep:serde" ]
+process-relaunch-dangerous-allow-symlink-macos = []

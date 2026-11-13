@@ -142,7 +142,7 @@ impl RenderOnce for IconButton {
         });
         let button = div()
             .id(element_id.clone())
-            .accessibility(
+            .accessible(
                 AccessibilityProps::new(Role::Button)
                     .label(accessibility_label)
                     .disabled(self.disabled),

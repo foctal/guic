@@ -81,7 +81,7 @@ impl RenderOnce for TabMenu {
             let selected = index == self.selected;
             let cell = div()
                 .id(item.id)
-                .accessibility(
+                .accessible(
                     AccessibilityProps::new(Role::Tab)
                         .label(item.label.clone())
                         .selected(selected)
