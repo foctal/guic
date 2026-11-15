@@ -202,7 +202,7 @@ impl RenderOnce for CascadeSelect {
             root.child(trigger)
         };
 
-        if self.expanded {
+        if self.expanded && !self.disabled {
             root = root.child(render_cascade_columns(
                 &self.options,
                 &self.path,
@@ -254,6 +254,10 @@ fn render_cascade_columns(
             let active = selected == Some(index);
             let mut row = div()
                 .id(format!("guic-cascade-option-{}", path_to_key(&path)))
+                .debug_selector({
+                    let key = path_to_key(&path);
+                    move || format!("guic-cascade-option-{key}")
+                })
                 .accessible(
                     AccessibilityProps::new(Role::Option)
                         .label(option.item.label.clone())

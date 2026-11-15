@@ -17,6 +17,93 @@ struct Harness {
     clicks: usize,
 }
 
+struct DisabledSelectHarness {
+    disabled: bool,
+    selections: usize,
+}
+
+impl Render for DisabledSelectHarness {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .child(
+                crate::MultiSelect::new("disabled-multi")
+                    .items(vec![SelectItem::new("one", "One")])
+                    .expanded(true)
+                    .disabled(self.disabled)
+                    .on_select(cx.listener(|this, _, _, cx| {
+                        this.selections += 1;
+                        cx.notify();
+                    })),
+            )
+            .child(
+                crate::TreeSelect::new("disabled-tree")
+                    .nodes(vec![crate::TreeSelectNode::new("one", "One")])
+                    .expanded(true)
+                    .disabled(self.disabled)
+                    .on_select(cx.listener(|this, _, _, cx| {
+                        this.selections += 1;
+                        cx.notify();
+                    })),
+            )
+            .child(
+                crate::CascadeSelect::new("disabled-cascade")
+                    .options(vec![crate::CascadeOption::new("one", "One")])
+                    .expanded(true)
+                    .disabled(self.disabled)
+                    .on_select(cx.listener(|this, _, _, cx| {
+                        this.selections += 1;
+                        cx.notify();
+                    })),
+            )
+    }
+}
+
+#[gpui::test]
+fn disabling_expanded_selects_removes_interactive_options(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        guic_core::init(cx);
+        guic_tokens::init(cx);
+        crate::init(cx);
+    });
+    let (view, cx) = cx.add_window_view(|_, _| DisabledSelectHarness {
+        disabled: false,
+        selections: 0,
+    });
+    let selectors = [
+        "guic-multi-select-item-0",
+        "guic-tree-select-node-one",
+        "guic-cascade-option-0",
+    ];
+    for selector in selectors {
+        let bounds = cx.debug_bounds(selector).expect("enabled option");
+        cx.simulate_click(bounds.center(), Modifiers::none());
+    }
+    view.update(cx, |view, cx| {
+        assert_eq!(view.selections, 3);
+        view.disabled = true;
+        cx.notify();
+    });
+    cx.run_until_parked();
+    for selector in selectors {
+        assert!(
+            cx.debug_bounds(selector).is_none(),
+            "disabled option: {selector}"
+        );
+    }
+    view.update(cx, |view, cx| {
+        view.disabled = false;
+        cx.notify();
+    });
+    cx.run_until_parked();
+    for selector in selectors {
+        let bounds = cx.debug_bounds(selector).expect("re-enabled option");
+        cx.simulate_click(bounds.center(), Modifiers::none());
+    }
+    view.update(cx, |view, _| assert_eq!(view.selections, 6));
+}
+
 impl Render for Harness {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
@@ -389,8 +476,8 @@ fn hardening_select_scrolls_selected_option_into_view(cx: &mut TestAppContext) {
         .expect("frame");
         cx.run_until_parked();
         let menu = cx
-            .debug_bounds("guic-select-menu-bottom-select")
-            .expect("menu");
+            .debug_bounds("guic-select-viewport-bottom-select")
+            .expect("scroll viewport");
         let row = cx.debug_bounds(selector).expect("selected row");
         assert!(
             row.top() >= menu.top(),
@@ -821,6 +908,62 @@ struct ModalRegressionHarness {
     underlying_clicks: usize,
     cancellations: usize,
     confirmations: usize,
+}
+
+struct ModalSelectHarness {
+    selected: Option<usize>,
+    open: bool,
+}
+
+impl Render for ModalSelectHarness {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div().size_full().child(
+            crate::Dialog::new("modal-select")
+                .open(true)
+                .title("Choose a field")
+                .content(
+                    Select::new("field-type")
+                        .items(vec![
+                            SelectItem::new("text", "Text"),
+                            SelectItem::new("password", "Password"),
+                        ])
+                        .selected(self.selected)
+                        .expanded(self.open)
+                        .overlay_priority(guic_core::OverlayPriority::MODAL + 1)
+                        .on_toggle(cx.listener(|this, open, _, cx| {
+                            this.open = *open;
+                            cx.notify();
+                        }))
+                        .on_select(cx.listener(|this, index, _, cx| {
+                            this.selected = Some(*index);
+                            cx.notify();
+                        })),
+                ),
+        )
+    }
+}
+
+#[gpui::test]
+fn select_menu_receives_clicks_above_its_containing_modal(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        guic_core::init(cx);
+        guic_tokens::init(cx);
+        crate::init(cx);
+    });
+    let view = cx.new(|_| ModalSelectHarness {
+        selected: None,
+        open: true,
+    });
+    let (_, cx) = cx.add_window_view(|window, cx| guic_core::Root::new(view.clone(), window, cx));
+    cx.simulate_resize(gpui::size(px(640.), px(480.)));
+    let option = cx
+        .debug_bounds("guic-select-item-1")
+        .expect("password option");
+    cx.simulate_click(option.center(), Modifiers::none());
+    view.update(cx, |view, _| {
+        assert_eq!(view.selected, Some(1));
+        assert!(!view.open);
+    });
 }
 impl Render for ModalRegressionHarness {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

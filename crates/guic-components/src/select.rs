@@ -62,6 +62,7 @@ pub struct Select {
     width: Option<Pixels>,
     menu_width: SelectMenuWidth,
     max_menu_height: Pixels,
+    overlay_priority: usize,
     exclusive_group: Option<SharedString>,
     items: Vec<SelectItem>,
     selected: Option<usize>,
@@ -85,6 +86,7 @@ impl Select {
             width: None,
             menu_width: SelectMenuWidth::default(),
             max_menu_height: px(320.),
+            overlay_priority: OverlayPriority::FLOATING,
             exclusive_group: Some("guic-selects".into()),
             items: Vec::new(),
             selected: None,
@@ -98,6 +100,13 @@ impl Select {
             on_toggle: None,
             on_select: None,
         }
+    }
+
+    /// Sets the portal priority, for example above a modal containing this select.
+    #[must_use]
+    pub fn overlay_priority(mut self, priority: usize) -> Self {
+        self.overlay_priority = priority;
+        self
     }
 
     /// Sets a window-scoped exclusive group. Opening requests closure of its previous member.
@@ -475,12 +484,11 @@ impl RenderOnce for Select {
                 .accessible(
                     AccessibilityProps::new(Role::ListBox).label(format!("{} options", self.id)),
                 )
-                .debug_selector(|| format!("guic-select-menu-{}", self.id))
+                .debug_selector(|| format!("guic-select-viewport-{}", self.id))
                 .overflow_y_scroll()
                 .track_scroll(&scroll_handle)
                 .rounded(px(theme.radius.md))
                 .bg(theme.background())
-                .shadow_lg()
                 .text_size(text_size)
                 .line_height(gpui::relative(1.5))
                 .flex()
@@ -561,21 +569,34 @@ impl RenderOnce for Select {
             if let Some(on_toggle) = self.on_toggle.clone() {
                 menu = menu.on_mouse_down_out(move |_, window, cx| on_toggle(&false, window, cx));
             }
+            // Keep borders outside the scroll viewport so scroll-to-item uses
+            // the same bounds as the visible option area.
+            let menu_frame = div()
+                .debug_selector(|| format!("guic-select-menu-{}", self.id))
+                .border_1()
+                .border_color(theme.border())
+                .rounded(px(theme.radius.md))
+                .bg(theme.background())
+                .shadow_lg();
             root = root.anchored_overlay(move |bounds, window, _cx| {
                 let viewport = window.viewport_size();
                 let below = (viewport.height - bounds.bottom()).max(px(0.));
                 let above = bounds.top().max(px(0.));
                 let flip = below < self.max_menu_height && above > below;
                 let available = if flip { above } else { below };
+                let content_width = (viewport.width - px(2.)).max(px(0.));
+                let trigger_width = (bounds.size.width - px(2.)).max(px(0.));
                 menu = menu
-                    .max_h(self.max_menu_height.min(available))
-                    .max_w(viewport.width);
+                    .max_h((self.max_menu_height.min(available) - px(2.)).max(px(0.)))
+                    .max_w(content_width);
                 menu = match self.menu_width {
-                    SelectMenuWidth::MatchTrigger => menu.w(bounds.size.width.min(viewport.width)),
+                    SelectMenuWidth::MatchTrigger => menu.w(trigger_width.min(content_width)),
                     SelectMenuWidth::Content => menu,
-                    SelectMenuWidth::Fixed(width) => menu.w(width.min(viewport.width)),
+                    SelectMenuWidth::Fixed(width) => {
+                        menu.w((width - px(2.)).max(px(0.)).min(content_width))
+                    }
                     SelectMenuWidth::MinTriggerWidth => {
-                        menu.min_w(bounds.size.width.min(viewport.width))
+                        menu.min_w(trigger_width.min(content_width))
                     }
                 };
                 let (anchor, position) = if flip {
@@ -587,8 +608,8 @@ impl RenderOnce for Select {
                     gpui::anchored()
                         .anchor(anchor)
                         .position(position)
-                        .child(menu),
-                    OverlayPriority::FLOATING,
+                        .child(menu_frame.child(menu)),
+                    self.overlay_priority,
                 )
             });
         }

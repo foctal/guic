@@ -207,7 +207,7 @@ impl RenderOnce for TreeSelect {
             root.child(trigger)
         };
 
-        if self.expanded {
+        if self.expanded && !self.disabled {
             let mut roving_position = (0, visible_enabled_node_count(&self.nodes));
             let mut panel = div()
                 .w_full()
