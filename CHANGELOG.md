@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### Fixed
+
+- Blink text-input carets at a fixed 500 ms interval across text, search,
+  password, and multiline fields. Restart the visible phase on edits and
+  navigation, keep it visible during IME composition, and stop the timer for
+  selections, disabled fields, focus loss, or inactive windows. Blink ticks do
+  not emit text-change events.
+- Prevent InputNumber shortcuts from changing the value during IME composition
+  or deferred input, preserve modified editing shortcuts, and leave Home/End
+  navigation to the focused text editor.
+
 ## 0.6.1 - 2026-11-15
 
 ### Added
