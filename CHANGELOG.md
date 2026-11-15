@@ -2,6 +2,34 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.6.1 - Unreleased
+
+### Added
+
+- Add `TextInput::set_password_visible()` for reveal controls that preserve
+  password accessibility and clipboard protection, and `TextInput::is_composing()`
+  to detect active composition or deferred input before submitting forms.
+- Add `Select::overlay_priority()` so menus inside modal dialogs can render
+  above the modal and receive pointer events.
+
+### Changed
+
+- Use one bullet per grapheme for password masking, including combined Unicode
+  characters.
+- Consolidate public documentation, remove obsolete verification guidance, and
+  move maintainer checks to the contributing guide.
+
+### Fixed
+
+- Center single-line input text and keep the caret visible with horizontal
+  scrolling, including aligned pointer selection and native IME coordinates.
+- Keep Select menu borders outside the scroll viewport and account for them
+  when sizing the popup and revealing the selected option.
+- Prevent CommandPalette navigation, activation, and dismissal shortcuts from
+  interfering with active IME composition or deferred input.
+- Hide expanded MultiSelect, TreeSelect, and CascadeSelect options while the
+  control is disabled so they cannot receive selection input.
+
 ## 0.6.0 - 2026-11-10
 
 ### Added
