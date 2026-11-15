@@ -16,6 +16,10 @@ Thank you for contributing to GUIC.
 ./scripts/check.sh
 ```
 
+Maintainers can run `./scripts/release-check.sh` for additional dependency-policy
+and crate-archive checks. It creates and verifies local archives but does not
+publish them.
+
 ## cargo-guic configuration schema
 
 After changing cargo-guic configuration types, regenerate the checked-in schema

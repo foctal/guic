@@ -60,4 +60,5 @@ optional WebView integration:
 ```
 
 Applications that do not enable the `webview` feature do not need WebKit at
-runtime. See [Platform Support](platform-support.md) for the validation matrix.
+runtime. See [Platform Support](platform-support.md) for platform limitations
+and CI coverage.

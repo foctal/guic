@@ -1,18 +1,10 @@
 # Packaging Native Applications
 
-The GUIC runtime does not publish, sign, notarize, or create installers.
-Application owners control those operations through their packaging workflow.
+Use the [cargo-guic CLI](cargo-guic.md) to build and package native applications.
+It supports app/DMG, NSIS/MSI/MSIX, and deb/AppImage on their native hosts.
+See the CLI guide for commands, resources, and signing configuration.
 
-The [cargo-guic CLI](cargo-guic.md) provides project planning, development builds,
-immutable build records, native packaging, resource staging and explicit signing
-operations through a cargo-packager library adapter. `build` compiles and packages;
-`bundle` packages a saved executable without recompiling. `package-trial` uses
-the same pipeline for candidate artifacts. Signing and notarization require
-explicit `--execute-signing`. See the CLI guide for commands and configuration.
-Release execution and approval remain application-owner responsibilities.
-
-cargo-guic supports app/DMG, NSIS/MSI/MSIX, and deb/AppImage on their native
-hosts. The following checklists cover application distribution. 
+The following checklists cover application distribution and installation testing.
 
 ## macOS
 
@@ -43,6 +35,3 @@ hosts. The following checklists cover application distribution.
    Flatpak with an explicit sandbox/filesystem policy.
 4. Verify both Wayland and X11 sessions where supported, desktop entries,
    icons, MIME handlers, font fallback, and clean uninstall.
-
-Run `./scripts/release-check.sh` before creating artifacts, then complete the
-manual matrix in [Platform Support](platform-support.md).

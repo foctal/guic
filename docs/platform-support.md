@@ -15,13 +15,7 @@ The [CI workflow](../.github/workflows/ci.yml) defines the exact commands.
 
 ## Linux
 
-Install the development dependencies from the repository root:
-
-```sh
-./scripts/install-linux-deps.sh
-```
-
-The helper includes WebKitGTK packages for the optional WebView integration.
-Applications without `webview` do not need WebKit at runtime. Native applications
-can use X11 or Wayland; the WebView example requires X11 or XWayland.
-See [WebView host integration](webview.md#linux-example) for details.
+Follow the [Linux installation instructions](installation.md#linux) for native
+dependencies. Native applications can use X11 or Wayland; the WebView example
+requires X11 or XWayland. See [WebView host integration](webview.md#linux-example)
+for details.
