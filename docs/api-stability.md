@@ -38,6 +38,5 @@ migration for the previous version. Undocumented internal structures are not
 persistence formats. Editor and WebView retain the experimental limitations
 listed above; this contract does not turn unvalidated behavior into a guarantee.
 
-The compatibility-preserving `accessibility` extension keeps its original
-concrete return type. New component implementations should use `accessible`,
-which also exports disabled semantics through a transparent element wrapper.
+See [Accessibility](accessibility.md) for the `accessible` extension and
+compatibility with the original `accessibility` method.

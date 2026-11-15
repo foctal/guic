@@ -229,6 +229,9 @@ impl CommandPalette {
     }
 
     fn handle_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if self.input.read(cx).is_composing() {
+            return;
+        }
         let handled = match event.keystroke.key.as_str() {
             "down" => {
                 self.move_active(1, cx);
@@ -258,7 +261,9 @@ impl CommandPalette {
     }
 
     fn handle_submit(&mut self, _: &Newline, window: &mut Window, cx: &mut Context<Self>) {
-        self.activate(window, cx);
+        if !self.input.read(cx).is_composing() {
+            self.activate(window, cx);
+        }
     }
 }
 
@@ -481,6 +486,54 @@ mod tests {
             .expect("search input should be focused");
         assert_eq!(tree["nodes"][focus]["aria"]["role"], "TextInput");
         assert_eq!(tree["nodes"][focus]["aria"]["label"], "Command search");
+    }
+
+    #[gpui::test]
+    fn composition_keys_do_not_navigate_activate_or_dismiss(cx: &mut TestAppContext) {
+        use gpui::EntityInputHandler as _;
+
+        init(cx);
+        let activated = Rc::new(RefCell::new(Vec::<SharedString>::new()));
+        let dismissed = Rc::new(RefCell::new(false));
+        let (palette, cx) = cx.add_window_view(|_, cx| {
+            CommandPalette::new("commands", cx)
+                .items(vec![
+                    CommandPaletteItem::new("save", "Save"),
+                    CommandPaletteItem::new("search", "Search"),
+                ])
+                .on_activate({
+                    let activated = activated.clone();
+                    move |item, _, _| activated.borrow_mut().push(item.id().clone())
+                })
+                .on_dismiss({
+                    let dismissed = dismissed.clone();
+                    move |_, _| *dismissed.borrow_mut() = true
+                })
+        });
+        cx.update(|window, cx| {
+            let input = palette.read(cx).input.clone();
+            palette.read(cx).focus_handle().focus(window, cx);
+            input.update(cx, |input, cx| {
+                input.replace_and_mark_text_in_range(None, "s", Some(1..1), window, cx);
+            });
+        });
+        cx.run_until_parked();
+        let window = cx.window_handle();
+        for key in ["down", "up", "enter", "escape"] {
+            cx.dispatch_keystroke(window, Keystroke::parse(key).expect("composition key"));
+            cx.update(|_, cx| assert_eq!(palette.read(cx).active_index, 0));
+            assert!(activated.borrow().is_empty());
+            assert!(!*dismissed.borrow());
+        }
+        cx.update(|window, cx| {
+            let input = palette.read(cx).input.clone();
+            input.update(cx, |input, cx| {
+                input.replace_text_in_range(None, "s", window, cx);
+            });
+        });
+        cx.dispatch_keystroke(window, Keystroke::parse("down").expect("down"));
+        cx.dispatch_keystroke(window, Keystroke::parse("enter").expect("enter"));
+        assert_eq!(activated.borrow().as_slice(), ["search"]);
     }
 
     #[gpui::test]

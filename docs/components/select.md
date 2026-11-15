@@ -27,6 +27,10 @@ needed, stays within the viewport, and scrolls to the selected option.
 `width` sets the trigger width; `menu_width` accepts `MatchTrigger`, `Content`,
 `Fixed(Pixels)`, or `MinTriggerWidth`. `max_menu_height` caps the popup height.
 
+Menus use `guic_core::OverlayPriority::FLOATING` by default. For a select inside
+a modal dialog, set `.overlay_priority(guic_core::OverlayPriority::MODAL + 1)`
+so its menu paints above the modal and receives pointer events.
+
 Selects share a window-scoped exclusive group by default. Opening one requests
 closure of the previous member through its callback. Use `exclusive_group(None)`
 to opt out. Outside clicks and selection also request closure through `on_toggle`;

@@ -208,7 +208,7 @@ impl RenderOnce for MultiSelect {
             root.child(trigger)
         };
 
-        if self.expanded {
+        if self.expanded && !self.disabled {
             let mut menu = div()
                 .id(format!("{}-menu", self.id))
                 .accessible(

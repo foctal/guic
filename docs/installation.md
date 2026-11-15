@@ -4,7 +4,7 @@ GUIC requires Rust 1.95 or newer. Add the toolkit to the application manifest:
 
 ```toml
 [dependencies]
-guic = "0.6.0"
+guic = "0.6.1"
 ```
 
 The default `application` feature selects the native platform backend.
@@ -21,11 +21,11 @@ Applications can also supply a platform backend and construct `Root` themselves.
 ## Explicit runtime dependencies
 
 Applications importing GPUI directly should use the versions below with GUIC
-0.6.0. The runtime family is pinned to 0.6.2; its version differs from GUIC's.
+0.6.1. The runtime family is pinned to 0.6.2; its version differs from GUIC's.
 
 ```toml
 [dependencies]
-guic = "0.6.0"
+guic = "0.6.1"
 gpui = { package = "guic-gpui", version = "=0.6.2" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -60,4 +60,5 @@ optional WebView integration:
 ```
 
 Applications that do not enable the `webview` feature do not need WebKit at
-runtime. See [Platform Support](platform-support.md) for the validation matrix.
+runtime. See [Platform Support](platform-support.md) for platform limitations
+and CI coverage.

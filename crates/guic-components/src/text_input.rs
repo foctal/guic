@@ -87,6 +87,8 @@ pub struct TextInput {
     input_generation: u64,
     id: SharedString,
     kind: TextInputKind,
+    password_visible: bool,
+    scroll_x: Pixels,
     focus_handle: FocusHandle,
     value: String,
     placeholder: SharedString,
@@ -194,6 +196,8 @@ impl TextInput {
             input_generation: 0,
             id: id.into(),
             kind,
+            password_visible: false,
+            scroll_x: px(0.),
             focus_handle: cx.focus_handle().tab_stop(true),
             value: String::new(),
             placeholder: match kind {
@@ -321,6 +325,18 @@ impl TextInput {
     #[must_use]
     pub fn current_value(&self) -> &str {
         &self.value
+    }
+
+    /// Reveals glyphs while preserving password accessibility and clipboard protection.
+    pub fn set_password_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
+        self.password_visible = visible;
+        self.last_layout = None;
+        cx.notify();
+    }
+
+    /// Whether native composition or deferred input is still in progress.
+    pub fn is_composing(&self) -> bool {
+        self.marked_range.is_some() || self.pending.is_some()
     }
 
     fn text_metrics(&self, theme: &Theme) -> (Pixels, Pixels, Pixels, usize) {
@@ -646,7 +662,10 @@ impl TextInput {
             return self.value.len();
         }
 
-        let local = point(position.x - bounds.left(), position.y - bounds.top());
+        let local = point(
+            position.x - bounds.left() + self.scroll_x,
+            position.y - bounds.top(),
+        );
         let display_index = layout.closest_display_index_for_position(local);
         self.display_to_actual_offset(display_index)
     }
@@ -715,7 +734,10 @@ impl TextInput {
 
     fn display_text(&self) -> SharedString {
         match self.kind {
-            TextInputKind::Password => "*".repeat(self.value.graphemes(true).count()).into(),
+            TextInputKind::Password if !self.password_visible => {
+                "•".repeat(self.value.graphemes(true).count()).into()
+            }
+            TextInputKind::Password => self.value.clone().into(),
             TextInputKind::TextArea => self.value.clone().into(),
             TextInputKind::Text | TextInputKind::Search => self.value.clone().into(),
         }
@@ -723,10 +745,10 @@ impl TextInput {
 
     fn display_to_actual_offset(&self, display_offset: usize) -> usize {
         match self.kind {
-            TextInputKind::Password => self
+            TextInputKind::Password if !self.password_visible => self
                 .value
                 .grapheme_indices(true)
-                .nth(display_offset)
+                .nth(display_offset / "•".len())
                 .map_or(self.value.len(), |(index, _)| index),
             _ => display_offset.min(self.value.len()),
         }
@@ -734,11 +756,13 @@ impl TextInput {
 
     fn actual_to_display_offset(&self, actual_offset: usize) -> usize {
         match self.kind {
-            TextInputKind::Password => self
-                .value
-                .grapheme_indices(true)
-                .take_while(|(index, _)| *index < actual_offset)
-                .count(),
+            TextInputKind::Password if !self.password_visible => {
+                self.value
+                    .grapheme_indices(true)
+                    .take_while(|(index, _)| *index < actual_offset)
+                    .count()
+                    * "•".len()
+            }
             _ => actual_offset.min(self.value.len()),
         }
     }
@@ -843,7 +867,7 @@ impl TextInput {
     }
 
     fn computed_line_height(&self, text_size: Pixels) -> Pixels {
-        text_size + px(10.0)
+        text_size + px(6.0)
     }
 }
 
@@ -1174,9 +1198,12 @@ impl EntityInputHandler for TextInput {
         let start = last_layout.display_position_for_index(display_start)?;
         let end = last_layout.display_position_for_index(display_end)?;
         Some(Bounds::from_corners(
-            point(bounds.left() + start.x, bounds.top() + start.y),
             point(
-                bounds.left() + end.x,
+                bounds.left() + start.x - self.scroll_x,
+                bounds.top() + start.y,
+            ),
+            point(
+                bounds.left() + end.x - self.scroll_x,
                 bounds.top() + end.y + last_layout.line_height,
             ),
         ))
@@ -1190,7 +1217,8 @@ impl EntityInputHandler for TextInput {
     ) -> Option<usize> {
         let bounds = self.last_bounds?;
         let last_layout = self.last_layout.as_ref()?;
-        let local = bounds.localize(&point)?;
+        let mut local = bounds.localize(&point)?;
+        local.x += self.scroll_x;
         if let Some(pending) = &self.pending {
             return Some(pending.units(&pending.selected).end);
         }
@@ -1205,6 +1233,7 @@ struct TextInputElement {
 }
 
 struct PrepaintState {
+    scroll_x: Pixels,
     layout: Option<TextLayoutState>,
     cursor: Option<PaintQuad>,
     selection: Vec<PaintQuad>,
@@ -1329,6 +1358,26 @@ impl Element for TextInputElement {
             .map(|(range, reversed)| if *reversed { range.start } else { range.end })
             .unwrap_or_else(|| input.cursor_offset());
         let cursor_index = input.actual_to_display_offset(cursor_offset);
+        let cursor_x = layout
+            .display_position_for_index(cursor_index)
+            .map_or(px(0.), |p| p.x);
+        let available = (bounds.size.width - px(2.)).max(px(0.));
+        let scroll_x = if input.kind == TextInputKind::TextArea {
+            px(0.)
+        } else {
+            // Keep the insertion point visible without moving text unnecessarily.
+            let end_x = layout
+                .lines
+                .first()
+                .and_then(|_| layout.display_position_for_index(layout.line_end_index(0)))
+                .map_or(px(0.), |p| p.x);
+            input
+                .scroll_x
+                .min(cursor_x)
+                .max(cursor_x - available)
+                .min((end_x - available).max(px(0.)))
+                .max(px(0.))
+        };
         let selected_start = input.actual_to_display_offset(preview_selection.start);
         let selected_end = input.actual_to_display_offset(preview_selection.end);
         let (selection, cursor) = if preview_selection.is_empty() {
@@ -1339,7 +1388,10 @@ impl Element for TextInputElement {
                 Vec::new(),
                 Some(fill(
                     Bounds::new(
-                        point(bounds.left() + cursor_pos.x, bounds.top() + cursor_pos.y),
+                        point(
+                            bounds.left() + cursor_pos.x - scroll_x,
+                            bounds.top() + cursor_pos.y,
+                        ),
                         gpui::size(px(2.0), line_height),
                     ),
                     theme.primary(),
@@ -1365,9 +1417,12 @@ impl Element for TextInputElement {
 
                 quads.push(fill(
                     Bounds::from_corners(
-                        point(bounds.left() + start_pos.x, bounds.top() + start_pos.y),
                         point(
-                            bounds.left() + end_pos.x.max(start_pos.x + px(2.0)),
+                            bounds.left() + start_pos.x - scroll_x,
+                            bounds.top() + start_pos.y,
+                        ),
+                        point(
+                            bounds.left() + end_pos.x.max(start_pos.x + px(2.0)) - scroll_x,
                             bounds.top() + start_pos.y + line_height,
                         ),
                     ),
@@ -1378,6 +1433,7 @@ impl Element for TextInputElement {
         };
 
         PrepaintState {
+            scroll_x,
             layout: Some(layout),
             cursor,
             selection,
@@ -1418,7 +1474,10 @@ impl Element for TextInputElement {
         let mut y_offset = px(0.0);
         for line in &layout.lines {
             let _ = line.paint(
-                point(bounds.origin.x, bounds.origin.y + y_offset),
+                point(
+                    bounds.origin.x - prepaint.scroll_x,
+                    bounds.origin.y + y_offset,
+                ),
                 layout.line_height,
                 TextAlign::Left,
                 Some(bounds),
@@ -1436,6 +1495,7 @@ impl Element for TextInputElement {
         }
 
         self.input.update(cx, |input, _cx| {
+            input.scroll_x = prepaint.scroll_x;
             input.last_layout = Some(layout);
             input.last_bounds = Some(bounds);
         });
@@ -1537,7 +1597,7 @@ impl Render for TextInput {
 
         if let Some(pending) = &self.pending {
             let preview = if self.kind == TextInputKind::Password {
-                "*".repeat(pending.text.graphemes(true).take(64).count())
+                "•".repeat(pending.text.graphemes(true).take(64).count())
             } else {
                 pending.text.chars().take(64).collect()
             };
@@ -1566,6 +1626,10 @@ impl Render for TextInput {
 
         let input_element = div()
             .flex_1()
+            .min_w_0()
+            .flex()
+            .items_center()
+            .overflow_hidden()
             .min_h(line_height * visible_lines as f32)
             .child(TextInputElement {
                 input: cx.entity(),
@@ -1682,6 +1746,80 @@ mod tests {
             guic_tokens::init(cx);
             crate::init(cx);
         });
+    }
+
+    #[gpui::test]
+    fn password_bullets_map_unicode_and_reveal_keeps_clipboard_protected(cx: &mut TestAppContext) {
+        init(cx);
+        let secret = "a日本🙂e\u{301}";
+        let (input, visual) =
+            cx.add_window_view(|_, cx| TextInput::password("bullet-input", cx).value(secret));
+        visual.update(|window, cx| {
+            input.update(cx, |input, cx| {
+                assert_eq!(input.display_text().as_ref(), "•••••");
+                for (index, (offset, _)) in secret.grapheme_indices(true).enumerate() {
+                    assert_eq!(input.actual_to_display_offset(offset), index * 3);
+                    assert_eq!(input.display_to_actual_offset(index * 3), offset);
+                }
+                assert_eq!(input.display_to_actual_offset(15), secret.len());
+                input.set_password_visible(true, cx);
+                assert_eq!(input.display_text().as_ref(), secret);
+                assert_eq!(input.actual_to_display_offset(4), 4);
+                assert_eq!(input.display_to_actual_offset(4), 4);
+                cx.write_to_clipboard(ClipboardItem::new_string("unchanged".into()));
+                input.selected_range = 0..secret.len();
+                input.copy(&Copy, window, cx);
+                assert_eq!(
+                    cx.read_from_clipboard()
+                        .expect("clipboard item")
+                        .text()
+                        .expect("clipboard text"),
+                    "unchanged"
+                );
+                assert_eq!(input.kind, TextInputKind::Password);
+            });
+        });
+    }
+
+    #[gpui::test]
+    fn long_password_keeps_caret_visible_and_pointer_offsets_aligned(cx: &mut TestAppContext) {
+        init(cx);
+        let (input, visual) = cx.add_window_view(|_, cx| {
+            TextInput::password("long-password", cx).value("a".repeat(300))
+        });
+        visual.simulate_resize(gpui::size(px(240.), px(80.)));
+        visual.run_until_parked();
+        visual.update(|_, cx| {
+            let input = input.read(cx);
+            let bounds = input.last_bounds.expect("input bounds");
+            let layout = input.last_layout.as_ref().expect("text layout");
+            let position = layout
+                .display_position_for_index(input.actual_to_display_offset(input.cursor_offset()))
+                .expect("caret position");
+            assert!(input.scroll_x > px(0.));
+            assert!(position.x - input.scroll_x <= bounds.size.width - px(1.));
+            assert_eq!(
+                input.index_for_mouse_position(point(bounds.right() - px(1.), bounds.center().y)),
+                300
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn small_single_line_input_centers_its_text_box(cx: &mut TestAppContext) {
+        init(cx);
+        let (input, visual) = cx.add_window_view(|_, cx| {
+            TextInput::new("centered-input", cx)
+                .size(ComponentSize::Small)
+                .value("Sample")
+        });
+        visual.run_until_parked();
+        let field = visual
+            .debug_bounds("guic-text-input-centered-input")
+            .expect("field bounds");
+        let text = visual.read(|cx| input.read(cx).last_bounds.expect("text bounds"));
+        assert!((f32::from(text.center().y - field.center().y)).abs() < 0.6);
+        assert!(text.size.height < field.size.height);
     }
 
     #[gpui::test]

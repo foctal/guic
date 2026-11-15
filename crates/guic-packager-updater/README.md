@@ -37,15 +37,12 @@ and restart behavior must be tested with the application's actual distribution.
 
 ## Migration from cargo-packager-updater 0.2.3
 
-`guic::updater` and the update feed format are retained. The fork uses the supplied
-newer upstream API: `Config` adds `dangerous_insecure_transport_protocol`.
+`guic::updater` and the update feed format are retained. Compared with upstream
+0.2.3, `Config` adds `dangerous_insecure_transport_protocol`.
 Existing struct literals should add this field as `false`, or use
 `..Default::default()`. The re-exported HTTP client is now reqwest 0.13.
 Types from the upstream crate and this fork are not interchangeable. Import
 updater types consistently through `guic::updater` or `guic_packager_updater`.
-
-The macOS authorization-dialog test is ignored by default and requires an
-interactive desktop. It uses a temporary application bundle.
 
 See [UPSTREAM.md](UPSTREAM.md) for provenance. Licensed under Apache-2.0 OR MIT.
 
