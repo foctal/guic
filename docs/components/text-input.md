@@ -60,12 +60,17 @@ cx.bind_keys([gpui::KeyBinding::new(
 
 Single-line inputs propagate `Newline` so a containing command palette can
 handle submission. Multiline inputs insert a newline.
+Check `is_composing()` before submitting a form: native composition or deferred
+input may still be in progress when the action reaches the containing view.
+
+Single-line fields center their text vertically and scroll horizontally to keep
+the caret visible. Pointer selection and native IME coordinates follow that
+scroll offset.
 
 Clipboard text is acquired asynchronously. Input and history commands received
 while a read is pending replay in order, and clicks show a selection preview
-whose offsets are rebased through the preceding edits. Native composition uses
-a small temporary context until the paste completes; its committed text remains
-one history entry. Empty clipboard reads do not erase selections. `set_value`
-and disabling the field cancel pending input so stale clipboard results cannot
-replace application-owned state. Text storage, shaping, and history snapshots
-remain synchronous; use `CodeEditor` for large documents.
+that follows queued edits. Each committed composition remains one history entry.
+Empty clipboard reads do not erase selections. `set_value` and disabling the
+field cancel pending input so stale clipboard results cannot replace
+application-owned state. Use [CodeEditor](code-editor.md) for large documents;
+TextInput's text storage, shaping, and history snapshots remain synchronous.

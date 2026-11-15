@@ -26,6 +26,9 @@ and `Escape` requests dismissal. The application should register the same
 stable identifiers with `guic_core::CommandRouter` so menus, shortcuts, and the
 palette share one command implementation.
 
+While the search input has an active IME composition or deferred input, these
+keys do not navigate commands, activate a command, or dismiss the palette.
+
 Results use a scrollable viewport capped at 360 logical pixels and reduced for
 short windows. Rows keep their content height, including wrapped descriptions;
 arrow navigation reveals the active row and changing the query returns to the
