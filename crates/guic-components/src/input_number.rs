@@ -1,7 +1,8 @@
 use crate::{ButtonVariant, ComponentSize, IconButton, TextInput};
 use gpui::{
-    App, FocusHandle, InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _,
-    RenderOnce, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div, px,
+    App, FocusHandle, Focusable as _, InteractiveElement as _, IntoElement, KeyDownEvent,
+    ParentElement as _, RenderOnce, SharedString, StatefulInteractiveElement as _, Styled as _,
+    Window, div, px,
 };
 use guic_core::{AccessibilityElementExt as _, AccessibilityProps, Role};
 use guic_icons::IconName;
@@ -254,7 +255,7 @@ impl RenderOnce for InputNumber {
             .gap_2()
             .text_size(text_size)
             .text_color(theme.foreground())
-            .child(div().flex_1().min_w_0().child(input))
+            .child(div().flex_1().min_w_0().child(input.clone()))
             .children(self.suffix.clone().map(|suffix| {
                 div()
                     .debug_selector(|| format!("guic-input-number-suffix-{}", self.id))
@@ -334,6 +335,22 @@ impl RenderOnce for InputNumber {
             );
             root = root.key_context("GuicInputNumber").capture_key_down(
                 move |event: &KeyDownEvent, window, cx| {
+                    let modifiers = event.keystroke.modifiers;
+                    let input = input.read(cx);
+                    if input.is_composing()
+                        || modifiers.shift
+                        || modifiers.control
+                        || modifiers.alt
+                        || modifiers.platform
+                    {
+                        return;
+                    }
+                    // Home and End belong to the text editor while it has focus.
+                    if matches!(event.keystroke.key.as_str(), "home" | "end")
+                        && input.focus_handle(cx).is_focused(window)
+                    {
+                        return;
+                    }
                     let next = match event.keystroke.key.as_str() {
                         "up" => Some((value + step).clamp(min, max)),
                         "down" => Some((value - step).clamp(min, max)),
@@ -400,15 +417,17 @@ mod tests {
 
 #[cfg(test)]
 mod interaction_tests {
-    use super::InputNumber;
+    use super::{InputNumber, NumberEditor};
     use gpui::{
-        AppContext as _, Context, FocusHandle, Keystroke, Modifiers, ParentElement as _, Render,
-        Styled as _, TestAppContext, VisualContext as _, Window, div, px,
+        AppContext as _, Context, Entity, EntityInputHandler as _, FocusHandle, IntoElement as _,
+        Keystroke, Modifiers, ParentElement as _, Render, RenderOnce as _, Styled as _,
+        TestAppContext, VisualContext as _, Window, div, px,
     };
 
     struct InputNumberHarness {
         value: f64,
         focus_handle: FocusHandle,
+        input: Option<Entity<crate::TextInput>>,
     }
 
     impl InputNumberHarness {
@@ -416,6 +435,7 @@ mod interaction_tests {
             Self {
                 value: 5.0,
                 focus_handle: cx.focus_handle(),
+                input: None,
             }
         }
     }
@@ -426,18 +446,24 @@ mod interaction_tests {
             _window: &mut Window,
             cx: &mut Context<Self>,
         ) -> impl gpui::IntoElement {
-            div().size_full().p_4().child(
-                InputNumber::new("qty")
-                    .value(self.value)
-                    .range(0.0, 10.0)
-                    .step(2.0)
-                    .suffix("items")
-                    .focusable(self.focus_handle.clone())
-                    .on_change(cx.listener(|this, value: &f64, _, cx| {
-                        this.value = *value;
-                        cx.notify();
-                    })),
-            )
+            let number = InputNumber::new("qty")
+                .value(self.value)
+                .range(0.0, 10.0)
+                .step(2.0)
+                .suffix("items")
+                .focusable(self.focus_handle.clone())
+                .on_change(cx.listener(|this, value: &f64, _, cx| {
+                    this.value = *value;
+                    cx.notify();
+                }))
+                .render(_window, cx)
+                .into_any_element();
+            let editor: Entity<NumberEditor> =
+                _window.use_keyed_state("qty-number-editor".to_owned(), cx, |_, _| {
+                    panic!("The numeric editor must already exist")
+                });
+            self.input = Some(editor.read(cx).input.clone());
+            div().size_full().p_4().child(number)
         }
     }
 
@@ -464,6 +490,60 @@ mod interaction_tests {
                     cx.notify();
                 }))
         }
+    }
+
+    #[gpui::test]
+    fn text_navigation_does_not_change_the_number(cx: &mut TestAppContext) {
+        init(cx);
+        let (view, cx) = cx.add_window_view(|_, cx| InputNumberHarness::new(cx));
+        let bounds = cx
+            .debug_bounds("guic-text-input-number-value")
+            .expect("editor");
+        cx.simulate_click(bounds.center(), Modifiers::none());
+        let window = cx.window_handle();
+        for key in [
+            "home",
+            "end",
+            "shift-home",
+            "shift-end",
+            "ctrl-up",
+            "alt-down",
+        ] {
+            cx.dispatch_keystroke(window, Keystroke::parse(key).expect("navigation key"));
+            view.read_with(cx, |view, _| assert_eq!(view.value, 5.0, "{key}"));
+        }
+    }
+
+    #[gpui::test]
+    fn composition_keys_do_not_change_the_number(cx: &mut TestAppContext) {
+        init(cx);
+        let (view, cx) = cx.add_window_view(|_, cx| InputNumberHarness::new(cx));
+        let bounds = cx
+            .debug_bounds("guic-text-input-number-value")
+            .expect("editor");
+        cx.simulate_click(bounds.center(), Modifiers::none());
+        cx.update(|window, cx| {
+            let input = view.read(cx).input.clone().expect("editor");
+            input.update(cx, |input, cx| {
+                input.replace_and_mark_text_in_range(None, "x", Some(1..1), window, cx);
+            });
+        });
+        let window = cx.window_handle();
+        for key in ["up", "down", "home", "end"] {
+            cx.dispatch_keystroke(window, Keystroke::parse(key).expect("composition key"));
+            view.read_with(cx, |view, cx| {
+                assert_eq!(view.value, 5.0, "{key}");
+                assert!(view.input.as_ref().expect("editor").read(cx).is_composing());
+            });
+        }
+        cx.update(|window, cx| {
+            let input = view.read(cx).input.clone().expect("editor");
+            input.update(cx, |input, cx| {
+                input.replace_text_in_range(None, "", window, cx);
+            });
+        });
+        cx.dispatch_keystroke(window, Keystroke::parse("up").expect("increment"));
+        view.read_with(cx, |view, _| assert_eq!(view.value, 7.0));
     }
 
     #[gpui::test]
