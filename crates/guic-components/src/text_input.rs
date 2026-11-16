@@ -107,7 +107,13 @@ pub struct TextInput {
     last_bounds: Option<Bounds<Pixels>>,
     is_selecting: bool,
     on_change: Option<TextChangeHandler>,
+    caret_visible: bool,
+    caret_task: Option<gpui::Task<()>>,
+    caret_subscriptions: Vec<gpui::Subscription>,
 }
+
+// Match the conventional native insertion-point cadence: one full cycle per second.
+const CARET_BLINK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 
 // Bound retained text as well as the number of edits. Large inputs must not
 // multiply their memory use by the full snapshot count.
@@ -221,7 +227,69 @@ impl TextInput {
             last_bounds: None,
             is_selecting: false,
             on_change: None,
+            caret_visible: true,
+            caret_task: None,
+            caret_subscriptions: Vec::new(),
         }
+    }
+
+    fn reset_caret(&mut self) {
+        self.caret_task = None;
+        self.caret_visible = true;
+    }
+
+    fn should_blink_caret(&self, window: &Window) -> bool {
+        window.is_window_active()
+            && self.focus_handle.is_focused(window)
+            && !self.disabled
+            && self.selected_range.is_empty()
+            && !self.is_composing()
+    }
+
+    fn update_caret(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.caret_subscriptions.is_empty() {
+            self.caret_subscriptions = vec![
+                cx.on_focus(&self.focus_handle, window, |input, _, cx| {
+                    input.reset_caret();
+                    cx.notify();
+                }),
+                cx.on_blur(&self.focus_handle, window, |input, _, cx| {
+                    input.reset_caret();
+                    cx.notify();
+                }),
+                cx.observe_window_activation(window, |input, _, cx| {
+                    input.reset_caret();
+                    cx.notify();
+                }),
+            ];
+        }
+        if !self.should_blink_caret(window) {
+            self.reset_caret();
+            return;
+        }
+        if self.caret_task.is_some() {
+            return;
+        }
+        self.caret_task = Some(cx.spawn_in(window, async move |entity, cx| {
+            loop {
+                cx.background_executor().timer(CARET_BLINK_INTERVAL).await;
+                let active = entity
+                    .update_in(cx, |input, window, cx| {
+                        if !input.should_blink_caret(window) {
+                            input.reset_caret();
+                            cx.notify();
+                            return false;
+                        }
+                        input.caret_visible = !input.caret_visible;
+                        cx.notify();
+                        true
+                    })
+                    .unwrap_or(false);
+                if !active {
+                    break;
+                }
+            }
+        }));
     }
 
     /// Replaces the placeholder text.
@@ -255,6 +323,7 @@ impl TextInput {
     }
 
     fn reset_value(&mut self, value: String) {
+        self.reset_caret();
         self.cancel_pending_input();
         self.value = self.normalize_inserted_text(&value);
         let cursor = self.value.len();
@@ -297,6 +366,7 @@ impl TextInput {
     /// selection. Programmatic updates through [`Self::set_value`] remain allowed.
     pub fn set_disabled(&mut self, disabled: bool, cx: &mut Context<Self>) {
         if self.disabled != disabled {
+            self.reset_caret();
             if disabled {
                 self.cancel_pending_input();
                 self.finish_composition();
@@ -329,6 +399,7 @@ impl TextInput {
 
     /// Reveals glyphs while preserving password accessibility and clipboard protection.
     pub fn set_password_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
+        self.reset_caret();
         self.password_visible = visible;
         self.last_layout = None;
         cx.notify();
@@ -630,6 +701,7 @@ impl TextInput {
     }
 
     fn move_to(&mut self, offset: usize, cx: &mut Context<Self>) {
+        self.reset_caret();
         if self.queue_pointer(offset..offset, false, cx) {
             return;
         }
@@ -671,6 +743,7 @@ impl TextInput {
     }
 
     fn select_to(&mut self, offset: usize, cx: &mut Context<Self>) {
+        self.reset_caret();
         if let Some(pending) = self.pending.as_ref().filter(|pending| !pending.replaying) {
             let (range, reversed) = pending
                 .pointer
@@ -810,6 +883,7 @@ impl TextInput {
     }
 
     fn restore(&mut self, snapshot: InputSnapshot, window: &mut Window, cx: &mut Context<Self>) {
+        self.reset_caret();
         if let Some(pending) = &mut self.pending {
             for (range, inserted) in snapshot.inverse_edits.iter().rev() {
                 pending.rebase(range, *inserted);
@@ -990,6 +1064,7 @@ impl EntityInputHandler for TextInput {
     }
 
     fn unmark_text(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.reset_caret();
         if self.pending.is_some() {
             self.commit_pending_text();
             self.drain_pending_input(_window, cx);
@@ -1021,6 +1096,7 @@ impl EntityInputHandler for TextInput {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.reset_caret();
         if self.disabled {
             return;
         }
@@ -1042,6 +1118,7 @@ impl EntityInputHandler for TextInput {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.reset_caret();
         if self.disabled {
             return;
         }
@@ -1100,6 +1177,7 @@ impl EntityInputHandler for TextInput {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.reset_caret();
         if self.disabled {
             return;
         }
@@ -1450,9 +1528,13 @@ impl Element for TextInputElement {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let (focus_handle, disabled) = {
+        let (focus_handle, disabled, caret_visible) = {
             let input = self.input.read(cx);
-            (input.focus_handle.clone(), input.disabled)
+            (
+                input.focus_handle.clone(),
+                input.disabled,
+                input.caret_visible,
+            )
         };
 
         if !disabled {
@@ -1488,6 +1570,8 @@ impl Element for TextInputElement {
         }
 
         if focus_handle.is_focused(window)
+            && window.is_window_active()
+            && caret_visible
             && !disabled
             && let Some(cursor) = prepaint.cursor.take()
         {
@@ -1504,6 +1588,7 @@ impl Element for TextInputElement {
 
 impl Render for TextInput {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.update_caret(_window, cx);
         let theme = Theme::global(cx);
         let (height, padding_x, text_size, visible_lines) = self.text_metrics(theme);
         let line_height = self.computed_line_height(text_size);
@@ -1746,6 +1831,163 @@ mod tests {
             guic_tokens::init(cx);
             crate::init(cx);
         });
+    }
+
+    fn draw_caret_frame(cx: &mut gpui::VisualTestContext) {
+        // Test windows do not produce display-link frames automatically.
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn caret_blinks_in_all_input_kinds_without_emitting_edits(cx: &mut TestAppContext) {
+        init(cx);
+        for kind in [
+            TextInputKind::Text,
+            TextInputKind::Search,
+            TextInputKind::Password,
+            TextInputKind::TextArea,
+        ] {
+            let changes = Rc::new(std::cell::Cell::new(0));
+            let observed = changes.clone();
+            let (input, cx) = cx.add_window_view(|_, cx| {
+                TextInput::with_kind("blink", kind, cx)
+                    .value("sample")
+                    .on_change(move |_, _, _| observed.set(observed.get() + 1))
+            });
+            cx.update(|window, cx| {
+                window.activate_window();
+                input.read(cx).focus_handle.clone().focus(window, cx);
+            });
+            draw_caret_frame(cx);
+            assert!(input.read_with(cx, |input, _| input.caret_visible));
+            cx.executor()
+                .advance_clock(std::time::Duration::from_millis(499));
+            draw_caret_frame(cx);
+            assert!(input.read_with(cx, |input, _| input.caret_visible));
+            cx.executor()
+                .advance_clock(std::time::Duration::from_millis(1));
+            draw_caret_frame(cx);
+            assert!(!input.read_with(cx, |input, _| input.caret_visible));
+            cx.executor().advance_clock(CARET_BLINK_INTERVAL);
+            draw_caret_frame(cx);
+            assert!(input.read_with(cx, |input, _| input.caret_visible));
+            assert_eq!(
+                input.read_with(cx, |input, _| input.value.clone()),
+                "sample"
+            );
+            assert_eq!(changes.get(), 0, "Blinking must never emit a text edit");
+        }
+    }
+
+    #[gpui::test]
+    fn caret_resets_after_edit_and_navigation_and_pauses_for_ime(cx: &mut TestAppContext) {
+        init(cx);
+        let (input, cx) = cx.add_window_view(|_, cx| TextInput::new("blink-edit", cx).value("abc"));
+        cx.update(|window, cx| {
+            window.activate_window();
+            input.read(cx).focus_handle.clone().focus(window, cx);
+        });
+        draw_caret_frame(cx);
+        cx.executor().advance_clock(CARET_BLINK_INTERVAL);
+        draw_caret_frame(cx);
+        assert!(!input.read_with(cx, |input, _| input.caret_visible));
+        cx.update(|window, cx| {
+            input.update(cx, |input, cx| {
+                input.replace_text_in_range(None, "d", window, cx);
+                assert!(input.caret_visible);
+            })
+        });
+        draw_caret_frame(cx);
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(400));
+        draw_caret_frame(cx);
+        assert!(input.read_with(cx, |input, _| input.caret_visible));
+        cx.update(|window, cx| input.update(cx, |input, cx| input.left(&Left, window, cx)));
+        draw_caret_frame(cx);
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(100));
+        draw_caret_frame(cx);
+        assert!(
+            input.read_with(cx, |input, _| input.caret_visible),
+            "Navigation restarts the full interval"
+        );
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(400));
+        draw_caret_frame(cx);
+        assert!(!input.read_with(cx, |input, _| input.caret_visible));
+        cx.update(|window, cx| {
+            input.update(cx, |input, cx| {
+                input.replace_and_mark_text_in_range(None, "日本", Some(2..2), window, cx);
+            })
+        });
+        draw_caret_frame(cx);
+        cx.executor()
+            .advance_clock(std::time::Duration::from_secs(2));
+        draw_caret_frame(cx);
+        input.read_with(cx, |input, _| {
+            assert!(input.caret_visible);
+            assert!(
+                input.caret_task.is_none(),
+                "Composition must not wake a blink timer"
+            );
+        });
+        cx.update(|window, cx| input.update(cx, |input, cx| input.unmark_text(window, cx)));
+        draw_caret_frame(cx);
+        cx.executor().advance_clock(CARET_BLINK_INTERVAL);
+        draw_caret_frame(cx);
+        assert!(!input.read_with(cx, |input, _| input.caret_visible));
+    }
+
+    #[gpui::test]
+    fn caret_timer_stops_on_selection_disable_and_blur(cx: &mut TestAppContext) {
+        init(cx);
+        let (input, cx) =
+            cx.add_window_view(|_, cx| TextInput::new("blink-focus", cx).value("abc"));
+        cx.update(|window, cx| {
+            window.activate_window();
+            input.read(cx).focus_handle.clone().focus(window, cx);
+        });
+        draw_caret_frame(cx);
+        assert!(input.read_with(cx, |input, _| input.caret_task.is_some()));
+        cx.update(|window, cx| {
+            input.update(cx, |input, cx| input.select_all(&SelectAll, window, cx))
+        });
+        draw_caret_frame(cx);
+        assert!(input.read_with(cx, |input, _| input.caret_task.is_none()));
+        cx.update(|_, cx| {
+            input.update(cx, |input, cx| {
+                input.move_to(0, cx);
+                input.set_disabled(true, cx);
+            })
+        });
+        draw_caret_frame(cx);
+        assert!(input.read_with(cx, |input, _| input.caret_task.is_none()));
+        cx.update(|_, cx| input.update(cx, |input, cx| input.set_disabled(false, cx)));
+        draw_caret_frame(cx);
+        assert!(input.read_with(cx, |input, _| input.caret_task.is_some()));
+        cx.update(|window, _| window.blur());
+        draw_caret_frame(cx);
+        input.read_with(cx, |input, _| {
+            assert!(input.caret_task.is_none());
+            assert!(input.caret_visible);
+        });
+        cx.update(|window, cx| input.read(cx).focus_handle.clone().focus(window, cx));
+        draw_caret_frame(cx);
+        assert!(input.read_with(cx, |input, _| input.caret_task.is_some()));
+        assert!(input.read_with(cx, |input, _| input.caret_visible));
+        cx.deactivate_window();
+        draw_caret_frame(cx);
+        assert!(input.read_with(cx, |input, _| input.caret_task.is_none()));
+        cx.executor()
+            .advance_clock(std::time::Duration::from_secs(2));
+        draw_caret_frame(cx);
+        assert!(input.read_with(cx, |input, _| input.caret_task.is_none()));
+        cx.update(|window, _| window.activate_window());
+        draw_caret_frame(cx);
+        assert!(input.read_with(cx, |input, _| input.caret_task.is_some()));
+        assert!(input.read_with(cx, |input, _| input.caret_visible));
     }
 
     #[gpui::test]

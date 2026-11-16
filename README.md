@@ -20,7 +20,7 @@ GUIC uses `guic-gpui`. A single dependency provides the toolkit and native backe
 
 ```toml
 [dependencies]
-guic = "0.6.1"
+guic = "0.6.2"
 ```
 
 ## Quick Start
