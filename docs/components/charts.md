@@ -69,6 +69,9 @@ The chart crate provides:
 - `BubbleChart`
 - `PieChart`
 - `DoughnutChart`
+- `RadarChart` with multiple profiles, radial axes and per-vertex selection
+- `CandlestickChart` with grouped price intervals, wick and body hit testing
+- `SankeyChart` with weighted ribbons, node and link selection
 - `MixedChart` with per-dataset line, area, bar, or scatter rendering
 
 ## Interaction
@@ -76,10 +79,13 @@ The chart crate provides:
 Charts follow GUIC's host-managed interaction style. Use `on_hover` to receive
 the nearest `ChartHit`, store that in application state, then pass it back
 through `ChartOptions::active_hit` and `ChartOptions::crosshair_index`.
-The built-in tooltip does not require host state: it follows pointer movement,
-updates as the nearest datum changes, and dismisses when the pointer leaves the
-plot. The default hides it over empty plot space; set
-`tooltip_intersect(false)` for continuous nearest-datum selection.
+The built-in tooltip follows the pointer even within the same datum. It opens
+12 logical pixels to the right and below the pointer when space permits. Near
+a plot edge it flips sides. Small or partially clipped plots can use the rest
+of the window. In short windows, a `+N` in the heading counts the configured
+rows that do not fit. Leaving the plot dismisses the tooltip. By default, the
+tooltip appears only over a datum. Set `tooltip_intersect(false)` for continuous
+nearest-datum selection.
 
 ```rust
 LineChart::new("latency")
@@ -180,3 +186,43 @@ metadata.
 `guic-charts` is a dedicated subsystem crate. Enable it through the `charts`
 feature on `guic`, or depend on `guic-charts` directly when building chart-heavy
 surfaces.
+
+## Price intervals, profiles and flows
+
+Build price data with `ChartDataset::candles`. Each entry pairs a
+`ChartDomainValue` with a validated `ChartOhlc::new(open, high, low, close)`.
+The constructor returns `None` for non-finite prices or a high/low that does
+not enclose both endpoints. Candles use equally spaced trading intervals.
+The tooltip, CSV and accessible value summary include all four prices.
+
+`RadarChart` accepts ordinary datasets in the same category order. Supply at
+least three visible categories. It shares the value axis across profiles by
+default and draws an open outline for a series missing trailing observations.
+
+Prepare weighted flows once with `SankeyDiagram::new(names, links)`, then pass
+a cheap clone to `SankeyChart::new(id, diagram)`. Each `SankeyLink` specifies
+source and target node indices and a positive finite value. Cycles, missing
+endpoints and invalid weights return a `SankeyError`. Use `on_select` to handle
+a `SankeyHit::Node` or `SankeyHit::Link`. The charts dashboard includes runnable
+examples of all three views.
+
+Use `.tooltip_content(|series, hit, window, cx| ...)` on a dataset chart to
+supply a native element for the hovered point. The chart tracks the pointer,
+handles window-edge placement and dismisses the panel when the hit disappears.
+Read the source value through
+`series.datasets_ref()[hit.dataset_index].points_ref()[hit.point_index]`.
+
+Use `.plot_layer(|series, bounds, window, cx| ...)` to paint an annotation
+in the plot after the series. The layer is clipped to the plot. Project a
+visible Cartesian datum with `series.plot_position(dataset, index, bounds)`.
+Mixed lines, areas, scatter points, bubbles and vertical bars share their
+domain and default value axis. Assign a named axis for a separate scale.
+Standalone SVG snapshots preserve the chart geometry, including grouped bars,
+bubble radii, area fills, pie sectors and doughnut cutouts.
+
+
+Use `SankeyChart::node_layout(width, spacing)` to control node sizes and
+vertical spacing, `label_gap` for the label offset, and `link_opacity` for
+ribbons. Reusing the same `SankeyDiagram` retains its layout across frames.
+Changing the model or resizing a chart refreshes the flow tooltip under a
+stationary pointer.
