@@ -1,5 +1,6 @@
 use crate::{Button, ButtonVariant, ComponentSize, Label};
 use chrono::Datelike as _;
+pub use chrono::{NaiveDate as CalendarDate, Weekday as CalendarWeekday};
 use gpui::{
     App, ClickEvent, InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _,
     RenderOnce, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div, px,
@@ -9,7 +10,123 @@ use guic_tokens::Theme;
 use std::rc::Rc;
 
 type DateHandler = Rc<dyn Fn(&SharedString, &mut Window, &mut App)>;
+type RangeHandler = Rc<dyn Fn(&DateRangeSelection, &mut Window, &mut App)>;
 type DateOpenHandler = Rc<dyn Fn(&bool, &mut Window, &mut App)>;
+
+/// The controlled selection of an inclusive calendar range.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum DateRangeSelection {
+    /// Neither endpoint has been chosen.
+    #[default]
+    Empty,
+    /// The next selection completes a range with this anchor.
+    Start(CalendarDate),
+    /// Both endpoints have been chosen.
+    Complete {
+        /// First included date.
+        start: CalendarDate,
+        /// Last included date.
+        end: CalendarDate,
+    },
+}
+
+impl DateRangeSelection {
+    /// Returns an inclusive range in chronological order.
+    #[must_use]
+    pub fn between(a: CalendarDate, b: CalendarDate) -> Self {
+        Self::Complete {
+            start: a.min(b),
+            end: a.max(b),
+        }
+    }
+
+    fn pick(self, date: CalendarDate) -> Self {
+        match self {
+            Self::Start(anchor) => Self::between(anchor, date),
+            _ => Self::Start(date),
+        }
+    }
+
+    fn contains(self, date: CalendarDate) -> bool {
+        match self {
+            Self::Empty => false,
+            Self::Start(anchor) => date == anchor,
+            Self::Complete { start, end } => (start..=end).contains(&date),
+        }
+    }
+
+    fn start(self) -> Option<CalendarDate> {
+        match self {
+            Self::Empty => None,
+            Self::Start(start) | Self::Complete { start, .. } => Some(start),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct CalendarRules {
+    first_weekday: CalendarWeekday,
+    enabled: Option<Rc<dyn Fn(CalendarDate) -> bool>>,
+    range: Option<DateRangeSelection>,
+}
+
+impl CalendarRules {
+    fn allows(&self, date: CalendarDate) -> bool {
+        (1..=9999).contains(&date.year())
+            && self.enabled.as_ref().is_none_or(|enabled| enabled(date))
+    }
+
+    fn target(&self, current: CalendarDate, key: &str, shift: bool) -> Option<CalendarDate> {
+        let (target, step) = match key {
+            "pageup" | "pagedown" => {
+                let direction = if key == "pageup" { -1 } else { 1 };
+                let (year, month) = shift_month(
+                    (current.year(), current.month()),
+                    direction * if shift { 12 } else { 1 },
+                );
+                (
+                    CalendarDate::from_ymd_opt(
+                        year,
+                        month,
+                        current.day().min(days_in_month(year, month)),
+                    )?,
+                    direction,
+                )
+            }
+            "home" => (current.with_day(1)?, 1),
+            "end" => (
+                current.with_day(days_in_month(current.year(), current.month()))?,
+                -1,
+            ),
+            "left" | "right" | "up" | "down" => {
+                let days = match key {
+                    "left" => -1,
+                    "right" => 1,
+                    "up" => -7,
+                    _ => 7,
+                };
+                (
+                    current.checked_add_signed(chrono::Duration::days(days))?,
+                    days.signum() as i32,
+                )
+            }
+            _ => return None,
+        };
+        // Bound predicate calls even when a host disables an entire month.
+        let mut candidate = target;
+        let cross_months = matches!(key, "left" | "right" | "up" | "down");
+        for _ in 0..31 {
+            if !cross_months && candidate.month() != target.month() {
+                break;
+            }
+            if self.allows(candidate) {
+                return Some(candidate);
+            }
+            candidate = candidate.checked_add_signed(chrono::Duration::days(i64::from(step)))?;
+        }
+        None
+    }
+}
 
 /// A controlled date picker with an optional calendar grid.
 ///
@@ -22,6 +139,8 @@ pub struct DatePicker {
     placeholder: SharedString,
     open: bool,
     disabled: bool,
+    rules: CalendarRules,
+    on_range_change: Option<RangeHandler>,
     on_request_open: Option<DateHandler>,
     on_open_change: Option<DateOpenHandler>,
     on_change: Option<DateHandler>,
@@ -37,6 +156,12 @@ impl DatePicker {
             placeholder: SharedString::from("Select date"),
             open: false,
             disabled: false,
+            rules: CalendarRules {
+                first_weekday: CalendarWeekday::Mon,
+                enabled: None,
+                range: None,
+            },
+            on_range_change: None,
             on_request_open: None,
             on_open_change: None,
             on_change: None,
@@ -47,6 +172,46 @@ impl DatePicker {
     #[must_use]
     pub fn value(mut self, value: impl Into<SharedString>) -> Self {
         self.value = Some(value.into());
+        self
+    }
+
+    /// Shows an inclusive date range. The first activation sets an anchor and
+    /// keeps the calendar open. The second completes the range in either order.
+    #[must_use]
+    pub fn range(mut self, selection: DateRangeSelection) -> Self {
+        let supported = |date: CalendarDate| (1..=9999).contains(&date.year());
+        self.rules.range = Some(match selection {
+            DateRangeSelection::Complete { start, end } if !supported(start) || !supported(end) => {
+                DateRangeSelection::Empty
+            }
+            DateRangeSelection::Start(date) if !supported(date) => DateRangeSelection::Empty,
+            DateRangeSelection::Complete { start, end } => DateRangeSelection::between(start, end),
+            other => other,
+        });
+        self
+    }
+
+    /// Registers a controlled range selection callback for range mode.
+    #[must_use]
+    pub fn on_range_change(
+        mut self,
+        handler: impl Fn(&DateRangeSelection, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_range_change = Some(Rc::new(handler));
+        self
+    }
+
+    /// Sets the first day shown in each calendar week. Defaults to Monday.
+    #[must_use]
+    pub fn first_weekday(mut self, weekday: CalendarWeekday) -> Self {
+        self.rules.first_weekday = weekday;
+        self
+    }
+
+    /// Allows only dates accepted by the predicate. Applies to pointer and keyboard selection.
+    #[must_use]
+    pub fn date_enabled(mut self, enabled: impl Fn(CalendarDate) -> bool + 'static) -> Self {
+        self.rules.enabled = Some(Rc::new(enabled));
         self
     }
 
@@ -116,7 +281,10 @@ fn shift_month((year, month): (i32, u32), delta: i32) -> (i32, u32) {
 
 impl RenderOnce for DatePicker {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let selected = self.value.as_deref().and_then(parse_date);
+        let selected = match self.rules.range {
+            Some(range) => range.start().map(|d| (d.year(), d.month(), d.day())),
+            None => self.value.as_deref().and_then(parse_date),
+        };
         let calendar =
             _window.use_keyed_state(format!("{}-calendar-state", self.id), cx, |_, cx| {
                 let today = chrono::Local::now().date_naive();
@@ -139,12 +307,23 @@ impl RenderOnce for DatePicker {
         });
         let trigger_focus = calendar.read(cx).trigger.clone();
         let theme = Theme::global(cx);
-        let has_value = self.value.is_some();
-        let value = self.value.unwrap_or_else(|| {
-            if self.placeholder == "Select date" {
-                guic_core::translate(cx, "date.placeholder", "Select date")
+        let display_value = match self.rules.range {
+            Some(DateRangeSelection::Empty) => None,
+            Some(DateRangeSelection::Start(date)) => Some(format!("{date} – …").into()),
+            Some(DateRangeSelection::Complete { start, end }) => {
+                Some(format!("{start} – {end}").into())
+            }
+            None => self.value,
+        };
+        let has_value = display_value.is_some();
+        let value = display_value.unwrap_or_else(|| {
+            if self.placeholder != "Select date" {
+                return self.placeholder.clone();
+            }
+            if self.rules.range.is_some() {
+                guic_core::translate(cx, "date.range_placeholder", "Select date range")
             } else {
-                self.placeholder.clone()
+                guic_core::translate(cx, "date.placeholder", "Select date")
             }
         });
         let mut trigger = div()
@@ -219,11 +398,32 @@ impl RenderOnce for DatePicker {
             .gap_2()
             .child(trigger);
         if self.open && !self.disabled {
+            let select = if let Some(range) = self.rules.range {
+                self.on_range_change.map(|handler| {
+                    Rc::new(
+                        move |date: CalendarDate, window: &mut Window, cx: &mut App| {
+                            let next = range.pick(date);
+                            handler(&next, window, cx);
+                            matches!(next, DateRangeSelection::Complete { .. })
+                        },
+                    ) as CalendarSelectionHandler
+                })
+            } else {
+                self.on_change.map(|handler| {
+                    Rc::new(
+                        move |date: CalendarDate, window: &mut Window, cx: &mut App| {
+                            handler(&date.format("%Y-%m-%d").to_string().into(), window, cx);
+                            true
+                        },
+                    ) as CalendarSelectionHandler
+                })
+            };
             root = root.child(render_calendar(
                 &self.id,
                 calendar,
-                self.on_change.clone(),
+                select,
                 self.on_open_change.clone(),
+                &self.rules,
                 theme,
                 cx,
             ));
@@ -232,20 +432,24 @@ impl RenderOnce for DatePicker {
     }
 }
 
+type CalendarSelectionHandler = Rc<dyn Fn(CalendarDate, &mut Window, &mut App) -> bool>;
+
 fn render_calendar(
     id: &SharedString,
     calendar: gpui::Entity<CalendarState>,
-    on_change: Option<DateHandler>,
+    on_change: Option<CalendarSelectionHandler>,
     on_open_change: Option<DateOpenHandler>,
+    rules: &CalendarRules,
     theme: &Theme,
     cx: &App,
 ) -> gpui::Div {
     let (year, month) = calendar.read(cx).month;
     let selected = calendar.read(cx).selected;
     let days = days_in_month(year, month);
-    let first_weekday = weekday_index(year, month, 1);
+    let start = rules.first_weekday.num_days_from_monday();
+    let first_weekday = (weekday_index(year, month, 1) + 7 - start) % 7;
     let mut grid = div().grid().grid_cols(7).gap_1();
-    for (key, weekday) in [
+    let weekdays = [
         ("date.mon", "Mon"),
         ("date.tue", "Tue"),
         ("date.wed", "Wed"),
@@ -253,7 +457,9 @@ fn render_calendar(
         ("date.fri", "Fri"),
         ("date.sat", "Sat"),
         ("date.sun", "Sun"),
-    ] {
+    ];
+    for i in 0..7 {
+        let (key, weekday) = weekdays[(i + start as usize) % 7];
         grid = grid.child(
             div()
                 .h(px(26.0))
@@ -270,14 +476,23 @@ fn render_calendar(
     }
     for day in 1..=days {
         let date = SharedString::from(format!("{year:04}-{month:02}-{day:02}"));
-        let selected = selected == Some((year, month, day));
+        let current = CalendarDate::from_ymd_opt(year, month, day).expect("valid calendar day");
+        let selected = rules
+            .range
+            .map_or(selected == Some((year, month, day)), |range| {
+                range.contains(current)
+            });
+        let enabled = rules.allows(current);
         let change_handler = on_change.clone();
         let open_handler = on_open_change.clone();
         let mut button = div()
             .id(format!("{id}-day-{day}"))
+            .debug_selector(move || format!("guic-date-{year:04}-{month:02}-{day:02}"))
+            .opacity(if enabled { 1. } else { 0.45 })
             .accessible(
                 AccessibilityProps::new(Role::Button)
                     .label(date.clone())
+                    .disabled(!enabled)
                     .selected(selected),
             )
             .h(px(30.0))
@@ -297,16 +512,17 @@ fn render_calendar(
                 theme.secondary().opacity(0.12)
             })
             .child(day.to_string());
-        if change_handler.is_some() {
+        if enabled && change_handler.is_some() {
+            let rules = rules.clone();
             let trigger = calendar.read(cx).trigger.clone();
+            let day_focus = calendar.read(cx).days[(day - 1) as usize].clone();
             button = button
-                .track_focus(&calendar.read(cx).days[(day - 1) as usize])
+                .track_focus(&day_focus)
                 .key_context("GuicDatePickerDay")
                 .cursor_pointer()
                 .on_key_down({
                     let calendar = calendar.clone();
                     let trigger = trigger.clone();
-                    let date = date.clone();
                     let change_handler = change_handler.clone();
                     let open_handler = open_handler.clone();
                     move |event: &KeyDownEvent, window, cx| {
@@ -318,61 +534,62 @@ fn render_calendar(
                             cx.stop_propagation();
                             return;
                         }
-                        if matches!(event.keystroke.key.as_str(), "pageup" | "pagedown") {
-                            let delta = if event.keystroke.key == "pageup" {
-                                -1
-                            } else {
-                                1
-                            } * if event.keystroke.modifiers.shift {
-                                12
-                            } else {
-                                1
-                            };
-                            let focus = calendar.update(cx, |state, cx| {
-                                state.month = shift_month(state.month, delta);
-                                let day = day.min(days_in_month(state.month.0, state.month.1));
-                                cx.notify();
-                                state.days[(day - 1) as usize].clone()
-                            });
-                            focus.focus(window, cx);
-                            cx.stop_propagation();
-                            return;
-                        }
-                        let handled = if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                            trigger.focus(window, cx);
-                            if let Some(handler) = change_handler.as_ref() {
-                                handler(&date, window, cx);
+                        let key = event.keystroke.key.as_str();
+                        let handled = if matches!(key, "enter" | "space") {
+                            if change_handler
+                                .as_ref()
+                                .is_some_and(|select| select(current, window, cx))
+                            {
+                                trigger.focus(window, cx);
+                                if let Some(handler) = open_handler.as_ref() {
+                                    handler(&false, window, cx);
+                                }
                             }
-                            if let Some(handler) = open_handler.as_ref() {
-                                handler(&false, window, cx);
+                            true
+                        } else if matches!(
+                            key,
+                            "pageup"
+                                | "pagedown"
+                                | "home"
+                                | "end"
+                                | "left"
+                                | "right"
+                                | "up"
+                                | "down"
+                        ) {
+                            if let Some(next) =
+                                rules.target(current, key, event.keystroke.modifiers.shift)
+                            {
+                                let focus = calendar.update(cx, |state, cx| {
+                                    let month = (next.year(), next.month());
+                                    if state.month != month {
+                                        state.month = month;
+                                        cx.notify();
+                                    }
+                                    state.days[(next.day() - 1) as usize].clone()
+                                });
+                                focus.focus(window, cx);
                             }
                             true
                         } else {
-                            let moves = match event.keystroke.key.as_str() {
-                                "left" => -(usize::from(day > 1) as isize),
-                                "right" => usize::from(day < days) as isize,
-                                "up" => -(day.saturating_sub(1).min(7) as isize),
-                                "down" => days.saturating_sub(day).min(7) as isize,
-                                "home" => -((day - 1) as isize),
-                                "end" => (days - day) as isize,
-                                _ => return,
-                            };
-                            crate::move_roving_focus(moves, window, cx);
-                            true
+                            false
                         };
                         if handled {
                             cx.stop_propagation();
                         }
                     }
                 })
-                .on_click(move |event, window, cx| {
-                    let _ = event;
-                    trigger.focus(window, cx);
-                    if let Some(handler) = change_handler.as_ref() {
-                        handler(&date, window, cx);
-                    }
-                    if let Some(handler) = open_handler.as_ref() {
-                        handler(&false, window, cx);
+                .on_click(move |_, window, cx| {
+                    if change_handler
+                        .as_ref()
+                        .is_some_and(|select| select(current, window, cx))
+                    {
+                        trigger.focus(window, cx);
+                        if let Some(handler) = open_handler.as_ref() {
+                            handler(&false, window, cx);
+                        }
+                    } else {
+                        day_focus.focus(window, cx);
                     }
                 });
         }
@@ -468,6 +685,97 @@ fn weekday_index(year: i32, month: u32, day: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::{DatePicker, parse_date, shift_month, weekday_index};
+
+    #[test]
+    fn keyboard_targets_cross_months_and_skip_disabled_dates() {
+        use super::{CalendarDate, CalendarRules, CalendarWeekday};
+        use chrono::Datelike as _;
+        let picker = DatePicker::new("d")
+            .first_weekday(CalendarWeekday::Sun)
+            .date_enabled(|d| d.weekday().num_days_from_monday() < 5);
+        let date = |y, m, d| CalendarDate::from_ymd_opt(y, m, d).expect("valid test fixture");
+        assert_eq!(
+            picker.rules.target(date(2024, 5, 31), "right", false),
+            Some(date(2024, 6, 3))
+        );
+        assert_eq!(
+            picker.rules.target(date(2024, 6, 3), "up", false),
+            Some(date(2024, 5, 27))
+        );
+        assert_eq!(
+            picker.rules.target(date(2024, 3, 29), "pageup", false),
+            Some(date(2024, 2, 29))
+        );
+        let blocked = CalendarRules {
+            first_weekday: CalendarWeekday::Mon,
+            enabled: Some(std::rc::Rc::new(|_| false)),
+            range: None,
+        };
+        assert!(blocked.target(date(2024, 2, 1), "end", false).is_none());
+    }
+
+    #[gpui::test]
+    fn range_picker_keeps_the_anchor_open_and_completes_with_keyboard(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use super::{CalendarDate, DateRangeSelection};
+        use gpui::{Context, IntoElement, Modifiers, Render, Window};
+        struct Booking {
+            selection: DateRangeSelection,
+            open: bool,
+        }
+        impl Render for Booking {
+            fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+                DatePicker::new("booking")
+                    .range(self.selection)
+                    .open(self.open)
+                    .date_enabled(|date| chrono::Datelike::day(&date) != 18)
+                    .on_range_change(cx.listener(|booking, selection, _, cx| {
+                        booking.selection = *selection;
+                        cx.notify();
+                    }))
+                    .on_open_change(cx.listener(|booking, open, _, cx| {
+                        booking.open = *open;
+                        cx.notify();
+                    }))
+            }
+        }
+        cx.update(|cx| {
+            guic_core::init(cx);
+            guic_tokens::init(cx);
+        });
+        let day = |d| CalendarDate::from_ymd_opt(2024, 5, d).expect("valid booking date");
+        let (view, cx) = cx.add_window_view(|_, _| Booking {
+            selection: DateRangeSelection::between(day(2), day(7)),
+            open: true,
+        });
+        let b = cx
+            .debug_bounds("guic-date-2024-05-19")
+            .expect("date visible");
+        cx.simulate_click(b.center(), Modifiers::none());
+        view.read_with(cx, |v, _| {
+            assert!(v.open);
+            assert_eq!(v.selection, DateRangeSelection::Start(day(19)));
+        });
+        let disabled = cx
+            .debug_bounds("guic-date-2024-05-18")
+            .expect("disabled date visible");
+        cx.simulate_click(disabled.center(), Modifiers::none());
+        view.read_with(cx, |v, _| {
+            assert_eq!(v.selection, DateRangeSelection::Start(day(19)))
+        });
+        cx.simulate_click(b.center(), Modifiers::none());
+        view.update(cx, |v, cx| {
+            v.open = true;
+            cx.notify();
+        });
+        cx.simulate_click(b.center(), Modifiers::none());
+        cx.simulate_keystrokes("left enter");
+        view.read_with(cx, |v, _| {
+            assert!(!v.open);
+            assert_eq!(v.selection, DateRangeSelection::between(day(17), day(19)));
+        });
+    }
 
     #[test]
     fn calendar_navigation_and_boundaries() {
