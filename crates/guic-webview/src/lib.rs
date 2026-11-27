@@ -11,9 +11,9 @@
 use std::rc::Rc;
 
 use gpui::{
-    App, Bounds, ContentMask, DismissEvent, Element, ElementId, Entity, EventEmitter, FocusHandle,
-    Focusable, GlobalElementId, Hitbox, InteractiveElement, IntoElement, LayoutId, MouseDownEvent,
-    ParentElement as _, Pixels, Render, Size, Style, Styled as _, Window, canvas, div,
+    App, Bounds, DismissEvent, Element, ElementId, Entity, EventEmitter, FocusHandle, Focusable,
+    GlobalElementId, Hitbox, InteractiveElement, IntoElement, LayoutId, MouseDownEvent,
+    ParentElement as _, Pixels, Render, Size, Style, Styled as _, Window, div,
 };
 use wry::{
     Rect,
@@ -37,6 +37,7 @@ pub struct WebView {
     webview: Rc<wry::WebView>,
     visible: bool,
     bounds: Bounds<Pixels>,
+    applied_bounds: Option<(Bounds<Pixels>, f32)>,
 }
 
 impl Drop for WebView {
@@ -58,22 +59,29 @@ impl WebView {
             focus_handle: cx.focus_handle(),
             visible: true,
             bounds: Bounds::default(),
+            applied_bounds: None,
             webview: Rc::new(webview),
         }
     }
 
     /// Shows the WebView.
     pub fn show(&mut self) -> Result<(), WebViewError> {
-        self.webview.set_visible(true)?;
-        self.visible = true;
+        if !self.visible {
+            self.webview.set_visible(true)?;
+            self.visible = true;
+        }
         Ok(())
     }
 
     /// Hides the WebView.
     pub fn hide(&mut self) -> Result<(), WebViewError> {
-        self.webview.focus_parent()?;
-        self.webview.set_visible(false)?;
-        self.visible = false;
+        if self.visible {
+            let focus = self.webview.focus_parent();
+            self.webview.set_visible(false)?;
+            self.visible = false;
+            self.applied_bounds = None;
+            focus?;
+        }
         Ok(())
     }
 
@@ -90,6 +98,26 @@ impl WebView {
     /// Navigates back in history.
     pub fn back(&mut self) -> Result<(), WebViewError> {
         Ok(self.webview.evaluate_script("history.back();")?)
+    }
+
+    /// Navigates forward in the current browsing history.
+    pub fn forward(&mut self) -> Result<(), WebViewError> {
+        Ok(self.webview.evaluate_script("history.forward();")?)
+    }
+
+    /// Reloads the current page.
+    pub fn reload(&self) -> Result<(), WebViewError> {
+        Ok(self.webview.reload()?)
+    }
+
+    /// Returns the URL reported by the native browser.
+    pub fn url(&self) -> Result<String, WebViewError> {
+        Ok(self.webview.url()?)
+    }
+
+    /// Replaces the current document with HTML supplied by the application.
+    pub fn load_html(&mut self, html: &str) -> Result<(), WebViewError> {
+        Ok(self.webview.load_html(html)?)
     }
 
     /// Loads a URL in the WebView.
@@ -114,15 +142,6 @@ impl Render for WebView {
         div()
             .track_focus(&self.focus_handle)
             .size_full()
-            .child({
-                let view = cx.entity().clone();
-                canvas(
-                    move |bounds, _, cx| view.update(cx, |this, _| this.bounds = bounds),
-                    |_, _, _, _| {},
-                )
-                .absolute()
-                .size_full()
-            })
             .child(WebViewElement::new(self.webview.clone(), view, window, cx))
     }
 }
@@ -191,23 +210,38 @@ impl Element for WebViewElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
-        if !self.parent.read(cx).visible() {
+        let parent = self.parent.read(cx);
+        let owns_view = Rc::ptr_eq(&parent.webview, &self.view);
+        let visible = parent.visible;
+        let geometry = (bounds, window.scale_factor());
+        let needs_update = !owns_view || parent.applied_bounds != Some(geometry);
+        if owns_view && parent.bounds != bounds {
+            self.parent.update(cx, |parent, _| parent.bounds = bounds);
+        }
+        if !visible {
             return None;
         }
 
-        if let Err(error) = self.view.set_bounds(Rect {
-            size: dpi::Size::Logical(LogicalSize {
-                width: bounds.size.width.into(),
-                height: bounds.size.height.into(),
-            }),
-            position: dpi::Position::Logical(dpi::LogicalPosition::new(
-                bounds.origin.x.into(),
-                bounds.origin.y.into(),
-            )),
-        }) {
-            tracing::warn!("failed to update webview bounds: {error}");
+        if needs_update {
+            let rect = Rect {
+                size: dpi::Size::Logical(LogicalSize {
+                    width: bounds.size.width.into(),
+                    height: bounds.size.height.into(),
+                }),
+                position: dpi::Position::Logical(dpi::LogicalPosition::new(
+                    bounds.origin.x.into(),
+                    bounds.origin.y.into(),
+                )),
+            };
+            match self.view.set_bounds(rect) {
+                Ok(()) if owns_view => {
+                    self.parent
+                        .update(cx, |parent, _| parent.applied_bounds = Some(geometry));
+                }
+                Ok(()) => {}
+                Err(error) => tracing::warn!("failed to update webview bounds: {error}"),
+            }
         }
-
         Some(window.insert_hitbox(bounds, gpui::HitboxBehavior::Normal))
     }
 
@@ -215,22 +249,22 @@ impl Element for WebViewElement {
         &mut self,
         _: Option<&GlobalElementId>,
         _: Option<&gpui::InspectorElementId>,
-        bounds: Bounds<Pixels>,
+        _: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         hitbox: &mut Self::PrepaintState,
         window: &mut Window,
         _: &mut App,
     ) {
-        let bounds = hitbox.clone().map(|hitbox| hitbox.bounds).unwrap_or(bounds);
-        window.with_content_mask(Some(ContentMask { bounds }), |window| {
-            let webview = self.view.clone();
-            window.on_mouse_event(move |event: &MouseDownEvent, _, _, _| {
-                if !bounds.contains(&event.position)
-                    && let Err(error) = webview.focus_parent()
-                {
-                    tracing::warn!("failed to blur webview focus: {error}");
-                }
-            });
+        let Some(hitbox) = hitbox else { return };
+        let bounds = hitbox.bounds;
+        let webview = self.view.clone();
+        window.on_mouse_event(move |event: &MouseDownEvent, phase, _, _| {
+            if phase == gpui::DispatchPhase::Capture
+                && !bounds.contains(&event.position)
+                && let Err(error) = webview.focus_parent()
+            {
+                tracing::warn!("failed to blur webview focus: {error}");
+            }
         });
     }
 }
