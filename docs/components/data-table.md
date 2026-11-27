@@ -145,12 +145,26 @@ DataTable::new("builds")
     })
 ```
 
+## Scrolling and selection
+
+Use `virtualized(height, handle)` with a retained `gpui::UniformListScrollHandle`
+for a fixed-height table. It derives the visible rows from the actual layout
+and reveals the active row during keyboard navigation. Retain the row data
+across frames with `shared_rows`. Each row needs a unique, stable ID.
+
+For multi-selection, pass the previous `DataTableSelection` through
+`selection_cursor` along with the selected IDs. This preserves the active end
+of a Shift range when the user reverses direction. Accessibility clients can
+query the total row and column counts and the indices of visible cells.
+
 ## Virtualized and Pinned Columns
 
 Column virtualization uses externally managed horizontal viewport metadata,
 matching the row virtualization ownership model. Columns pinned to either edge
 are always rendered and are ordered outside the virtualized middle region.
-Specify widths for virtualized columns so offsets remain stable.
+The middle header and body columns move by the exact horizontal pixel offset,
+including partially visible and overscan columns. Specify widths for virtualized
+columns so offsets remain stable.
 
 ```rust
 DataTable::new("wide-builds")
@@ -203,3 +217,12 @@ API remains available, but constructs a new index each time it is called.
 
 This avoids metadata scans during scrolling; it does not make initial dataset
 construction or an application-owned full dataset replacement asynchronous.
+
+### Column order
+
+Use `on_column_order_change` to enable header dragging and Alt+Left/Right on a
+focused header. Store the callback's column IDs and pass them back through
+`column_order`. Moves stay within the leading, scrollable, or trailing pin
+group. Cells and custom renderers continue to address the original row data by
+declaration index. Unknown or duplicate IDs in a saved order are ignored, and
+new columns follow the listed columns within their own pin group.

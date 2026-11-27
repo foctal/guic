@@ -1,6 +1,6 @@
 use gpui::{
     AnyElement, App, IntoElement, ParentElement as _, RenderOnce, Styled as _,
-    UniformListScrollHandle, Window, div, uniform_list,
+    UniformListScrollHandle, Window, div, horizontal_uniform_list, uniform_list,
 };
 use std::{ops::Range, rc::Rc};
 
@@ -13,6 +13,8 @@ type RenderRangeFn = dyn Fn(Range<usize>, &mut Window, &mut App) -> Vec<AnyEleme
 pub struct VirtualList {
     id: gpui::SharedString,
     item_count: usize,
+    item_height: Option<gpui::Pixels>,
+    item_width: Option<gpui::Pixels>,
     render_range: Rc<RenderRangeFn>,
     height: gpui::Pixels,
     scroll_handle: Option<UniformListScrollHandle>,
@@ -29,6 +31,8 @@ impl VirtualList {
         Self {
             id: id.into(),
             item_count,
+            item_height: None,
+            item_width: None,
             render_range: Rc::new(render_range),
             height: gpui::px(240.0),
             scroll_handle: None,
@@ -39,6 +43,22 @@ impl VirtualList {
     #[must_use]
     pub fn height(mut self, height: gpui::Pixels) -> Self {
         self.height = height;
+        self
+    }
+
+    /// Supplies a known row height for a list that fills its parent width.
+    /// This avoids constructing a sample row for measurement.
+    #[must_use]
+    pub fn item_height(mut self, height: gpui::Pixels) -> Self {
+        self.item_height = Some(height);
+        self
+    }
+
+    /// Arranges equal-width items left to right and virtualizes the horizontal viewport.
+    /// Set the viewport height with `height`.
+    #[must_use]
+    pub fn horizontal(mut self, item_width: gpui::Pixels) -> Self {
+        self.item_width = Some(item_width);
         self
     }
 
@@ -53,17 +73,44 @@ impl VirtualList {
 impl RenderOnce for VirtualList {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let render_range = self.render_range.clone();
-        let mut list = uniform_list(self.id, self.item_count, move |range, window, cx| {
-            (render_range)(range, window, cx)
-        })
+        let render =
+            move |range, window: &mut Window, cx: &mut App| (render_range)(range, window, cx);
+        let mut list = if let Some(width) = self.item_width {
+            horizontal_uniform_list(self.id, self.item_count, render)
+                .with_item_size(gpui::size(width, self.height))
+        } else {
+            let mut list = uniform_list(self.id, self.item_count, render);
+            if let Some(height) = self.item_height {
+                list = list.with_item_size(gpui::size(gpui::px(0.), height));
+            }
+            list
+        }
+        .w_full()
         .h(self.height);
-
         if let Some(scroll_handle) = self.scroll_handle {
             list = list.track_scroll(&scroll_handle);
         }
 
         div().w_full().child(list)
     }
+}
+
+#[cfg(any(feature = "tree", feature = "data-table"))]
+pub(crate) fn tracked_viewport(
+    handle: &UniformListScrollHandle,
+    initial_height: f32,
+    row_height: f32,
+    count: usize,
+) -> (f32, f32) {
+    let state = handle.0.borrow();
+    let height = state
+        .last_item_size
+        .map_or(initial_height, |size| f32::from(size.item.height));
+    let max_offset = (count as f32 * row_height - height).max(0.0);
+    (
+        (-f32::from(state.base_handle.offset().y)).clamp(0.0, max_offset),
+        height,
+    )
 }
 
 /// Immutable layout metrics for a uniform-height virtual list.

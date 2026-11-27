@@ -161,6 +161,8 @@ impl Error for TreeMutationError {}
 /// Flattened visible node metadata for host-managed tree interactions.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VisibleTreeNode {
+    label: SharedString,
+    detail: Option<SharedString>,
     id: SharedString,
     depth: usize,
     has_children: bool,
@@ -174,6 +176,8 @@ impl VisibleTreeNode {
     fn new(node: &TreeNode, depth: usize) -> Self {
         Self {
             id: node.id.clone(),
+            label: node.label.clone(),
+            detail: node.detail.clone(),
             depth,
             has_children: node.has_children(),
             expanded: node.expanded,
@@ -443,6 +447,64 @@ impl TreeNode {
     }
 }
 
+/// An immutable forest with cached visible rows and selection in display order.
+#[derive(Clone, Debug, Default)]
+pub struct TreeViewNodes {
+    roots: Rc<[TreeNode]>,
+    visible: Rc<[VisibleTreeNode]>,
+    ids: Rc<[SharedString]>,
+    selected: Rc<[SharedString]>,
+    checked: Rc<[SharedString]>,
+}
+
+impl TreeViewNodes {
+    /// Indexes a forest once for reuse across frames.
+    #[must_use]
+    pub fn new(nodes: Vec<TreeNode>) -> Self {
+        Self::from_roots(nodes.into())
+    }
+
+    fn from_roots(roots: Rc<[TreeNode]>) -> Self {
+        let mut visible = Vec::new();
+        for node in roots.iter() {
+            collect_visible_nodes(node, 0, &mut visible);
+        }
+        Self {
+            ids: visible.iter().map(|node| node.id.clone()).collect(),
+            selected: visible
+                .iter()
+                .filter(|node| node.selected)
+                .map(|node| node.id.clone())
+                .collect(),
+            checked: visible
+                .iter()
+                .filter(|node| node.checked)
+                .map(|node| node.id.clone())
+                .collect(),
+            visible: visible.into(),
+            roots,
+        }
+    }
+
+    /// Returns the roots including descendants hidden under collapsed branches.
+    #[must_use]
+    pub fn roots(&self) -> &[TreeNode] {
+        &self.roots
+    }
+
+    /// Applies a mutation and rebuilds the visible index on success.
+    pub fn apply_mutation(self, mut mutation: TreeMutation) -> Result<Self, TreeMutationError> {
+        let mut roots = self.roots;
+        if apply_tree_mutation(Rc::make_mut(&mut roots), &mut mutation) {
+            Ok(Self::from_roots(roots))
+        } else {
+            Err(TreeMutationError {
+                node_id: mutation.node_id,
+            })
+        }
+    }
+}
+
 /// A hierarchical tree surface for navigation and inspector-style views.
 ///
 /// # Example
@@ -460,7 +522,7 @@ impl TreeNode {
 pub struct TreeView {
     id: SharedString,
     title: Option<SharedString>,
-    nodes: Vec<TreeNode>,
+    nodes: TreeViewNodes,
     empty_label: SharedString,
     on_select: Option<SharedStringHandler>,
     on_node_selection: Option<TreeSelectionHandler>,
@@ -470,6 +532,7 @@ pub struct TreeView {
     row_height: f32,
     viewport: Option<TreeViewport>,
     scroll_handle: Option<gpui::ScrollHandle>,
+    virtual_scroll: Option<gpui::UniformListScrollHandle>,
     max_height: Option<f32>,
     height: Option<f32>,
     fill_height: bool,
@@ -483,7 +546,7 @@ impl TreeView {
         Self {
             id: id.into(),
             title: None,
-            nodes: Vec::new(),
+            nodes: TreeViewNodes::default(),
             empty_label: "No items".into(),
             on_select: None,
             on_node_selection: None,
@@ -493,6 +556,7 @@ impl TreeView {
             row_height: 36.0,
             viewport: None,
             scroll_handle: None,
+            virtual_scroll: None,
             max_height: None,
             height: None,
             fill_height: false,
@@ -510,6 +574,13 @@ impl TreeView {
     /// Replaces the root node collection.
     #[must_use]
     pub fn nodes(mut self, nodes: Vec<TreeNode>) -> Self {
+        self.nodes = TreeViewNodes::new(nodes);
+        self
+    }
+
+    /// Shares a pre-indexed forest without flattening or copying it during scrolling.
+    #[must_use]
+    pub fn shared_nodes(mut self, nodes: TreeViewNodes) -> Self {
         self.nodes = nodes;
         self
     }
@@ -589,7 +660,20 @@ impl TreeView {
     /// Applies externally managed viewport metadata for node virtualization.
     #[must_use]
     pub fn viewport(mut self, viewport: TreeViewport) -> Self {
+        self.virtual_scroll = None;
         self.viewport = Some(viewport);
+        self
+    }
+
+    /// Virtualizes fixed-height rows inside an outer height that includes the
+    /// title and borders. Retain the handle for programmatic scrolling.
+    #[must_use]
+    pub fn virtualized(mut self, height: f32, handle: gpui::UniformListScrollHandle) -> Self {
+        if height.is_finite() && height > 0.0 {
+            self = self.height(height);
+            self.virtual_scroll = Some(handle);
+            self.viewport = None;
+        }
         self
     }
 
@@ -642,92 +726,64 @@ impl TreeView {
     ///
     /// The returned tree contains the update. A missing target produces an
     /// error instead of silently dropping host state.
-    pub fn apply_mutation(mut self, mut mutation: TreeMutation) -> Result<Self, TreeMutationError> {
-        if apply_tree_mutation(&mut self.nodes, &mut mutation) {
-            Ok(self)
-        } else {
-            Err(TreeMutationError {
-                node_id: mutation.node_id,
-            })
-        }
+    pub fn apply_mutation(mut self, mutation: TreeMutation) -> Result<Self, TreeMutationError> {
+        self.nodes = self.nodes.apply_mutation(mutation)?;
+        Ok(self)
     }
 
-    /// Returns the visible node identifiers in depth-first render order.
+    /// Returns visible identifiers in depth-first render order.
     #[must_use]
     pub fn visible_node_ids(&self) -> Vec<SharedString> {
-        self.visible_nodes()
-            .into_iter()
-            .map(|node| node.id)
-            .collect()
+        self.nodes.ids.to_vec()
     }
 
-    /// Returns flattened visible node metadata in depth-first render order.
+    /// Returns flattened visible metadata in depth-first render order.
     #[must_use]
     pub fn visible_nodes(&self) -> Vec<VisibleTreeNode> {
-        let mut nodes = Vec::new();
-        for node in &self.nodes {
-            collect_visible_nodes(node, 0, &mut nodes);
-        }
-        nodes
+        self.nodes.visible.to_vec()
     }
 
     /// Returns the node metadata currently included in the render window.
     #[must_use]
     pub fn rendered_nodes(&self) -> Vec<VisibleTreeNode> {
-        let visible = self.visible_nodes();
-        let (start, end, _, _) = self.render_range(visible.len());
-        visible
-            .into_iter()
-            .skip(start)
-            .take(end.saturating_sub(start))
-            .collect()
+        let (start, end, _, _) = self.render_range(self.nodes.visible.len());
+        self.nodes.visible[start..end].to_vec()
     }
 
-    /// Returns the currently selected visible node identifier, if any.
+    /// Returns the first selected visible node.
     #[must_use]
     pub fn selected_node_id(&self) -> Option<SharedString> {
-        self.visible_nodes()
-            .into_iter()
-            .find(|node| node.selected)
-            .map(|node| node.id)
+        self.nodes.selected.first().cloned()
     }
 
-    /// Returns selected visible node identifiers in depth-first render order.
+    /// Returns selected visible identifiers in depth-first render order.
     #[must_use]
     pub fn selected_node_ids(&self) -> Vec<SharedString> {
-        self.visible_nodes()
-            .into_iter()
-            .filter(|node| node.selected)
-            .map(|node| node.id)
-            .collect()
+        self.nodes.selected.to_vec()
     }
 
-    /// Returns checked visible node identifiers in depth-first render order.
+    /// Returns checked visible identifiers in depth-first render order.
     #[must_use]
     pub fn checked_node_ids(&self) -> Vec<SharedString> {
-        self.visible_nodes()
-            .into_iter()
-            .filter(|node| node.checked)
-            .map(|node| node.id)
-            .collect()
+        self.nodes.checked.to_vec()
     }
 
     /// Returns the next visible node identifier after the current selection.
     #[must_use]
     pub fn next_visible_node_id(&self, current: &str) -> Option<SharedString> {
-        adjacent_visible_node_id(self.visible_nodes(), current, 1)
+        adjacent_visible_node_id(&self.nodes.visible, current, 1)
     }
 
     /// Returns the previous visible node identifier before the current selection.
     #[must_use]
     pub fn previous_visible_node_id(&self, current: &str) -> Option<SharedString> {
-        adjacent_visible_node_id(self.visible_nodes(), current, -1)
+        adjacent_visible_node_id(&self.nodes.visible, current, -1)
     }
 
     /// Returns the visible parent node identifier for the given node, if any.
     #[must_use]
     pub fn parent_node_id(&self, current: &str) -> Option<SharedString> {
-        find_parent_node_id(&self.nodes, current)
+        find_parent_node_id(&self.nodes.roots, current)
     }
 
     /// Returns the host-applied outcome for a directional navigation intent.
@@ -737,13 +793,13 @@ impl TreeView {
         current: &str,
         navigation: TreeNavigation,
     ) -> TreeNavigationOutcome {
-        compute_tree_navigation(&self.visible_nodes(), current, navigation)
+        compute_tree_navigation(&self.nodes.visible, current, navigation)
     }
 
     /// Returns visible node identifiers between two nodes, inclusive.
     #[must_use]
     pub fn node_range_ids(&self, anchor_id: &str, focused_id: &str) -> Vec<SharedString> {
-        node_range_ids(&self.visible_node_ids(), anchor_id, focused_id)
+        node_range_ids(&self.nodes.ids, anchor_id, focused_id)
     }
 
     /// Returns a host-applied selection update for a node interaction.
@@ -753,22 +809,25 @@ impl TreeView {
         node_id: &str,
         intent: TreeSelectionIntent,
     ) -> Option<TreeSelection> {
-        let node_ids = self.visible_node_ids();
+        let node_ids = &self.nodes.ids;
         let selected_ids = match self.selection_mode {
-            TreeSelectionMode::Checkbox => self.checked_node_ids(),
-            TreeSelectionMode::Single | TreeSelectionMode::Multiple => self.selected_node_ids(),
+            TreeSelectionMode::Checkbox => &self.nodes.checked,
+            TreeSelectionMode::Single | TreeSelectionMode::Multiple => &self.nodes.selected,
         };
-        selection_change_for(
-            &node_ids,
-            &selected_ids,
-            node_id,
-            intent,
-            self.selection_mode,
-        )
+        selection_change_for(node_ids, selected_ids, node_id, intent, self.selection_mode)
     }
 
     fn render_range(&self, node_count: usize) -> (usize, usize, f32, f32) {
-        let Some(viewport) = self.viewport else {
+        let viewport = self.viewport.or_else(|| {
+            let (offset, height) = crate::virtual_list::tracked_viewport(
+                self.virtual_scroll.as_ref()?,
+                self.height.unwrap_or(0.0),
+                self.row_height,
+                node_count,
+            );
+            Some(TreeViewport::new(offset, height).overscan(0))
+        });
+        let Some(viewport) = viewport else {
             return (0, node_count, 0.0, 0.0);
         };
         let metrics = VirtualListMetrics::new(
@@ -859,29 +918,13 @@ impl RenderOnce for TreeView {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = Theme::global(cx).clone();
         let focus_handle = self.focus_handle.clone();
-        let visible_nodes = self.visible_nodes();
-        let visible_node_ids = visible_nodes
-            .iter()
-            .map(|node| node.id.clone())
-            .collect::<Vec<_>>();
-        let selected_node_id = visible_nodes
-            .iter()
-            .find(|node| node.selected)
-            .map(|node| node.id.clone());
+        let visible_nodes = &self.nodes.visible;
+        let visible_node_ids = &self.nodes.ids;
+        let selected_node_id = self.selected_node_id();
         let selected_node_ids = match self.selection_mode {
-            TreeSelectionMode::Checkbox => visible_nodes
-                .iter()
-                .filter(|node| node.checked)
-                .map(|node| node.id.clone())
-                .collect::<Vec<_>>(),
-            TreeSelectionMode::Single | TreeSelectionMode::Multiple => visible_nodes
-                .iter()
-                .filter(|node| node.selected)
-                .map(|node| node.id.clone())
-                .collect::<Vec<_>>(),
+            TreeSelectionMode::Checkbox => &self.nodes.checked,
+            TreeSelectionMode::Single | TreeSelectionMode::Multiple => &self.nodes.selected,
         };
-        let shared_visible_node_ids = Rc::new(visible_node_ids.clone());
-        let shared_selected_node_ids = Rc::new(selected_node_ids.clone());
         let (render_start, render_end, top_spacer, bottom_spacer) =
             self.render_range(visible_nodes.len());
         let keyboard = focus_handle.as_ref().map(|_| {
@@ -941,6 +984,7 @@ impl RenderOnce for TreeView {
             on_toggle,
         )) = keyboard
         {
+            let scroll = self.virtual_scroll.clone();
             root = root.on_key_down(move |event: &KeyDownEvent, window, cx| {
                 if event.keystroke.key == "space" {
                     let Some(current) = selected.clone().or_else(|| {
@@ -976,6 +1020,11 @@ impl RenderOnce for TreeView {
                 };
                 match compute_tree_navigation(&visible, current.as_ref(), navigation) {
                     TreeNavigationOutcome::Select(id) => {
+                        if let Some(handle) = &scroll
+                            && let Some(index) = visible_ids.iter().position(|item| item == &id)
+                        {
+                            handle.scroll_to_item(index, gpui::ScrollStrategy::Nearest);
+                        }
                         let intent = if event.keystroke.modifiers.shift {
                             TreeSelectionIntent::Extend
                         } else {
@@ -1012,33 +1061,49 @@ impl RenderOnce for TreeView {
             );
         }
 
-        let mut visible_node_refs = Vec::with_capacity(visible_nodes.len());
-        for node in &self.nodes {
-            collect_visible_node_refs(node, 0, &mut visible_node_refs);
-        }
         let context = TreeRenderContext {
             on_select: self.on_select.clone(),
             on_node_selection: self.on_node_selection.clone(),
             on_toggle: self.on_toggle.clone(),
             selection_mode: self.selection_mode,
-            visible_node_ids: shared_visible_node_ids,
-            selected_node_ids: shared_selected_node_ids,
+            visible_node_ids: visible_node_ids.clone(),
+            selected_node_ids: selected_node_ids.clone(),
             theme: theme.clone(),
             row_height: self.row_height,
         };
+        if let Some(handle) = &self.virtual_scroll
+            && !visible_nodes.is_empty()
+        {
+            let nodes = visible_nodes.clone();
+            let list = gpui::uniform_list("rows", nodes.len(), move |range, _, _| {
+                nodes[range]
+                    .iter()
+                    .map(|node| render_node_row(node, &context))
+                    .collect()
+            })
+            .with_item_size(gpui::size(px(0.0), px(self.row_height)))
+            .track_scroll(handle)
+            .size_full();
+            return root
+                .child(
+                    div()
+                        .debug_selector(|| format!("guic-tree-body-{}", self.id))
+                        .min_h_0()
+                        .w_full()
+                        .flex_1()
+                        .child(list),
+                )
+                .into_any_element();
+        }
         let mut rows = div().w_full().flex_shrink_0().flex().flex_col();
-        if self.nodes.is_empty() {
+        if visible_nodes.is_empty() {
             rows = rows.child(Label::new(self.empty_label.clone()).muted(true));
         }
         if top_spacer > 0.0 {
             rows = rows.child(div().w_full().h(px(top_spacer)).flex_shrink_0());
         }
-        for (node, depth) in visible_node_refs
-            .into_iter()
-            .skip(render_start)
-            .take(render_end.saturating_sub(render_start))
-        {
-            rows = rows.child(render_node_row(node, depth, context.clone()));
+        for node in &visible_nodes[render_start..render_end] {
+            rows = rows.child(render_node_row(node, &context));
         }
         if bottom_spacer > 0.0 {
             rows = rows.child(div().w_full().h(px(bottom_spacer)).flex_shrink_0());
@@ -1064,7 +1129,7 @@ impl RenderOnce for TreeView {
     }
 }
 
-fn render_node_row(node: &TreeNode, depth: usize, context: TreeRenderContext) -> AnyElement {
+fn render_node_row(node: &VisibleTreeNode, context: &TreeRenderContext) -> AnyElement {
     let TreeRenderContext {
         on_select,
         on_node_selection,
@@ -1076,6 +1141,9 @@ fn render_node_row(node: &TreeNode, depth: usize, context: TreeRenderContext) ->
         row_height,
     } = context;
     let has_children = node.has_children();
+    let selection_mode = *selection_mode;
+    let row_height = *row_height;
+    let depth = node.depth;
     let marker = if node.loading {
         crate::Spinner::new()
             .size(crate::ComponentSize::Small)
@@ -1106,6 +1174,7 @@ fn render_node_row(node: &TreeNode, depth: usize, context: TreeRenderContext) ->
     let mut row = div()
         .id(node.id.clone())
         .accessible(accessibility)
+        .aria_level(depth + 1)
         .debug_selector({
             let node_id = node.id.clone();
             move || format!("guic-tree-row-{node_id}")
@@ -1249,8 +1318,8 @@ struct TreeRenderContext {
     on_node_selection: Option<TreeSelectionHandler>,
     on_toggle: Option<SharedStringHandler>,
     selection_mode: TreeSelectionMode,
-    visible_node_ids: Rc<Vec<SharedString>>,
-    selected_node_ids: Rc<Vec<SharedString>>,
+    visible_node_ids: Rc<[SharedString]>,
+    selected_node_ids: Rc<[SharedString]>,
     theme: Theme,
     row_height: f32,
 }
@@ -1260,19 +1329,6 @@ fn collect_visible_nodes(node: &TreeNode, depth: usize, nodes: &mut Vec<VisibleT
     if node.expanded {
         for child in &node.children {
             collect_visible_nodes(child, depth + 1, nodes);
-        }
-    }
-}
-
-fn collect_visible_node_refs<'a>(
-    node: &'a TreeNode,
-    depth: usize,
-    nodes: &mut Vec<(&'a TreeNode, usize)>,
-) {
-    nodes.push((node, depth));
-    if node.expanded {
-        for child in &node.children {
-            collect_visible_node_refs(child, depth + 1, nodes);
         }
     }
 }
@@ -1318,7 +1374,7 @@ fn apply_tree_mutation(nodes: &mut [TreeNode], mutation: &mut TreeMutation) -> b
 }
 
 fn adjacent_visible_node_id(
-    nodes: Vec<VisibleTreeNode>,
+    nodes: &[VisibleTreeNode],
     current: &str,
     direction: isize,
 ) -> Option<SharedString> {

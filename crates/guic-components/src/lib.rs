@@ -50,6 +50,7 @@ mod color_picker;
 mod command_palette;
 mod confirm_dialog;
 mod confirm_popup;
+mod copy_button;
 mod data_view;
 mod date_picker;
 mod dialog;
@@ -75,6 +76,7 @@ mod popover;
 mod progress;
 mod property_list;
 mod radio;
+mod rating;
 mod scroll_area;
 mod select;
 mod separator;
@@ -100,6 +102,14 @@ mod virtual_list;
 
 #[cfg(feature = "data-table")]
 mod data_table;
+#[cfg(feature = "diff")]
+mod diff;
+#[cfg(feature = "diff")]
+pub use diff::{
+    DiffDocument, DiffFileChange, DiffLayout, DiffLine, DiffLineKind, DiffPatchError,
+    DiffPatchFile, DiffPatchHunk, DiffView, MergeChoice, MergeConflict, MergeConflictView,
+    MergeDocument, MergeParseError,
+};
 #[cfg(feature = "dock")]
 mod dock;
 #[cfg(feature = "markdown")]
@@ -122,8 +132,9 @@ pub use color_picker::{ColorPicker, ColorSwatch};
 pub use command_palette::{CommandPalette, CommandPaletteItem};
 pub use confirm_dialog::ConfirmDialog;
 pub use confirm_popup::ConfirmPopup;
+pub use copy_button::CopyButton;
 pub use data_view::{DataView, DataViewItem, DataViewLayout};
-pub use date_picker::DatePicker;
+pub use date_picker::{CalendarDate, CalendarWeekday, DatePicker, DateRangeSelection};
 pub use dialog::Dialog;
 pub use drawer::{Drawer, DrawerSide};
 pub use fieldset::Fieldset;
@@ -149,6 +160,7 @@ pub use popover::Popover;
 pub use progress::Progress;
 pub use property_list::{PropertyItem, PropertyList};
 pub use radio::Radio;
+pub use rating::Rating;
 pub use scroll_area::ScrollArea;
 pub use select::{Select, SelectItem, SelectMenuWidth};
 pub use separator::{Separator, SeparatorAxis};
@@ -190,7 +202,8 @@ pub use markdown::{HtmlFragment, Markdown};
 #[cfg(feature = "tree")]
 pub use tree::{
     TreeMutation, TreeMutationError, TreeNavigation, TreeNavigationOutcome, TreeNode,
-    TreeSelection, TreeSelectionIntent, TreeSelectionMode, TreeView, TreeViewport, VisibleTreeNode,
+    TreeSelection, TreeSelectionIntent, TreeSelectionMode, TreeView, TreeViewNodes, TreeViewport,
+    VisibleTreeNode,
 };
 
 type ClickHandler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;

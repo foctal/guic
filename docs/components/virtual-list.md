@@ -35,3 +35,8 @@ state.scroll_to(ListOffset { item_ix: 9000, offset_in_item: px(0.0) });
 Use `state.splice(old_range, replacement_count)` when rows or their heights
 change. Notify the owning view after changing scroll or list state. Do not
 recreate the state on every render: it owns measurements and the scroll anchor.
+
+For a horizontal strip, call `.horizontal(px(120.))` to set the item width
+and `.height(px(64.))` to set the viewport height. The range callback and
+`UniformListScrollHandle` work in item order along the horizontal axis.
+`scroll_to_end()` reveals the last item. Items should fill the available height.

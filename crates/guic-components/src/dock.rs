@@ -2075,7 +2075,6 @@ fn render_split_handle(
         .rounded(px(2.0))
         .bg(gpui::transparent_black())
         .hover(|style: gpui::StyleRefinement| style.bg(gpui::black().opacity(0.08)))
-        .on_mouse_down(gpui::MouseButton::Left, |_, _, _| {})
         .on_click({
             let stack_id = stack_id.clone();
             let split_id = split_id.clone();
@@ -2091,10 +2090,7 @@ fn render_split_handle(
                 );
             }
         })
-        .on_mouse_move(move |event: &MouseMoveEvent, window, cx| {
-            if !event.dragging() {
-                return;
-            }
+        .on_drag_update(move |_, event: &MouseMoveEvent, window, cx| {
             let Some(bounds) = split_bounds.get() else {
                 return;
             };
