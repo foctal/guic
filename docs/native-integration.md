@@ -162,8 +162,9 @@ Application actions that require confirmation must enter through `request`.
 Window state is versioned and backed up by `JsonStore`. Bounds use logical
 pixels, preserve maximized/fullscreen restore rectangles, and are clamped to
 the current monitor's visible area. Missing monitors fall back to the display
-with greatest overlap. Periodic writes run on a worker; ordered revisions stop
-an older write from replacing final close geometry. Explicit close/quit/restart
+with greatest overlap. Tracking saves the initial state and coalesces native bounds changes on a worker.
+Idle windows produce no further writes. Ordered revisions prevent stale saves
+from replacing final close geometry. Explicit close/quit/restart
 saves exact current geometry before removing the window. Linux AppImage restart
 uses the absolute `APPIMAGE` launcher when it exists.
 
