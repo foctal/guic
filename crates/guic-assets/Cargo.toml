@@ -1,6 +1,6 @@
 [package]
 name = "guic-assets"
-version = "0.6.2"
+version = "0.7.0"
 description = "Asset loading abstractions for GUIC."
 edition.workspace = true
 license.workspace = true
