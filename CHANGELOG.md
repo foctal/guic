@@ -2,6 +2,52 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.7.0 (unreleased)
+
+- Pin the runtime and platform crates to guic-gpui 0.7.0 from crates.io.
+- Add a keyboard-accessible star rating and a clipboard button with timed
+  confirmation to the component library and gallery.
+- Add OHLC candlesticks, multi-series radar charts and validated Sankey flows
+  with native rendering and pointer selection.
+- Align domain labels with the plotted coordinates, fix stacked bar rendering
+  in panned views, and narrow pointer searches on sorted numeric and time axes.
+- Add horizontal virtualization for equal-width lists and controlled table
+  column reordering by pointer or keyboard.
+- Add a caret-anchored editor completion menu with background providers,
+  keyboard and pointer acceptance, and IME-aware dismissal.
+- Add virtualized side-by-side diffs, configurable calendar week starts, and
+  date predicates enforced during pointer and keyboard selection. Support
+  controlled inclusive date ranges with keyboard and pointer input.
+- Keep chart tooltips near the pointer as it moves, flip them at plot edges,
+  and fit grouped values to the available window. Match the legend and tooltip
+  colors for custom palettes and uneven series. Support application-defined
+  tooltip elements and refresh a visible tooltip when new data arrives.
+- Add clipped plot annotations and shared coordinates for mixed charts,
+  crosshairs, hit testing and SVG export. Preserve the shape of bars, areas,
+  bubbles and pie sectors in vector snapshots.
+- Add an opt-in virtualized text diff with old and new line numbers, expandable
+  unchanged regions, exact line endings, unified patch hunk export, and multi-file
+  patch import with original hunk coordinates and Git file operations.
+  Review and resolve two-way and diff3 merge conflicts in a split view.
+- Add runtime-managed row virtualization to tables and trees. Retained tree
+  models share a visible-node index across frames. Table keyboard navigation
+  reveals the active row and preserves the active end of an extended selection.
+- Keep pinned table columns in place and align headers and cells during
+  partial-column horizontal scrolling with overscan.
+- Expose table structure and disabled controls to accessibility clients.
+  Support pointer, keyboard, and accessibility resizing on splitters, and keep
+  tracking slider, dock, and column drags beyond their handles.
+- Add opt-in Tree-sitter highlighting, file-extension lookup for bundled languages, embedded
+  CSS and JavaScript in HTML, UTF-16 column
+  conversion, and Alt/Option-click multiple carets to the code editor. Stream
+  graphemes during built-in line analysis.
+- Canonicalize nested JSON keys in build fingerprints, including when a
+  dependency enables insertion-ordered JSON. Earlier records produced with
+  insertion-ordered keys may require a fresh build before bundling.
+- Add WebView HTML loading, URL inspection, forward navigation, and reload.
+  Update native child bounds only when geometry or display scale changes.
+- Save window geometry on native bounds changes and coalesce consecutive writes.
+
 ## 0.6.2 - 2026-11-16
 
 ### Fixed

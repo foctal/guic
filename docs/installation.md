@@ -4,7 +4,7 @@ GUIC requires Rust 1.95 or newer. Add the toolkit to the application manifest:
 
 ```toml
 [dependencies]
-guic = "0.6.2"
+guic = "0.7.0"
 ```
 
 The default `application` feature selects the native platform backend.
@@ -21,21 +21,21 @@ Applications can also supply a platform backend and construct `Root` themselves.
 ## Explicit runtime dependencies
 
 Applications importing GPUI directly should use the versions below with GUIC
-0.6.2. The runtime family is pinned to exactly 0.6.2.
+0.7.0. The runtime family is pinned to exactly 0.7.0.
 
 ```toml
 [dependencies]
-guic = "0.6.2"
-gpui = { package = "guic-gpui", version = "=0.6.2" }
+guic = "0.7.0"
+gpui = { package = "guic-gpui", version = "=0.7.0" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-gpui_platform = { package = "guic-gpui-platform", version = "=0.6.2", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
+gpui_platform = { package = "guic-gpui-platform", version = "=0.7.0", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-gpui_platform = { package = "guic-gpui-platform", version = "=0.6.2", features = ["font-kit"] }
+gpui_platform = { package = "guic-gpui-platform", version = "=0.7.0", features = ["font-kit"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-gpui_platform = { package = "guic-gpui-platform", version = "=0.6.2" }
+gpui_platform = { package = "guic-gpui-platform", version = "=0.7.0" }
 ```
 
 ## Source checkouts
@@ -46,9 +46,9 @@ Replace the `guic` dependency with a local path or a pinned Git revision:
 guic = { git = "https://github.com/foctal/guic", rev = "<commit>" }
 ```
 
-Keep any explicit runtime dependencies aligned with the checkout. No sibling
-runtime checkout or runtime patch is needed. Avoid moving branches for
-reproducible builds and review [API Stability](api-stability.md) before upgrading.
+GUIC 0.7.0 source checkouts use the same crates.io runtime dependencies shown
+above. Pin the GUIC revision for reproducible builds and review
+[API Stability](api-stability.md) before upgrading.
 
 ## Linux
 

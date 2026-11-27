@@ -22,7 +22,7 @@ GUIC requires Rust 1.95 or newer. The `guic-gpui` runtime and platform crates
 are pinned to matching exact versions. See [installation](installation.md)
 for the pins that apply to a release or source checkout.
 
-## The 0.6 compatibility contract
+## Patch release compatibility
 
 Starting with 0.6.0, patch releases preserve the documented core, token,
 component, chart, asset, icon, macro, and native integration APIs and feature
@@ -32,7 +32,8 @@ observable changes. A source-breaking change requires a minor release and
 migration guidance. Applications should retain their lockfiles for reproducible
 runtime and transitive dependency versions.
 
-Existing documented persistence schemas remain readable throughout 0.6.x.
+Existing documented persistence schemas remain readable throughout each minor release series. Version 0.7 continues
+to read the documented 0.6 schemas.
 Writers introducing a new schema version must preserve a reader or explicit
 migration for the previous version. Undocumented internal structures are not
 persistence formats. Editor and WebView retain the experimental limitations
