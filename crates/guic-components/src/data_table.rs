@@ -1,12 +1,12 @@
 use crate::{Label, ScrollArea, Separator};
 use gpui::{
-    AnyElement, App, Bounds, ClickEvent, FocusHandle, InteractiveElement as _, IntoElement,
-    KeyDownEvent, Keystroke, MouseButton, MouseMoveEvent, ParentElement as _, Pixels, RenderOnce,
-    ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _, Window, canvas, div,
-    px,
+    AnyElement, App, AppContext as _, Bounds, ClickEvent, FocusHandle, InteractiveElement as _,
+    IntoElement, KeyDownEvent, Keystroke, MouseMoveEvent, ParentElement as _, Pixels, RenderOnce,
+    ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _,
+    UniformListScrollHandle, Window, canvas, div, px, uniform_list,
 };
 use guic_tokens::Theme;
-use std::{cell::Cell, rc::Rc};
+use std::{cell::Cell, collections::HashMap, rc::Rc};
 
 use crate::virtual_list::VirtualListMetrics;
 
@@ -16,6 +16,45 @@ type SelectionHandler = Rc<dyn Fn(&DataTableSelection, &mut Window, &mut App)>;
 type ColumnResizeHandler = Rc<dyn Fn(&DataColumnResize, &mut Window, &mut App)>;
 type CellRenderer = Rc<dyn Fn(&DataTableCell) -> AnyElement>;
 type RowActionsRenderer = Rc<dyn Fn(&DataRow) -> AnyElement>;
+
+type OrderHandler = Rc<dyn Fn(&[SharedString], &mut Window, &mut App)>;
+
+#[derive(Clone)]
+struct ColumnDrag {
+    owner: gpui::EntityId,
+    id: SharedString,
+    title: SharedString,
+}
+
+impl gpui::Render for ColumnDrag {
+    fn render(&mut self, _: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let theme = Theme::global(cx);
+        div()
+            .px_3()
+            .py_2()
+            .bg(theme.background())
+            .text_color(theme.foreground())
+            .child(self.title.clone())
+    }
+}
+
+struct ColumnMoves {
+    owner: gpui::EntityId,
+    order: Vec<(SharedString, DataColumnPin)>,
+    change: OrderHandler,
+}
+
+impl ColumnMoves {
+    fn apply(&self, from: usize, to: usize, window: &mut Window, cx: &mut App) {
+        if from == to || self.order[from].1 != self.order[to].1 {
+            return;
+        }
+        let mut ids: Vec<_> = self.order.iter().map(|(id, _)| id.clone()).collect();
+        let id = ids.remove(from);
+        ids.insert(to, id);
+        (self.change)(&ids, window, cx);
+    }
+}
 
 /// Pin placement for a table column.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -668,6 +707,7 @@ pub enum DataTableState {
 pub struct DataTableRows {
     rows: Rc<[DataRow]>,
     ids: Rc<[SharedString]>,
+    positions: Rc<HashMap<SharedString, usize>>,
     selected: Rc<[SharedString]>,
 }
 
@@ -675,6 +715,10 @@ impl DataTableRows {
     /// Indexes a dataset once for reuse across renders.
     #[must_use]
     pub fn new(rows: Vec<DataRow>) -> Self {
+        let mut positions = HashMap::with_capacity(rows.len());
+        for (index, row) in rows.iter().enumerate() {
+            positions.entry(row.id.clone()).or_insert(index);
+        }
         let ids = rows.iter().map(|row| row.id.clone()).collect();
         let selected = rows
             .iter()
@@ -683,10 +727,17 @@ impl DataTableRows {
             .collect();
         Self {
             rows: rows.into(),
+            positions: Rc::new(positions),
             ids,
             selected,
         }
     }
+    /// Looks up a stable row identifier in display order. If IDs repeat, the first wins.
+    #[must_use]
+    pub fn row_index(&self, id: &str) -> Option<usize> {
+        self.positions.get(id).copied()
+    }
+
     /// Returns the immutable rows in display order.
     #[must_use]
     pub fn as_slice(&self) -> &[DataRow] {
@@ -727,6 +778,8 @@ pub struct DataTable {
     id: SharedString,
     title: Option<SharedString>,
     columns: Vec<DataColumn>,
+    column_order: Vec<SharedString>,
+    on_column_order_change: Option<OrderHandler>,
     rows: DataTableRows,
     state: DataTableState,
     sort: Option<TableSort>,
@@ -734,10 +787,12 @@ pub struct DataTable {
     on_row_select: Option<SharedStringHandler>,
     on_row_selection: Option<SelectionHandler>,
     selection_mode: DataTableSelectionMode,
+    selection_cursor: Option<(SharedString, SharedString)>,
     max_height: Option<f32>,
     row_height: f32,
     viewport: Option<DataTableViewport>,
     scroll_handle: Option<ScrollHandle>,
+    virtual_scroll: Option<UniformListScrollHandle>,
     column_viewport: Option<DataTableColumnViewport>,
     striped: bool,
     focus_handle: Option<FocusHandle>,
@@ -755,6 +810,8 @@ impl DataTable {
             id: id.into(),
             title: None,
             columns: Vec::new(),
+            column_order: Vec::new(),
+            on_column_order_change: None,
             rows: DataTableRows::default(),
             state: DataTableState::Ready,
             sort: None,
@@ -762,10 +819,12 @@ impl DataTable {
             on_row_select: None,
             on_row_selection: None,
             selection_mode: DataTableSelectionMode::Single,
+            selection_cursor: None,
             max_height: None,
             row_height: 40.0,
             viewport: None,
             scroll_handle: None,
+            virtual_scroll: None,
             column_viewport: None,
             striped: true,
             focus_handle: None,
@@ -787,6 +846,25 @@ impl DataTable {
     #[must_use]
     pub fn columns(mut self, columns: Vec<DataColumn>) -> Self {
         self.columns = columns;
+        self
+    }
+
+    /// Sets a presentation order by column ID. Unknown and repeated IDs are ignored.
+    /// Unlisted columns retain declaration order. Row cells always use declaration order.
+    #[must_use]
+    pub fn column_order(mut self, ids: Vec<SharedString>) -> Self {
+        self.column_order = ids;
+        self
+    }
+
+    /// Enables header dragging and Alt+Left/Right moves within each pin group.
+    /// Store the emitted full order and pass it back through `column_order`.
+    #[must_use]
+    pub fn on_column_order_change(
+        mut self,
+        handler: impl Fn(&[SharedString], &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_column_order_change = Some(Rc::new(handler));
         self
     }
 
@@ -859,6 +937,15 @@ impl DataTable {
         self
     }
 
+    /// Restores the anchor and focused row from a previous selection callback.
+    /// This preserves the direction of a keyboard range when the host redraws.
+    /// Removed rows fall back to the first selected row.
+    #[must_use]
+    pub fn selection_cursor(mut self, selection: &DataTableSelection) -> Self {
+        self.selection_cursor = Some((selection.anchor_id.clone(), selection.focused_id.clone()));
+        self
+    }
+
     /// Caps the scrollable table body height in logical pixels.
     #[must_use]
     pub fn max_height(mut self, height: f32) -> Self {
@@ -880,7 +967,21 @@ impl DataTable {
     /// Applies externally managed viewport metadata for row virtualization.
     #[must_use]
     pub fn viewport(mut self, viewport: DataTableViewport) -> Self {
+        self.virtual_scroll = None;
         self.viewport = Some(viewport);
+        self
+    }
+
+    /// Renders fixed-height rows on demand inside a scrollable body of the given height.
+    /// Retain the handle to reveal rows from application code. The runtime determines
+    /// the visible range during layout, including after scrolling or resizing.
+    #[must_use]
+    pub fn virtualized(mut self, height: f32, handle: UniformListScrollHandle) -> Self {
+        if height.is_finite() && height > 0.0 {
+            self.max_height = Some(height);
+            self.viewport = None;
+            self.virtual_scroll = Some(handle);
+        }
         self
     }
 
@@ -964,7 +1065,8 @@ impl DataTable {
     /// Returns visible column metadata in render order.
     #[must_use]
     pub fn visible_column_models(&self) -> Vec<VisibleDataColumn> {
-        self.rendered_column_indices()
+        self.visible_columns()
+            .indices
             .into_iter()
             .map(|index| VisibleDataColumn::new(&self.columns[index]))
             .collect()
@@ -1018,7 +1120,16 @@ impl DataTable {
     }
 
     fn visible_rows(&self) -> (usize, usize, f32, f32) {
-        let Some(viewport) = self.viewport else {
+        let viewport = self.viewport.or_else(|| {
+            let (offset, height) = crate::virtual_list::tracked_viewport(
+                self.virtual_scroll.as_ref()?,
+                self.max_height?,
+                self.row_height,
+                self.rows.len(),
+            );
+            Some(DataTableViewport::new(offset, height).overscan(0))
+        });
+        let Some(viewport) = viewport else {
             return (0, self.rows.len(), 0.0, 0.0);
         };
 
@@ -1064,22 +1175,20 @@ impl DataTable {
     /// Returns the visible row identifiers in render order.
     #[must_use]
     pub fn visible_row_ids(&self) -> Vec<SharedString> {
-        self.visible_row_models()
-            .into_iter()
-            .map(|row| row.id)
-            .collect()
+        let (start, end, _, _) = self.visible_rows();
+        self.rows.ids[start..end].to_vec()
     }
 
     /// Returns the next row identifier after the provided one.
     #[must_use]
     pub fn next_row_id(&self, current: &str) -> Option<SharedString> {
-        adjacent_row_id(&self.rows, current, 1)
+        row_navigation_target(&self.rows, current, DataTableNavigation::Down, 1)
     }
 
     /// Returns the previous row identifier before the provided one.
     #[must_use]
     pub fn previous_row_id(&self, current: &str) -> Option<SharedString> {
-        adjacent_row_id(&self.rows, current, -1)
+        row_navigation_target(&self.rows, current, DataTableNavigation::Up, 1)
     }
 
     /// Returns the host-applied outcome for a directional navigation intent.
@@ -1089,8 +1198,7 @@ impl DataTable {
         current: &str,
         navigation: DataTableNavigation,
     ) -> DataTableNavigationOutcome {
-        let ids = self.row_ids();
-        row_navigation_target(&ids, current, navigation, self.page_step())
+        row_navigation_target(&self.rows, current, navigation, self.page_step())
             .map_or(DataTableNavigationOutcome::Noop, |id| {
                 DataTableNavigationOutcome::Select(id)
             })
@@ -1099,7 +1207,7 @@ impl DataTable {
     /// Returns the row identifiers between two rows, inclusive, in table order.
     #[must_use]
     pub fn row_range_ids(&self, anchor_id: &str, focused_id: &str) -> Vec<SharedString> {
-        row_range_ids(&self.row_ids(), anchor_id, focused_id)
+        row_range_ids(&self.rows, anchor_id, focused_id)
     }
 
     /// Returns a host-applied selection update for a row interaction.
@@ -1109,36 +1217,61 @@ impl DataTable {
         row_id: &str,
         intent: DataTableSelectionIntent,
     ) -> Option<DataTableSelection> {
-        let row_ids = self.row_ids();
         selection_change_for(
-            &row_ids,
-            &self.selected_row_ids(),
+            &self.rows,
+            self.anchor(),
             row_id,
             intent,
             self.selection_mode,
         )
     }
 
-    fn row_ids(&self) -> Rc<[SharedString]> {
-        self.rows.ids.clone()
+    fn anchor(&self) -> Option<&SharedString> {
+        self.selection_cursor
+            .as_ref()
+            .map(|(anchor, _)| anchor)
+            .filter(|id| self.rows.row_index(id).is_some())
+            .or_else(|| self.rows.selected.first())
     }
 
     fn page_step(&self) -> usize {
-        self.viewport.map_or(10, |viewport| {
-            ((viewport.viewport_height() / self.row_height).floor() as usize).max(1)
-        })
+        self.viewport
+            .map(|viewport| viewport.viewport_height())
+            .or_else(|| self.virtual_scroll.as_ref().and(self.max_height))
+            .map_or(10, |height| {
+                ((height / self.row_height).floor() as usize).max(1)
+            })
     }
 
-    fn rendered_column_indices(&self) -> Vec<usize> {
-        let mut starts = Vec::new();
-        let mut middle = Vec::new();
-        let mut ends = Vec::new();
-        let mut middle_offset = 0.0;
-
-        for (index, column) in self.columns.iter().enumerate() {
+    fn visible_columns(&self) -> VisibleColumns {
+        let mut order: Vec<_> = (0..self.columns.len()).collect();
+        if !self.column_order.is_empty() {
+            let mut priorities = HashMap::new();
+            for (i, id) in self.column_order.iter().enumerate() {
+                priorities.entry(id).or_insert(i);
+            }
+            order.sort_by_key(|&i| {
+                priorities
+                    .get(&self.columns[i].id)
+                    .copied()
+                    .unwrap_or(usize::MAX)
+            });
+        }
+        order.sort_by_key(|&i| match self.columns[i].pin {
+            DataColumnPin::Start => 0,
+            DataColumnPin::None => 1,
+            DataColumnPin::End => 2,
+        });
+        let mut positions = vec![0; order.len()];
+        let mut indices = Vec::new();
+        let mut first_middle_offset = 0.;
+        let mut middle_offset = 0.;
+        let mut first_middle = true;
+        for (position, &index) in order.iter().enumerate() {
+            positions[index] = position;
+            let column = &self.columns[index];
             match column.pin {
-                DataColumnPin::Start => starts.push(index),
-                DataColumnPin::End => ends.push(index),
+                DataColumnPin::Start | DataColumnPin::End => indices.push(index),
                 DataColumnPin::None => {
                     let column_start = middle_offset;
                     let column_end = column_start + column.effective_width();
@@ -1150,15 +1283,182 @@ impl DataTable {
                         column_end > viewport_start && column_start < viewport_end
                     });
                     if visible {
-                        middle.push(index);
+                        if first_middle && let Some(viewport) = self.column_viewport {
+                            first_middle_offset = column_start - viewport.scroll_offset;
+                        }
+                        first_middle = false;
+                        indices.push(index);
                     }
                 }
             }
         }
 
-        starts.extend(middle);
-        starts.extend(ends);
-        starts
+        let clipped = self.column_viewport.is_some()
+            || self.columns.iter().any(|c| c.pin != DataColumnPin::None);
+        VisibleColumns {
+            order,
+            positions,
+            indices,
+            first_middle_offset,
+            clipped,
+        }
+    }
+}
+
+struct VisibleColumns {
+    order: Vec<usize>,
+    positions: Vec<usize>,
+    indices: Vec<usize>,
+    first_middle_offset: f32,
+    clipped: bool,
+}
+
+impl VisibleColumns {
+    fn middle(&self, cells: gpui::Div) -> gpui::Div {
+        if self.first_middle_offset != 0.0 {
+            div()
+                .min_w_0()
+                .flex_1()
+                .overflow_hidden()
+                .flex()
+                .child(cells.ml(px(self.first_middle_offset)))
+        } else if self.clipped {
+            cells.overflow_hidden()
+        } else {
+            cells
+        }
+    }
+}
+
+impl DataTable {
+    fn render_row(
+        &self,
+        row_index: usize,
+        columns: &VisibleColumns,
+        theme: &Theme,
+    ) -> impl IntoElement + use<> {
+        let row = &self.rows[row_index];
+        let selected = row.selected;
+        let stripe = self.striped && row_index % 2 == 1;
+        let row_id = row.id.clone();
+        let mut row_view = div()
+            .id(row.id.clone())
+            .role(gpui::Role::Row)
+            .aria_row_index(row_index + 1)
+            .aria_selected(selected)
+            .debug_selector({
+                let row_id = row_id.clone();
+                move || format!("guic-data-table-row-{row_id}")
+            })
+            .w_full()
+            .min_h(px(self.row_height))
+            .flex()
+            .items_center()
+            .border_b_1()
+            .border_color(theme.border().opacity(0.55))
+            .bg(if selected {
+                theme.primary().opacity(0.12)
+            } else if stripe {
+                theme.secondary().opacity(0.08)
+            } else {
+                theme.background()
+            });
+        if self.viewport.is_some() || self.virtual_scroll.is_some() {
+            row_view = row_view
+                .h(px(self.row_height))
+                .flex_shrink_0()
+                .overflow_hidden();
+        }
+        let mut row_start = div().flex().flex_shrink_0();
+        let mut row_middle = div().min_w_0().flex_1().flex();
+        let mut row_end = div().flex().flex_shrink_0();
+
+        for &column_index in &columns.indices {
+            let column = &self.columns[column_index];
+            let cell = row
+                .cells
+                .get(column_index)
+                .cloned()
+                .unwrap_or_else(|| SharedString::from(""));
+            let width = if self.column_viewport.is_some() || column.pin != DataColumnPin::None {
+                Some(column.effective_width())
+            } else {
+                column.width
+            };
+            let content = self.cell_renderer.as_ref().map(|renderer| {
+                renderer(&DataTableCell {
+                    row_id: row.id.clone(),
+                    column_id: column.id.clone(),
+                    row_index,
+                    column_index,
+                    value: cell.clone(),
+                    selected,
+                })
+            });
+            let cell = render_body_cell(cell, content, width, column.align, selected, theme)
+                .id(("cell", column_index))
+                .role(gpui::Role::Cell)
+                .aria_column_index(columns.positions[column_index])
+                .into_any_element();
+            match column.pin {
+                DataColumnPin::Start => row_start = row_start.child(cell),
+                DataColumnPin::None => row_middle = row_middle.child(cell),
+                DataColumnPin::End => row_end = row_end.child(cell),
+            }
+        }
+
+        if let Some(renderer) = &self.row_actions_renderer {
+            row_end = row_end.child(
+                div()
+                    .id("actions")
+                    .role(gpui::Role::Cell)
+                    .aria_column_index(self.columns.len())
+                    .w(px(self.row_actions_width))
+                    .px_3()
+                    .py_2()
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .child(renderer(row)),
+            );
+        }
+        row_view = row_view
+            .child(row_start)
+            .child(columns.middle(row_middle))
+            .child(row_end);
+
+        if self.on_row_select.is_some() || self.on_row_selection.is_some() {
+            let row_handler = self.on_row_select.clone();
+            let selection_handler = self.on_row_selection.clone();
+            let rows = self.rows.clone();
+            let anchor = self.anchor().cloned();
+            let selection_mode = self.selection_mode;
+            row_view = row_view
+                .cursor_pointer()
+                .on_click(move |event: &ClickEvent, window, cx| {
+                    let modifiers = event.modifiers();
+                    let intent = if modifiers.shift {
+                        DataTableSelectionIntent::Extend
+                    } else if modifiers.platform || modifiers.control {
+                        DataTableSelectionIntent::Toggle
+                    } else {
+                        DataTableSelectionIntent::Replace
+                    };
+                    emit_row_selection(
+                        &row_id,
+                        intent,
+                        &rows,
+                        anchor.as_ref(),
+                        selection_mode,
+                        row_handler.as_ref(),
+                        selection_handler.as_ref(),
+                        window,
+                        cx,
+                    );
+                });
+        }
+
+        row_view
     }
 }
 
@@ -1167,33 +1467,29 @@ impl RenderOnce for DataTable {
         let theme = Theme::global(cx).clone();
         let state_message = self.state_message();
         let sort = self.sort.clone();
-        let rendered_column_indices = self.rendered_column_indices();
-        let constrain_middle = self.column_viewport.is_some()
-            || self
-                .columns
-                .iter()
-                .any(|column| column.pin != DataColumnPin::None);
+        let columns = self.visible_columns();
+        let moves = self.on_column_order_change.as_ref().map(|change| {
+            Rc::new(ColumnMoves {
+                owner: _window
+                    .use_keyed_state(format!("{}-column-order", self.id), cx, |_, _| ())
+                    .entity_id(),
+                order: columns
+                    .order
+                    .iter()
+                    .map(|&i| (self.columns[i].id.clone(), self.columns[i].pin))
+                    .collect(),
+                change: change.clone(),
+            })
+        });
         let (start, end, top_spacer, bottom_spacer) = self.visible_rows();
-        let all_row_ids = self.row_ids();
-        let selected_row_id = self.selected_row_id();
-        let selected_row_ids = self.rows.selected.clone();
         let focus_handle = self.focus_handle.clone();
-        let keyboard = focus_handle
-            .as_ref()
-            .filter(|_| self.on_row_select.is_some() || self.on_row_selection.is_some())
-            .map(|_| {
-                (
-                    all_row_ids.clone(),
-                    selected_row_id.clone(),
-                    selected_row_ids.clone(),
-                    self.page_step(),
-                    self.selection_mode,
-                    self.on_row_select.clone(),
-                    self.on_row_selection.clone(),
-                )
-            });
         let mut root = div()
             .id(self.id.clone())
+            .role(gpui::Role::Table)
+            .aria_row_count(self.rows.len().saturating_add(1))
+            .aria_column_count(
+                self.columns.len() + usize::from(self.row_actions_renderer.is_some()),
+            )
             .w_full()
             .rounded(px(theme.radius.lg))
             .border_1()
@@ -1207,50 +1503,44 @@ impl RenderOnce for DataTable {
             root = root.key_context("GuicDataTable").track_focus(&handle);
         }
 
-        if let Some((
-            row_ids,
-            selected_id,
-            selected_ids,
-            page_step,
-            selection_mode,
-            row_handler,
-            selection_handler,
-        )) = keyboard
+        if self.focus_handle.is_some()
+            && (self.on_row_select.is_some() || self.on_row_selection.is_some())
         {
+            let rows = self.rows.clone();
+            let focused = self
+                .selection_cursor
+                .as_ref()
+                .map(|(_, focus)| focus)
+                .filter(|id| rows.row_index(id).is_some())
+                .cloned()
+                .or_else(|| self.selected_row_id());
+            let anchor = self.anchor().cloned();
+            let scroll = self.virtual_scroll.clone();
+            let page_step = self.page_step();
+            let selection_mode = self.selection_mode;
+            let row_handler = self.on_row_select.clone();
+            let selection_handler = self.on_row_selection.clone();
             root = root.on_key_down(move |event: &KeyDownEvent, window, cx| {
                 let Some(navigation) = data_table_navigation_for(&event.keystroke) else {
                     return;
                 };
-                let current = match &selected_id {
-                    Some(current) => current.clone(),
-                    None => {
-                        // With no active selection, land directly on an edge row.
-                        let edge = match navigation {
-                            DataTableNavigation::Up
-                            | DataTableNavigation::End
-                            | DataTableNavigation::PageUp => row_ids.last(),
-                            _ => row_ids.first(),
-                        };
-                        if let Some(id) = edge {
-                            emit_row_selection(
-                                id,
-                                DataTableSelectionIntent::Replace,
-                                &row_ids,
-                                &selected_ids,
-                                selection_mode,
-                                row_handler.as_ref(),
-                                selection_handler.as_ref(),
-                                window,
-                                cx,
-                            );
-                        }
-                        return;
+                let target = if let Some(current) = &focused {
+                    row_navigation_target(&rows, current, navigation, page_step)
+                } else {
+                    match navigation {
+                        DataTableNavigation::Up
+                        | DataTableNavigation::End
+                        | DataTableNavigation::PageUp => rows.ids.last().cloned(),
+                        _ => rows.ids.first().cloned(),
                     }
                 };
-                if let Some(target) =
-                    row_navigation_target(&row_ids, current.as_ref(), navigation, page_step)
-                {
-                    let intent = if event.keystroke.modifiers.shift {
+                if let Some(target) = target {
+                    if let Some(handle) = &scroll
+                        && let Some(index) = rows.row_index(&target)
+                    {
+                        handle.scroll_to_item(index, gpui::ScrollStrategy::Nearest);
+                    }
+                    let intent = if focused.is_some() && event.keystroke.modifiers.shift {
                         DataTableSelectionIntent::Extend
                     } else {
                         DataTableSelectionIntent::Replace
@@ -1258,19 +1548,21 @@ impl RenderOnce for DataTable {
                     emit_row_selection(
                         &target,
                         intent,
-                        &row_ids,
-                        &selected_ids,
+                        &rows,
+                        anchor.as_ref(),
                         selection_mode,
                         row_handler.as_ref(),
                         selection_handler.as_ref(),
                         window,
                         cx,
                     );
+                    cx.stop_propagation();
                 }
             });
         }
 
-        if let Some(title) = self.title {
+        if let Some(title) = self.title.clone() {
+            root = root.aria_label(title.clone());
             root = root.child(
                 div()
                     .px_4()
@@ -1281,6 +1573,9 @@ impl RenderOnce for DataTable {
         }
 
         let mut header = div()
+            .id("header")
+            .role(gpui::Role::Row)
+            .aria_row_index(0)
             .w_full()
             .flex()
             .items_center()
@@ -1289,12 +1584,9 @@ impl RenderOnce for DataTable {
             .border_color(theme.border());
         let mut header_start = div().flex().flex_shrink_0();
         let mut header_middle = div().min_w_0().flex_1().flex();
-        if constrain_middle {
-            header_middle = header_middle.overflow_hidden();
-        }
         let mut header_end = div().flex().flex_shrink_0();
 
-        for &column_index in &rendered_column_indices {
+        for &column_index in &columns.indices {
             let column = &self.columns[column_index];
             let mut title = column.title.to_string();
             if let Some(active_sort) = &sort
@@ -1307,13 +1599,12 @@ impl RenderOnce for DataTable {
                 || TableSort::new(column.id.clone(), SortDirection::Ascending),
                 |active_sort| active_sort.next_for(&column.id),
             );
-            let cell = render_header_cell(
+            let cell = self.render_header_cell(
                 &title,
-                column,
+                column_index,
+                columns.positions[column_index],
                 next_sort,
-                self.on_sort.clone(),
-                self.on_column_resize.clone(),
-                self.column_viewport.is_some(),
+                moves.as_ref(),
                 &theme,
             );
             match column.pin {
@@ -1326,19 +1617,23 @@ impl RenderOnce for DataTable {
         if self.row_actions_renderer.is_some() {
             header_end = header_end.child(
                 render_cell_base(
-                    "Actions",
                     Some(self.row_actions_width),
                     DataColumnAlign::End,
                     true,
                     false,
                     &theme,
                 )
+                .id("actions-header")
+                .role(gpui::Role::ColumnHeader)
+                .aria_column_index(self.columns.len())
+                .aria_label("Actions")
+                .child("Actions")
                 .into_any_element(),
             );
         }
         header = header
             .child(header_start)
-            .child(header_middle)
+            .child(columns.middle(header_middle))
             .child(header_end);
 
         let body = if let Some((message, is_error)) = state_message {
@@ -1366,133 +1661,34 @@ impl RenderOnce for DataTable {
                         .muted(true),
                 )
                 .into_any_element()
+        } else if let Some(handle) = self.virtual_scroll.clone() {
+            let id = self.id.clone();
+            let height = self
+                .max_height
+                .expect("virtualized tables have a body height");
+            let row_height = self.row_height;
+            let list = uniform_list("body-rows", self.rows.len(), move |range, _, _| {
+                range
+                    .map(|index| self.render_row(index, &columns, &theme))
+                    .collect()
+            })
+            .with_item_size(gpui::size(px(0.0), px(row_height)))
+            .track_scroll(&handle)
+            .size_full();
+            div()
+                .debug_selector(move || format!("guic-data-table-body-{id}"))
+                .w_full()
+                .h(px(height))
+                .child(list)
+                .into_any_element()
         } else {
             let mut rows = div().w_full().flex().flex_col();
             if top_spacer > 0.0 {
                 rows = rows.child(div().w_full().h(px(top_spacer)).flex_shrink_0());
             }
 
-            for (row_index, row) in self
-                .rows
-                .iter()
-                .enumerate()
-                .skip(start)
-                .take(end.saturating_sub(start))
-            {
-                let selected = row.selected;
-                let stripe = self.striped && row_index % 2 == 1;
-                let row_id = row.id.clone();
-                let mut row_view = div()
-                    .id(row.id.clone())
-                    .debug_selector({
-                        let row_id = row_id.clone();
-                        move || format!("guic-data-table-row-{row_id}")
-                    })
-                    .w_full()
-                    .min_h(px(self.row_height))
-                    .flex()
-                    .items_center()
-                    .border_b_1()
-                    .border_color(theme.border().opacity(0.55))
-                    .bg(if selected {
-                        theme.primary().opacity(0.12)
-                    } else if stripe {
-                        theme.secondary().opacity(0.08)
-                    } else {
-                        theme.background()
-                    });
-                if self.viewport.is_some() {
-                    row_view = row_view
-                        .h(px(self.row_height))
-                        .flex_shrink_0()
-                        .overflow_hidden();
-                }
-                let mut row_start = div().flex().flex_shrink_0();
-                let mut row_middle = div().min_w_0().flex_1().flex();
-                if constrain_middle {
-                    row_middle = row_middle.overflow_hidden();
-                }
-                let mut row_end = div().flex().flex_shrink_0();
-
-                for &column_index in &rendered_column_indices {
-                    let column = &self.columns[column_index];
-                    let cell = row
-                        .cells
-                        .get(column_index)
-                        .cloned()
-                        .unwrap_or_else(|| SharedString::from(""));
-                    let width =
-                        if self.column_viewport.is_some() || column.pin != DataColumnPin::None {
-                            Some(column.effective_width())
-                        } else {
-                            column.width
-                        };
-                    let content = self.cell_renderer.as_ref().map(|renderer| {
-                        renderer(&DataTableCell {
-                            row_id: row.id.clone(),
-                            column_id: column.id.clone(),
-                            row_index,
-                            column_index,
-                            value: cell.clone(),
-                            selected,
-                        })
-                    });
-                    let cell =
-                        render_body_cell(&cell, content, width, column.align, selected, &theme)
-                            .into_any_element();
-                    match column.pin {
-                        DataColumnPin::Start => row_start = row_start.child(cell),
-                        DataColumnPin::None => row_middle = row_middle.child(cell),
-                        DataColumnPin::End => row_end = row_end.child(cell),
-                    }
-                }
-
-                if let Some(renderer) = &self.row_actions_renderer {
-                    row_end = row_end.child(
-                        div()
-                            .w(px(self.row_actions_width))
-                            .px_3()
-                            .py_2()
-                            .flex()
-                            .items_center()
-                            .justify_end()
-                            .child(renderer(row)),
-                    );
-                }
-                row_view = row_view.child(row_start).child(row_middle).child(row_end);
-
-                if self.on_row_select.is_some() || self.on_row_selection.is_some() {
-                    let row_handler = self.on_row_select.clone();
-                    let selection_handler = self.on_row_selection.clone();
-                    let row_ids = all_row_ids.clone();
-                    let selected_ids = selected_row_ids.clone();
-                    let selection_mode = self.selection_mode;
-                    row_view = row_view.cursor_pointer().on_click(
-                        move |event: &ClickEvent, window, cx| {
-                            let modifiers = event.modifiers();
-                            let intent = if modifiers.shift {
-                                DataTableSelectionIntent::Extend
-                            } else if modifiers.platform || modifiers.control {
-                                DataTableSelectionIntent::Toggle
-                            } else {
-                                DataTableSelectionIntent::Replace
-                            };
-                            emit_row_selection(
-                                &row_id,
-                                intent,
-                                &row_ids,
-                                &selected_ids,
-                                selection_mode,
-                                row_handler.as_ref(),
-                                selection_handler.as_ref(),
-                                window,
-                                cx,
-                            );
-                        },
-                    );
-                }
-
-                rows = rows.child(row_view);
+            for row_index in start..end {
+                rows = rows.child(self.render_row(row_index, &columns, &theme));
             }
 
             if bottom_spacer > 0.0 {
@@ -1520,121 +1716,155 @@ impl RenderOnce for DataTable {
     }
 }
 
-fn render_header_cell(
-    value: &str,
-    column: &DataColumn,
-    next_sort: TableSort,
-    on_sort: Option<SortHandler>,
-    on_resize: Option<ColumnResizeHandler>,
-    virtualized: bool,
-    theme: &Theme,
-) -> gpui::AnyElement {
-    let width = if virtualized || column.pin != DataColumnPin::None {
-        Some(column.effective_width())
-    } else {
-        column.width
-    };
-    let content = if column.sortable {
-        if let Some(handler) = on_sort {
-            render_cell_base(value, width, column.align, true, false, theme)
-                .id(format!("guic-data-table-header-{}", column.id))
+impl DataTable {
+    fn render_header_cell(
+        &self,
+        value: &str,
+        column_index: usize,
+        position: usize,
+        next_sort: TableSort,
+        moves: Option<&Rc<ColumnMoves>>,
+        theme: &Theme,
+    ) -> gpui::AnyElement {
+        let column = &self.columns[column_index];
+        let width = if self.column_viewport.is_some() || column.pin != DataColumnPin::None {
+            Some(column.effective_width())
+        } else {
+            column.width
+        };
+        let mut content = render_cell_base(width, column.align, true, false, theme)
+            .id(("column-header", column_index))
+            .role(gpui::Role::ColumnHeader)
+            .aria_label(value.to_owned())
+            .aria_column_index(position)
+            .child(value.to_owned());
+        if let Some(handler) = self.on_sort.clone().filter(|_| column.sortable) {
+            content = content
                 .debug_selector({
                     let column_id = column.id.clone();
                     move || format!("guic-data-table-header-{column_id}")
                 })
                 .cursor_pointer()
-                .on_click(move |_: &ClickEvent, window, cx| handler(&next_sort, window, cx))
-                .into_any_element()
-        } else {
-            render_cell_base(value, width, column.align, true, false, theme).into_any_element()
+                .on_click(move |_: &ClickEvent, window, cx| handler(&next_sort, window, cx));
         }
-    } else {
-        render_cell_base(value, width, column.align, true, false, theme).into_any_element()
-    };
 
-    let Some(resize_handler) = on_resize else {
-        return content.into_any_element();
-    };
+        if let Some(moves) = moves {
+            let source = ColumnDrag {
+                owner: moves.owner,
+                id: column.id.clone(),
+                title: column.title.clone(),
+            };
+            let drop_moves = moves.clone();
+            let key_moves = moves.clone();
+            let id = column.id.clone();
+            content = content
+                .tab_index(0)
+                .debug_selector(move || format!("guic-data-table-header-{id}"))
+                .focus(|style| style.border_1().border_color(theme.primary()))
+                .on_drag(source, |payload, _, _, cx| cx.new(|_| payload.clone()))
+                .on_drop(move |payload: &ColumnDrag, window, cx| {
+                    if payload.owner == drop_moves.owner
+                        && let Some(from) = drop_moves
+                            .order
+                            .iter()
+                            .position(|(id, _)| id == &payload.id)
+                    {
+                        drop_moves.apply(from, position, window, cx);
+                    }
+                })
+                .on_key_down(move |event: &KeyDownEvent, window, cx| {
+                    if event.keystroke.modifiers.alt {
+                        let to = match event.keystroke.key.as_str() {
+                            "left" => position.saturating_sub(1),
+                            "right" => (position + 1).min(key_moves.order.len() - 1),
+                            _ => return,
+                        };
+                        key_moves.apply(position, to, window, cx);
+                        cx.stop_propagation();
+                    }
+                });
+        }
 
-    let bounds = Rc::new(Cell::new(None::<Bounds<Pixels>>));
-    let bounds_sink = bounds.clone();
-    let bounds_canvas = canvas(
-        move |cell_bounds, _window, _cx| bounds_sink.set(Some(cell_bounds)),
-        |_bounds, _state, _window, _cx| {},
-    )
-    .absolute()
-    .inset_0();
-    let column_id = column.id.clone();
-    let min_width = column.min_width;
-    let current_width = column.effective_width();
-    let selector = format!("guic-data-table-resize-{}", column.id);
-    let handle = div()
-        .id(selector.clone())
-        .debug_selector(move || selector.clone())
+        let Some(resize_handler) = self.on_column_resize.clone() else {
+            return content.into_any_element();
+        };
+
+        let bounds = Rc::new(Cell::new(None::<Bounds<Pixels>>));
+        let bounds_sink = bounds.clone();
+        let bounds_canvas = canvas(
+            move |cell_bounds, _window, _cx| bounds_sink.set(Some(cell_bounds)),
+            |_bounds, _state, _window, _cx| {},
+        )
         .absolute()
-        .top_0()
-        .right_0()
-        .bottom_0()
-        .w(px(8.0))
-        .cursor_col_resize()
-        .bg(gpui::transparent_black())
-        .hover(|style: gpui::StyleRefinement| style.bg(gpui::black().opacity(0.08)))
-        .on_mouse_down(MouseButton::Left, |_, _, _| {})
-        .on_click({
-            let column_id = column_id.clone();
-            let resize_handler = resize_handler.clone();
-            move |_: &ClickEvent, window, cx| {
-                cx.stop_propagation();
+        .inset_0();
+        let column_id = column.id.clone();
+        let min_width = column.min_width;
+        let current_width = column.effective_width();
+        let selector = format!("guic-data-table-resize-{}", column.id);
+        let handle = div()
+            .id(selector.clone())
+            .debug_selector(move || selector.clone())
+            .absolute()
+            .top_0()
+            .right_0()
+            .bottom_0()
+            .w(px(8.0))
+            .cursor_col_resize()
+            .bg(gpui::transparent_black())
+            .hover(|style: gpui::StyleRefinement| style.bg(gpui::black().opacity(0.08)))
+            .on_click({
+                let column_id = column_id.clone();
+                let resize_handler = resize_handler.clone();
+                move |_: &ClickEvent, window, cx| {
+                    cx.stop_propagation();
+                    resize_handler(
+                        &DataColumnResize::new(column_id.clone(), current_width + 24.0),
+                        window,
+                        cx,
+                    );
+                }
+            })
+            .on_drag_update(move |_, event: &MouseMoveEvent, window, cx| {
+                let Some(cell_bounds) = bounds.get() else {
+                    return;
+                };
+                let proposed = f32::from(event.position.x - cell_bounds.origin.x).max(min_width);
                 resize_handler(
-                    &DataColumnResize::new(column_id.clone(), current_width + 24.0),
+                    &DataColumnResize::new(column_id.clone(), proposed),
                     window,
                     cx,
                 );
-            }
-        })
-        .on_mouse_move(move |event: &MouseMoveEvent, window, cx| {
-            if !event.dragging() {
-                return;
-            }
-            let Some(cell_bounds) = bounds.get() else {
-                return;
-            };
-            let proposed = f32::from(event.position.x - cell_bounds.origin.x).max(min_width);
-            resize_handler(
-                &DataColumnResize::new(column_id.clone(), proposed),
-                window,
-                cx,
-            );
-        });
+            });
 
-    div()
-        .relative()
-        .flex()
-        .w(px(width.unwrap_or_else(|| column.effective_width())))
-        .child(bounds_canvas)
-        .child(div().w_full().child(content))
-        .child(handle)
-        .into_any_element()
+        div()
+            .relative()
+            .flex()
+            .w(px(width.unwrap_or_else(|| column.effective_width())))
+            .flex_shrink_0()
+            .child(bounds_canvas)
+            .child(div().w_full().child(content))
+            .child(handle)
+            .into_any_element()
+    }
 }
 
 fn render_body_cell(
-    value: &str,
+    value: SharedString,
     content: Option<AnyElement>,
     width: Option<f32>,
     align: DataColumnAlign,
     selected: bool,
     theme: &Theme,
 ) -> gpui::Div {
-    let cell = render_cell_base("", width, align, false, selected, theme);
+    let cell = render_cell_base(width, align, false, selected, theme);
     if let Some(content) = content {
         cell.child(content)
     } else {
-        cell.child(value.to_owned())
+        cell.child(value)
     }
 }
 
 fn render_cell_base(
-    value: &str,
     width: Option<f32>,
     align: DataColumnAlign,
     header: bool,
@@ -1666,27 +1896,28 @@ fn render_cell_base(
     };
 
     cell = if let Some(width) = width {
-        cell.w(px(width))
+        cell.w(px(width)).flex_shrink_0()
     } else {
         cell.flex_1()
     };
 
-    cell.child(value.to_owned())
+    cell
 }
 
 fn row_navigation_target(
-    ids: &[SharedString],
+    rows: &DataTableRows,
     current: &str,
     navigation: DataTableNavigation,
     page_step: usize,
 ) -> Option<SharedString> {
-    let index = ids.iter().position(|id| id.as_ref() == current)?;
+    let ids = &rows.ids;
+    let index = rows.row_index(current)?;
     let target_index = match navigation {
         DataTableNavigation::Up => index.checked_sub(1),
         DataTableNavigation::Down => index.checked_add(1),
         DataTableNavigation::Home => Some(0),
         DataTableNavigation::End => ids.len().checked_sub(1),
-        DataTableNavigation::PageUp => index.checked_sub(page_step),
+        DataTableNavigation::PageUp => Some(index.saturating_sub(page_step)),
         DataTableNavigation::PageDown => Some(
             index
                 .saturating_add(page_step)
@@ -1696,43 +1927,49 @@ fn row_navigation_target(
     target_index.and_then(|index| ids.get(index)).cloned()
 }
 
-fn row_range_ids(ids: &[SharedString], anchor_id: &str, focused_id: &str) -> Vec<SharedString> {
-    let Some(anchor_index) = ids.iter().position(|id| id.as_ref() == anchor_id) else {
+fn row_range_ids(rows: &DataTableRows, anchor_id: &str, focused_id: &str) -> Vec<SharedString> {
+    let Some(anchor_index) = rows.row_index(anchor_id) else {
         return Vec::new();
     };
-    let Some(focused_index) = ids.iter().position(|id| id.as_ref() == focused_id) else {
+    let Some(focused_index) = rows.row_index(focused_id) else {
         return Vec::new();
     };
     let start = anchor_index.min(focused_index);
     let end = anchor_index.max(focused_index);
-    ids[start..=end].to_vec()
+    rows.ids[start..=end].to_vec()
 }
 
 fn selection_change_for(
-    row_ids: &[SharedString],
-    selected_ids: &[SharedString],
+    rows: &DataTableRows,
+    anchor: Option<&SharedString>,
     row_id: &str,
     intent: DataTableSelectionIntent,
     selection_mode: DataTableSelectionMode,
 ) -> Option<DataTableSelection> {
-    let focused_id = row_ids.iter().find(|id| id.as_ref() == row_id)?.clone();
-    let anchor_id = selected_ids
-        .first()
-        .cloned()
-        .unwrap_or_else(|| focused_id.clone());
+    let index = rows.row_index(row_id)?;
+    let focused_id = rows.ids[index].clone();
     let effective_intent = match selection_mode {
         DataTableSelectionMode::Single => DataTableSelectionIntent::Replace,
         DataTableSelectionMode::Multiple => intent,
     };
+    let anchor_id = if effective_intent == DataTableSelectionIntent::Extend {
+        anchor.unwrap_or(&focused_id).clone()
+    } else {
+        focused_id.clone()
+    };
     let selected_ids = match effective_intent {
         DataTableSelectionIntent::Replace => vec![focused_id.clone()],
-        DataTableSelectionIntent::Toggle => toggle_selection(row_ids, selected_ids, row_id),
-        DataTableSelectionIntent::Extend => row_range_ids(row_ids, anchor_id.as_ref(), row_id),
-    };
-    let selected_ids = if selected_ids.is_empty() {
-        vec![focused_id.clone()]
-    } else {
-        selected_ids
+        DataTableSelectionIntent::Extend => row_range_ids(rows, &anchor_id, row_id),
+        DataTableSelectionIntent::Toggle => {
+            let mut selected = rows.selected.to_vec();
+            let insertion = selected.partition_point(|id| rows.positions[id] < index);
+            if selected.get(insertion) == Some(&focused_id) {
+                selected.remove(insertion);
+            } else {
+                selected.insert(insertion, focused_id.clone());
+            }
+            selected
+        }
     };
 
     Some(DataTableSelection::new(
@@ -1743,31 +1980,12 @@ fn selection_change_for(
     ))
 }
 
-fn toggle_selection(
-    row_ids: &[SharedString],
-    selected_ids: &[SharedString],
-    row_id: &str,
-) -> Vec<SharedString> {
-    let was_selected = selected_ids.iter().any(|id| id.as_ref() == row_id);
-    row_ids
-        .iter()
-        .filter(|id| {
-            if id.as_ref() == row_id {
-                !was_selected
-            } else {
-                selected_ids.iter().any(|selected| selected == *id)
-            }
-        })
-        .cloned()
-        .collect()
-}
-
 #[allow(clippy::too_many_arguments)]
 fn emit_row_selection(
     row_id: &SharedString,
     intent: DataTableSelectionIntent,
-    row_ids: &[SharedString],
-    selected_ids: &[SharedString],
+    rows: &DataTableRows,
+    anchor: Option<&SharedString>,
     selection_mode: DataTableSelectionMode,
     row_handler: Option<&SharedStringHandler>,
     selection_handler: Option<&SelectionHandler>,
@@ -1775,13 +1993,8 @@ fn emit_row_selection(
     cx: &mut App,
 ) {
     if let Some(handler) = selection_handler
-        && let Some(selection) = selection_change_for(
-            row_ids,
-            selected_ids,
-            row_id.as_ref(),
-            intent,
-            selection_mode,
-        )
+        && let Some(selection) =
+            selection_change_for(rows, anchor, row_id.as_ref(), intent, selection_mode)
     {
         handler(&selection, window, cx);
         return;
@@ -1802,16 +2015,6 @@ fn data_table_navigation_for(keystroke: &Keystroke) -> Option<DataTableNavigatio
         "pagedown" => Some(DataTableNavigation::PageDown),
         _ => None,
     }
-}
-
-fn adjacent_row_id(rows: &[DataRow], current: &str, direction: isize) -> Option<SharedString> {
-    let index = rows.iter().position(|row| row.id.as_ref() == current)?;
-    let next_index = if direction.is_negative() {
-        index.checked_sub(direction.unsigned_abs())?
-    } else {
-        index.checked_add(direction as usize)?
-    };
-    rows.get(next_index).map(|row| row.id.clone())
 }
 
 #[cfg(test)]
@@ -1847,12 +2050,16 @@ mod tests {
 
     struct DataTableSelectionHarness {
         selected_rows: Vec<String>,
+        cursor: Option<DataTableSelection>,
+        scroll: gpui::UniformListScrollHandle,
         focus_handle: FocusHandle,
     }
 
     impl DataTableSelectionHarness {
         fn new(cx: &mut Context<Self>) -> Self {
             Self {
+                cursor: None,
+                scroll: Default::default(),
                 selected_rows: vec!["row-1".to_owned()],
                 focus_handle: cx.focus_handle(),
             }
@@ -1865,7 +2072,7 @@ mod tests {
             _window: &mut Window,
             cx: &mut Context<Self>,
         ) -> impl gpui::IntoElement {
-            let rows = (0..4)
+            let rows = (0..40)
                 .map(|index| {
                     let id = format!("row-{index}");
                     let selected = self.selected_rows.iter().any(|selected| selected == &id);
@@ -1873,14 +2080,20 @@ mod tests {
                 })
                 .collect::<Vec<_>>();
 
+            let mut table =
+                DataTable::new("selection-data-table-test").virtualized(120.0, self.scroll.clone());
+            if let Some(cursor) = &self.cursor {
+                table = table.selection_cursor(cursor);
+            }
             div().size_full().p_4().child(
-                DataTable::new("selection-data-table-test")
+                table
                     .columns(vec![DataColumn::new("name", "Name")])
                     .rows(rows)
                     .selection_mode(DataTableSelectionMode::Multiple)
                     .focusable(self.focus_handle.clone())
                     .on_row_selection(cx.listener(
                         |this, selection: &DataTableSelection, _, cx| {
+                            this.cursor = Some(selection.clone());
                             this.selected_rows = selection
                                 .selected_ids()
                                 .iter()
@@ -1945,6 +2158,77 @@ mod tests {
                     })),
             )
         }
+    }
+
+    #[gpui::test]
+    fn header_drag_reorders_cells_without_reindexing_the_row(cx: &mut TestAppContext) {
+        use gpui::{InteractiveElement as _, IntoElement, MouseButton, px};
+        struct Grid(Vec<SharedString>);
+        impl Render for Grid {
+            fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+                DataTable::new("order")
+                    .columns(vec![
+                        DataColumn::new("a", "A").width(90.),
+                        DataColumn::new("b", "B").width(90.),
+                        DataColumn::new("c", "C").width(90.),
+                    ])
+                    .rows(vec![DataRow::new("r", vec!["one", "two", "three"])])
+                    .column_order(self.0.clone())
+                    .render_cell(|cell| {
+                        let name = format!("{}-{}", cell.column_id(), cell.value());
+                        div()
+                            .debug_selector(move || name.clone())
+                            .child(cell.value().clone())
+                            .into_any_element()
+                    })
+                    .on_column_order_change(cx.listener(|v, ids: &[SharedString], _, cx| {
+                        v.0 = ids.to_vec();
+                        cx.notify();
+                    }))
+            }
+        }
+        cx.update(|cx| {
+            guic_core::init(cx);
+            guic_tokens::init(cx);
+        });
+        let (view, cx) =
+            cx.add_window_view(|_, _| Grid(vec!["unknown".into(), "a".into(), "a".into()]));
+        let from = cx
+            .debug_bounds("guic-data-table-header-a")
+            .expect("source header")
+            .center();
+        let to = cx
+            .debug_bounds("guic-data-table-header-c")
+            .expect("target header")
+            .center();
+        cx.simulate_mouse_down(from, MouseButton::Left, Modifiers::none());
+        cx.simulate_mouse_move(
+            from + gpui::point(px(10.), px(0.)),
+            MouseButton::Left,
+            Modifiers::none(),
+        );
+        cx.simulate_mouse_move(to, MouseButton::Left, Modifiers::none());
+        cx.simulate_mouse_up(to, MouseButton::Left, Modifiers::none());
+        view.read_with(cx, |v, _| {
+            assert_eq!(
+                v.0.iter().map(|id| id.as_ref()).collect::<Vec<_>>(),
+                ["b", "c", "a"]
+            )
+        });
+        let b = cx.debug_bounds("b-two").expect("original second value");
+        let a = cx.debug_bounds("a-one").expect("original first value");
+        assert!(b.right() <= a.left());
+        let header = cx
+            .debug_bounds("guic-data-table-header-a")
+            .expect("moved header");
+        cx.simulate_click(header.center(), Modifiers::none());
+        cx.simulate_keystrokes("alt-left");
+        view.read_with(cx, |v, _| {
+            assert_eq!(
+                v.0.iter().map(|id| id.as_ref()).collect::<Vec<_>>(),
+                ["b", "a", "c"]
+            )
+        });
     }
 
     #[test]
@@ -2295,6 +2579,71 @@ mod tests {
     }
 
     #[gpui::test]
+    fn horizontal_viewport_scrolls_headers_and_cells_between_pinned_edges(cx: &mut TestAppContext) {
+        use gpui::{InteractiveElement as _, IntoElement as _, px};
+        struct Grid(f32);
+        impl Render for Grid {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl gpui::IntoElement {
+                let mut columns = Vec::new();
+                for id in ["left", "one", "two", "three", "four", "right"] {
+                    let pin = match id {
+                        "left" => DataColumnPin::Start,
+                        "right" => DataColumnPin::End,
+                        _ => DataColumnPin::None,
+                    };
+                    columns.push(DataColumn::new(id, id).width(100.).pin(pin).sortable(true));
+                }
+                div().w(px(402.)).child(
+                    DataTable::new("wide")
+                        .columns(columns)
+                        .rows(vec![DataRow::new("row", vec!["v"; 6])])
+                        .column_viewport(DataTableColumnViewport::new(self.0, 200.).overscan(100.))
+                        .on_sort(|_, _, _| {})
+                        .render_cell(|cell| {
+                            div()
+                                .debug_selector(|| format!("value-{}", cell.column_id()))
+                                .child("v")
+                                .into_any_element()
+                        }),
+                )
+            }
+        }
+        cx.update(|cx| {
+            guic_core::init(cx);
+            guic_tokens::init(cx);
+        });
+        let (grid, cx) = cx.add_window_view(|_, _| Grid(0.));
+        let header = cx
+            .debug_bounds("guic-data-table-header-two")
+            .expect("header");
+        let value = cx.debug_bounds("value-two").expect("value");
+        let pinned = cx
+            .debug_bounds("guic-data-table-header-right")
+            .expect("pinned");
+        for offset in [35., 135.] {
+            grid.update(cx, |grid, cx| {
+                grid.0 = offset;
+                cx.notify();
+            });
+            cx.run_until_parked();
+            assert_eq!(
+                cx.debug_bounds("guic-data-table-header-two")
+                    .expect("header")
+                    .left(),
+                header.left() - px(offset)
+            );
+            assert_eq!(
+                cx.debug_bounds("value-two").expect("value").left(),
+                value.left() - px(offset)
+            );
+            assert_eq!(
+                cx.debug_bounds("guic-data-table-header-right"),
+                Some(pinned)
+            );
+        }
+    }
+
+    #[gpui::test]
     fn table_keyboard_navigation_moves_selection(cx: &mut TestAppContext) {
         cx.update(|cx| {
             guic_core::init(cx);
@@ -2347,6 +2696,28 @@ mod tests {
         view.update(cx, |view, _| {
             assert_eq!(view.selected_rows, vec!["row-1", "row-2"]);
         });
+        for (key, expected) in [
+            ("shift-down", vec!["row-1", "row-2", "row-3"]),
+            ("shift-up", vec!["row-1", "row-2"]),
+            ("end", vec!["row-39"]),
+        ] {
+            cx.dispatch_keystroke(window, Keystroke::parse(key).expect("valid keystroke"));
+            view.read_with(cx, |view, _| assert_eq!(view.selected_rows, expected));
+        }
+        assert!(cx.debug_bounds("guic-data-table-row-row-39").is_some());
+        assert!(cx.debug_bounds("guic-data-table-row-row-0").is_none());
+        cx.update(|window, _| window.enable_a11y_for_testing());
+        cx.run_until_parked();
+        let tree = cx.update(|window, _| window.debug_a11y_tree_json().expect("accessible table"));
+        let tree: serde_json::Value = serde_json::from_str(&tree).expect("accessibility JSON");
+        let nodes = tree["nodes"].as_object().expect("nodes");
+        assert!(nodes.values().any(|node| node["aria"]["row_count"] == 41));
+        assert!(nodes.values().any(|node| node["aria"]["row_index"] == 40));
+        assert!(
+            nodes
+                .values()
+                .any(|node| node["aria"]["role"] == "ColumnHeader")
+        );
     }
 }
 
@@ -2361,7 +2732,7 @@ mod shared_rows_tests {
         ]);
         let table = DataTable::new("table").shared_rows(rows.clone());
         assert!(Rc::ptr_eq(&rows.rows, &table.rows.rows));
-        assert!(Rc::ptr_eq(&rows.ids, &table.row_ids()));
+        assert!(Rc::ptr_eq(&rows.ids, &table.rows.ids));
         assert_eq!(table.selected_row_id().as_deref(), Some("b"));
         assert_eq!(table.selected_row_ids(), vec![SharedString::from("b")]);
         assert_eq!(table.rows.as_slice().len(), 2);

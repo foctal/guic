@@ -55,7 +55,19 @@ TreeView::new("project-tree")
 
 ## Virtualized Trees
 
-Large trees can use externally managed viewport metadata. Navigation and
+For a scrollable tree, retain a `TreeViewNodes` model and a
+`gpui::UniformListScrollHandle` in the host view. Construct the model once and
+update it with `apply_mutation` when the hierarchy changes. Clones share the
+indexed data and the runtime measures the available body and renders visible rows.
+
+```rust,ignore
+TreeView::new("files")
+    .shared_nodes(self.files.clone())
+    .row_height(32.0)
+    .virtualized(320.0, self.file_scroll.clone())
+```
+
+Large trees can also use externally managed viewport metadata. Navigation and
 selection continue to operate over the complete visible depth-first sequence,
 while `rendered_nodes` and the widget renderer are limited to the viewport plus
 overscan rows.

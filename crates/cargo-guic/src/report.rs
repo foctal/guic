@@ -19,8 +19,10 @@ pub(crate) fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 pub(crate) fn hash_json(value: &impl Serialize) -> Result<String> {
-    // Value uses sorted map keys, making map iteration order irrelevant.
-    Ok(digest(&serde_json::to_vec(&serde_json::to_value(value)?)?))
+    // Feature unification can make serde_json preserve the source map iteration order.
+    let mut value = serde_json::to_value(value)?;
+    value.sort_all_objects();
+    Ok(digest(&serde_json::to_vec(&value)?))
 }
 pub(crate) fn hash_file(path: &Path) -> Result<String> {
     let mut file = File::open(path).with_context(|| format!("read {}", path.display()))?;
@@ -124,5 +126,21 @@ pub(crate) fn stage(stage: &'static str, plan: Option<&crate::plan::BuildPlan>) 
         application: plan.map(|p| p.identifier.clone()),
         target: plan.map(|p| p.target.clone()),
         formats: plan.map(|p| p.formats.clone()).unwrap_or_default(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fingerprints_sort_nested_object_keys_and_preserve_array_order() -> Result<()> {
+        let first: serde_json::Value = serde_json::from_str(r#"{"z":[{"b":1,"a":2},3],"a":4}"#)?;
+        let reordered: serde_json::Value =
+            serde_json::from_str(r#"{"a":4,"z":[{"a":2,"b":1},3]}"#)?;
+        let changed: serde_json::Value = serde_json::from_str(r#"{"a":4,"z":[3,{"a":2,"b":1}]}"#)?;
+        assert_eq!(hash_json(&first)?, hash_json(&reordered)?);
+        assert_ne!(hash_json(&first)?, hash_json(&changed)?);
+        Ok(())
     }
 }

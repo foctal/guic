@@ -92,6 +92,7 @@ Examples show view-construction fragments; names such as `cx`, `nodes`, and
 | Component | Feature on `guic` | Implementation |
 | --- | --- | --- |
 | [DataTable](components/data-table.md) | `data-table` | `guic-components` |
+| [DiffView](components/diff-view.md) | `diff` | `guic-components` |
 | [TreeView](components/tree-view.md) | `tree` | `guic-components` |
 | [Dock](components/dock.md) | `dock` | `guic-components` |
 | [Markdown / HtmlFragment](components/markdown.md) | `markdown` | `guic-components` |
@@ -108,3 +109,15 @@ from the repository root:
 ```sh
 cargo run -p guic-sample-component-gallery
 ```
+
+### Ratings and clipboard actions
+
+`Rating::new(id).value(score).on_change(handler)` renders a controlled star
+rating. Set the number of stars with `max` and the accessible name with
+`label`. Pointer hover previews a score. Arrow keys adjust it by one, Home
+clears it, and End selects the maximum. Assistive technology can increment,
+decrement, or set the value. Omit the change callback for display-only use.
+
+`CopyButton::new(id, text)` writes the current text to the platform clipboard
+and briefly shows confirmation. Use `labels(idle, copied)` for localized or
+context-specific captions. Both controls are available from the prelude.

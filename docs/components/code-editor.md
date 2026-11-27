@@ -116,6 +116,22 @@ Diagnostics retain inline text, severity coloring, and `on_diagnostic` activatio
 They appear after the final fragment of their logical line and contribute to the
 horizontal extent. Activating a diagnostic does not move the selection.
 
+## Grammar highlighting
+
+With the `editor-tree-sitter-rust` feature, use
+`CodeEditor::grammar(EditorGrammar::rust())`. With `editor-languages`,
+`EditorGrammar::for_path(path)` selects Rust, Python, JSON, JavaScript/JSX,
+TypeScript/TSX, CSS, or HTML by extension. HTML recognizes embedded script and
+style blocks. Queries compile once on first use. The editor parses an immutable
+snapshot on a worker, discards stale results after edits, and maps only visible
+ranges onto graphemes for display. Each new snapshot receives a full parse.
+
+For other languages, enable `editor-tree-sitter` and supply a Tree-sitter
+language and highlight query to `EditorGrammar::new`. Use
+`with_embedded_languages` for an injection query and its named grammars.
+`EditorBuffer::utf16_column` and `position_from_utf16` convert between editor
+positions and line-relative UTF-16 columns for external diagnostics.
+
 ## Large documents
 
 Buffer clones and undo snapshots share immutable line chunks. Use `line(index)`
@@ -158,14 +174,19 @@ clipboard acquisition, or completion of background reclamation.
 
 ## Limitations
 
-The editor remains experimental. It does not provide click-to-add cursors,
-folding, or an integrated LSP client. Each changed logical line is a contiguous
+The editor remains experimental. Folding and an integrated LSP client are outside the current editor API. Each changed logical line is a contiguous
 string, so editing it copies its bytes. Very long lines, large indivisible
 graphemes, and multiple edits on one line can still be expensive. Background
 processing does not guarantee a latency bound for every operation.
 
 The layout is intended for monospace text. Full bidirectional editing and
-accessibility text ranges are not supported. 
+accessibility text ranges are not supported.
+
+## Placing multiple cursors
+
+Alt-click (Option-click on macOS) adds a cursor and makes it the primary cursor.
+Alt-click an existing cursor or selection to remove it when others remain.
+A plain click returns to a single cursor. Subsequent typing edits all selections.
 
 ## Rectangular selection
 
@@ -188,3 +209,14 @@ newlines. IME composition follows the native primary-selection contract and
 commits one edit; Undo restores the previous text and rectangular selections.
 During a pending paste, the rectangle is previewed immediately and all ranges
 are rebased through the queued edits and history operations before later input.
+
+### Completion menu
+
+Pass a retained `Arc<dyn EditorLanguageAdapter>` to `completion_provider`.
+Ctrl+Space requests candidates for the primary caret on a background worker.
+Up and Down move through the list, Enter and Tab accept, and Escape dismisses.
+Clicking a candidate also accepts it. Its insertion text replaces the selected
+range or the identifier prefix before the caret in one edit. Moving the caret,
+changing the document, starting IME composition, or leaving the editor
+dismisses the request. Completion is available with one selection on an
+editable surface.

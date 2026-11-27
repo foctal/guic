@@ -3,8 +3,9 @@ use gpui::{
     WindowBounds, WindowOptions, div, px, size,
 };
 use guic::prelude::{
-    AreaChart, BarChart, ChartAxis, ChartDataset, ChartOptions, ChartPoint, ChartScale,
-    ChartValueFormatter, DoughnutChart, HorizontalBarChart, Label, LineChart, PieChart, Root,
+    AreaChart, BarChart, CandlestickChart, ChartAxis, ChartDataset, ChartDomainValue, ChartOhlc,
+    ChartOptions, ChartPoint, ChartScale, ChartValueFormatter, DoughnutChart, HorizontalBarChart,
+    Label, LineChart, PieChart, RadarChart, Root, SankeyChart, SankeyDiagram, SankeyLink,
     ScatterChart, ScrollArea,
 };
 
@@ -50,6 +51,47 @@ impl Render for ChartsDashboard {
         let actual = Self::monthly_actual();
         let forecast = Self::monthly_forecast();
 
+        let prices = ChartDataset::new("price", "Price").candles(
+            [
+                ("Mon", 18., 24., 15., 22.),
+                ("Tue", 22., 23., 16., 17.),
+                ("Wed", 17., 22., 15., 17.),
+                ("Thu", 17., 25., 16., 24.),
+                ("Fri", 24., 28., 20., 27.),
+            ]
+            .map(|(day, o, h, l, c)| {
+                (
+                    ChartDomainValue::Category(day.into()),
+                    ChartOhlc::new(o, h, l, c).expect("valid example interval"),
+                )
+            }),
+        );
+        let flows = SankeyDiagram::new(
+            ["Grid", "Solar", "Office", "Lab"].map(Into::into).to_vec(),
+            vec![
+                SankeyLink {
+                    source: 0,
+                    target: 2,
+                    value: 30.,
+                },
+                SankeyLink {
+                    source: 0,
+                    target: 3,
+                    value: 20.,
+                },
+                SankeyLink {
+                    source: 1,
+                    target: 2,
+                    value: 12.,
+                },
+                SankeyLink {
+                    source: 1,
+                    target: 3,
+                    value: 8.,
+                },
+            ],
+        )
+        .expect("acyclic example");
         let content = div()
             .w_full()
             .p_6()
@@ -147,6 +189,31 @@ impl Render for ChartsDashboard {
                                 ChartPoint::category("Subsystems", 20.0),
                             ])]),
                     ),
+            );
+
+        let content = content
+            .child(
+                div()
+                    .grid()
+                    .grid_cols(2)
+                    .gap_4()
+                    .child(
+                        CandlestickChart::new("dashboard-candles")
+                            .options(ChartOptions::default().title("Weekly prices"))
+                            .datasets(vec![prices]),
+                    )
+                    .child(
+                        RadarChart::new("dashboard-radar")
+                            .options(ChartOptions::default().title("Monthly profiles"))
+                            .datasets(vec![Self::monthly_actual(), Self::monthly_forecast()]),
+                    ),
+            )
+            .child(
+                SankeyChart::new("dashboard-flows", flows).options(
+                    ChartOptions::default()
+                        .title("Energy use")
+                        .value_formatter(ChartValueFormatter::Suffix("kWh".into())),
+                ),
             );
 
         ScrollArea::new("charts-dashboard-scroll", content)

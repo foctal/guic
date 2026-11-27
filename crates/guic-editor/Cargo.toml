@@ -1,6 +1,6 @@
 [package]
 name = "guic-editor"
-version = "0.6.2"
+version = "0.7.0"
 description = "Native code editor primitives for GUIC."
 edition.workspace = true
 license.workspace = true
@@ -11,10 +11,25 @@ readme.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[features]
+tree-sitter = ["dep:tree-sitter", "dep:tree-sitter-highlight"]
+tree-sitter-rust = ["tree-sitter", "dep:tree-sitter-rust"]
+
+bundled-languages = ["tree-sitter-rust", "dep:tree-sitter-css", "dep:tree-sitter-html", "dep:tree-sitter-javascript", "dep:tree-sitter-json", "dep:tree-sitter-python", "dep:tree-sitter-typescript"]
+
 [dependencies]
+tree-sitter-css = { version = "0.23", optional = true }
+tree-sitter-html = { version = "0.23", optional = true }
+tree-sitter-javascript = { version = "0.25", optional = true }
+tree-sitter-json = { version = "0.24", optional = true }
+tree-sitter-python = { version = "0.25", optional = true }
+tree-sitter-typescript = { version = "0.23", optional = true }
+tree-sitter = { version = "0.26", optional = true }
+tree-sitter-highlight = { version = "0.26", optional = true }
+tree-sitter-rust = { version = "0.24", optional = true }
 gpui.workspace = true
-guic-core = { version = "0.6.2", path = "../guic-core" }
-guic-tokens = { version = "0.6.2", path = "../guic-tokens" }
+guic-core = { version = "0.7.0", path = "../guic-core" }
+guic-tokens = { version = "0.7.0", path = "../guic-tokens" }
 unicode-segmentation.workspace = true
 unicode-linebreak.workspace = true
 

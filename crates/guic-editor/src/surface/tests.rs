@@ -2260,6 +2260,33 @@ fn row_point(state: &EditorSurface, visual: usize, column: usize) -> Point<Pixel
 }
 
 #[gpui::test]
+fn alt_click_adds_and_removes_cursors_before_typing(cx: &mut TestAppContext) {
+    let (state, cx) = surface(cx, "abc\ndef", 3, Edits::default());
+    let (first, second) = state.read_with(cx, |state, _| {
+        (row_point(state, 0, 1), row_point(state, 1, 2))
+    });
+    let alt = Modifiers {
+        alt: true,
+        ..Modifiers::none()
+    };
+    cx.simulate_click(first, Modifiers::none());
+    cx.simulate_click(second, alt);
+    state.read_with(cx, |state, _| assert_eq!(state.edit.selections.len(), 2));
+    cx.simulate_click(second, alt);
+    state.read_with(cx, |state, _| {
+        assert_eq!(
+            state.edit.selections,
+            vec![EditorSelection::cursor(EditorPosition::new(0, 1))]
+        )
+    });
+    cx.simulate_click(second, alt);
+    cx.simulate_keystrokes("x");
+    state.read_with(cx, |state, _| {
+        assert_eq!(state.edit.buffer.text(), "axbc\ndexf")
+    });
+}
+
+#[gpui::test]
 fn rectangle_selects_shaped_rows_and_preserves_short_row_width(cx: &mut TestAppContext) {
     let (state, cx) = surface(cx, "abcdef\nx\n012345", 5, Edits::default());
     let (start, end, short) = state.read_with(cx, |state, _| {
@@ -2833,4 +2860,49 @@ fn large_rectangle_edits_use_the_background_queue_and_keep_input_order(cx: &mut 
         assert_eq!(state.edit.selections.len(), 256);
         assert!(state.pending_edit.is_none());
     });
+}
+
+#[gpui::test]
+fn completion_keyboard_and_pointer_replace_prefix_in_a_single_edit(cx: &mut TestAppContext) {
+    struct Names;
+    impl EditorLanguageAdapter for Names {
+        fn language_id(&self) -> &str {
+            "names"
+        }
+        fn completions(&self, _: &EditorBuffer, _: EditorPosition) -> Vec<EditorCompletion> {
+            vec![
+                EditorCompletion::new("p", "print"),
+                EditorCompletion::new("pl", "println")
+                    .insert_text("println!()")
+                    .detail("macro"),
+            ]
+        }
+    }
+    let edits = Edits::default();
+    let (state, cx) = surface(cx, "", 8, edits.clone());
+    state.update(cx, |state, _| {
+        state.props.completion_provider = Some(std::sync::Arc::new(Names))
+    });
+    focus(&state, cx);
+    cx.simulate_input("🙂 pr");
+    cx.simulate_keystrokes("ctrl-space");
+    cx.run_until_parked();
+    let row = cx
+        .debug_bounds("guic-editor-completion-1")
+        .expect("second suggestion");
+    let count = edits.borrow().len();
+    cx.simulate_click(row.center(), Modifiers::none());
+    assert_eq!(edits.borrow().len(), count + 1);
+    state.read_with(cx, |s, _| assert_eq!(s.edit.buffer.text(), "🙂 println!()"));
+    cx.simulate_input(" pr");
+    cx.simulate_keystrokes("ctrl-space");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("down enter");
+    state.read_with(cx, |s, _| {
+        assert_eq!(s.edit.buffer.text(), "🙂 println!() println!()")
+    });
+    cx.simulate_keystrokes("ctrl-space");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("escape");
+    assert!(cx.debug_bounds("guic-editor-completion-0").is_none());
 }

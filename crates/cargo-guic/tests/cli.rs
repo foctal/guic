@@ -533,20 +533,33 @@ fn assert_cancellation_terminates_child(dev: bool) -> Result<()> {
         .spawn()?;
     let started = Instant::now();
     let pid_file = dir.path().join("app/child.pid");
-    while !pid_file.is_file() && started.elapsed() < Duration::from_secs(10) {
+    let owned_pid: i32 = loop {
+        if let Ok(contents) = fs::read_to_string(&pid_file)
+            && let Ok(pid) = contents.trim().parse()
+        {
+            break pid;
+        }
+        if child.try_wait()?.is_some() {
+            let output = child.wait_with_output()?;
+            anyhow::bail!(
+                "CLI exited before child startup: {} {}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        if started.elapsed() >= Duration::from_secs(60) {
+            child.kill()?;
+            child.wait()?;
+            anyhow::bail!("child did not start before timeout");
+        }
         std::thread::sleep(Duration::from_millis(20));
-    }
-    if !pid_file.is_file() {
-        child.kill()?;
-        child.wait()?;
-        anyhow::bail!("child did not start before timeout");
-    }
-    let owned_pid: i32 = fs::read_to_string(pid_file)?.trim().parse()?;
+    };
     // Send an interrupt to the CLI, which owns the separate child process group.
     unsafe {
         libc::kill(child.id() as i32, libc::SIGINT);
     }
-    while child.try_wait()?.is_none() && started.elapsed() < Duration::from_secs(15) {
+    let interrupted = Instant::now();
+    while child.try_wait()?.is_none() && interrupted.elapsed() < Duration::from_secs(5) {
         std::thread::sleep(Duration::from_millis(20));
     }
     if child.try_wait()?.is_none() {
@@ -740,10 +753,8 @@ fn trial_requires_explicit_record_and_signing_authorization() -> Result<()> {
     Ok(())
 }
 
-// This test generates a real package candidate. It is deliberately never run by
-// ordinary tests or CI; only the maintainer may execute the acceptance operation.
 #[test]
-#[ignore = "Manual native packaging acceptance; creates a candidate artifact"]
+#[ignore = "Requires native packaging tools"]
 fn manual_native_backend_candidate() -> Result<()> {
     let dir = fixture()?;
     let record = success(invoke(dir.path(), &["build", "-p", "app", "--no-bundle"])?)?;
@@ -806,8 +817,6 @@ fn manual_native_backend_candidate() -> Result<()> {
     for report in [&packaged, &built] {
         assert!(Path::new(report["outputs"][0]["path"].as_str().context("artifact")?).exists());
     }
-    eprintln!("Packaging evidence preserved in {}", dir.keep().display());
-    eprintln!("{}", serde_json::to_string_pretty(&candidate)?);
     Ok(())
 }
 

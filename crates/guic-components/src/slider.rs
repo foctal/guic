@@ -37,7 +37,6 @@ pub struct Slider {
     max: f32,
     step: f32,
     disabled: bool,
-    dragging: bool,
     focus_handle: FocusHandle,
     last_track_bounds: Option<Bounds<Pixels>>,
     on_change: Option<ChangeHandler>,
@@ -54,7 +53,6 @@ impl Slider {
             max: 100.0,
             step: 1.0,
             disabled: false,
-            dragging: false,
             focus_handle: cx.focus_handle().tab_stop(true),
             last_track_bounds: None,
             on_change: None,
@@ -328,30 +326,18 @@ impl Render for Slider {
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|this, event: &MouseDownEvent, window, cx| {
-                        this.dragging = true;
                         this.focus_handle.focus(window, cx);
                         let value = this.value_from_x(event.position.x);
                         this.apply_value(value, window, cx);
                     }),
                 )
-                .on_mouse_up(
-                    MouseButton::Left,
-                    cx.listener(|this, _, _, _| {
-                        this.dragging = false;
-                    }),
-                )
-                .on_mouse_up_out(
-                    MouseButton::Left,
-                    cx.listener(|this, _, _, _| {
-                        this.dragging = false;
-                    }),
-                )
-                .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, window, cx| {
-                    if this.dragging && event.dragging() {
+                .on_drag_update({
+                    let update = cx.listener(|this, event: &MouseMoveEvent, window, cx| {
                         let value = this.value_from_x(event.position.x);
                         this.apply_value(value, window, cx);
-                    }
-                }));
+                    });
+                    move |_, event, window, cx| update(event, window, cx)
+                });
         }
 
         root
@@ -498,6 +484,10 @@ mod interaction_tests {
         view.update(cx, |slider, _| {
             assert_eq!(slider.current_value(), 80.0);
         });
+        cx.simulate_mouse_move(at(1.5), MouseButton::Left, Modifiers::none());
+        view.read_with(cx, |slider, _| assert_eq!(slider.current_value(), 100.0));
+        cx.simulate_mouse_move(at(-0.5), MouseButton::Left, Modifiers::none());
+        view.read_with(cx, |slider, _| assert_eq!(slider.current_value(), 0.0));
     }
 
     #[gpui::test]

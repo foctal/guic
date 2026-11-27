@@ -242,9 +242,7 @@ pub trait AccessibilityElementExt: Sized {
 
     /// Applies all metadata, including disabled semantics, without adding a node.
     ///
-    /// Prefer this method for new elements. The original `accessibility` method
-    /// retains its concrete return type for source compatibility, but GPUI 0.6
-    /// cannot attach disabled semantics through its fluent API alone.
+    /// Preserves the disabled flag for custom implementations of this trait.
     fn accessible(self, props: AccessibilityProps) -> AccessibleElement<Self>
     where
         Self: gpui::Element,
@@ -262,6 +260,7 @@ where
     T: gpui::StatefulInteractiveElement,
 {
     fn accessibility(mut self, props: AccessibilityProps) -> Self {
+        self = self.aria_disabled(props.disabled);
         if props.role != Role::Generic {
             self = self.role(props.role.to_gpui());
         }
@@ -419,9 +418,12 @@ mod tests {
                 .disabled(true)
                 .has_platform_state()
         );
-        let _ = gpui::div()
-            .id("generic")
-            .accessibility(AccessibilityProps::default());
+        let direct = gpui::div()
+            .id("direct")
+            .accessibility(AccessibilityProps::new(Role::Button).disabled(true));
+        let mut node = gpui::accesskit::Node::new(gpui::Role::Button);
+        direct.write_a11y_info(&mut node);
+        assert!(node.is_disabled());
     }
 
     #[test]

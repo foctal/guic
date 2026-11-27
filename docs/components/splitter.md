@@ -9,5 +9,8 @@ Splitter::new("workspace", left, right)
     .fraction(0.35)
 ```
 
-The fraction is clamped to 0.1–0.9. The divider is not interactive. Use `Dock`
-or application controls when users need to resize panes.
+The fraction is clamped to 0.1–0.9. Supply `on_resize` to make the divider
+draggable and focusable. Store the requested fraction in your view and pass it
+back on the next render. Arrow keys on the split axis move the divider by five
+percentage points. Home and End select the minimum and maximum. Assistive
+technologies can query its orientation and range and request either adjustment.

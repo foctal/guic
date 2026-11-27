@@ -250,31 +250,49 @@ impl WindowStateStore {
         });
     }
 
-    /// Tracks a live window, saving changed geometry on a worker every 500 ms.
+    /// Saves initial geometry, then coalesces native bounds changes on a worker.
+    /// After a save, further writes are limited to one per 500 ms during a drag.
     /// Retain the task for the window lifetime and use `bind` for final close persistence.
     pub fn track(&self, id: impl Into<String>, window: &Window, cx: &App) -> gpui::Task<()> {
         let id = id.into();
         let store = self.clone();
         let handle = window.window_handle();
+        let (changed, changes) = async_channel::bounded(1);
+        let observer = window.observe_bounds({
+            let changed = changed.clone();
+            move |_, _| {
+                let _ = changed.try_send(());
+            }
+        });
+        let closed = cx.on_window_closed(move |_, id| {
+            if id == handle.window_id() {
+                changed.close();
+            }
+        });
         cx.spawn(async move |cx| {
+            let _subscriptions = (observer, closed);
             loop {
-                let state = handle.update(cx, |_, window, cx| SavedWindow::capture(window, cx));
-                let Ok(state) = state else {
+                let Ok(state) = handle.update(cx, |_, window, cx| SavedWindow::capture(window, cx))
+                else {
                     break;
                 };
                 let store = store.clone();
                 let id = id.clone();
                 let revision = store.revision();
-                if let Err(error) = cx
+                let saved = cx
                     .background_executor()
                     .spawn(async move { store.save_revision(&id, state, revision) })
-                    .await
-                {
-                    tracing::error!("could not save window state: {error}");
-                }
+                    .await;
                 cx.background_executor()
                     .timer(Duration::from_millis(500))
                     .await;
+                if let Err(error) = saved {
+                    tracing::error!("could not save window state: {error}");
+                    continue;
+                }
+                if changes.recv().await.is_err() {
+                    break;
+                }
             }
         })
     }
@@ -283,6 +301,31 @@ impl WindowStateStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[gpui::test]
+    fn tracking_sleeps_while_idle_and_coalesces_resizes(cx: &mut gpui::TestAppContext) {
+        use std::sync::atomic::Ordering;
+        let dir = tempfile::tempdir().expect("temporary directory");
+        let store = WindowStateStore::open(dir.path().join("state.json")).expect("store");
+        let (_, cx) = cx.add_window_view(|_, _| gpui::EmptyView);
+        let _task = cx.update(|window, cx| store.track("main", window, cx));
+        cx.run_until_parked();
+        let revision = || store.next_revision.load(Ordering::Relaxed);
+        assert_eq!(revision(), 1);
+        for _ in 0..3 {
+            cx.executor().advance_clock(Duration::from_secs(1));
+            cx.run_until_parked();
+        }
+        assert_eq!(revision(), 1);
+        cx.simulate_resize(size(px(600.), px(400.)));
+        cx.simulate_resize(size(px(720.), px(480.)));
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        let saved = store.get("main").expect("read").expect("saved state");
+        assert_eq!(saved.rect[2..], [720., 480.]);
+        assert!((2..=3).contains(&revision()));
+    }
+
     #[test]
     fn old_background_save_cannot_overwrite_final_geometry() -> Result<()> {
         let dir = tempfile::tempdir()?;

@@ -18,6 +18,9 @@ ignore = [
     "RUSTSEC-2026-0370",
     "RUSTSEC-2026-0371",
     "RUSTSEC-2026-0372",
+    # guic-gpui 0.7.0 and its scheduler require chrono 0.4. Revisit this
+    # maintenance advisory when upgrading the runtime.
+    "RUSTSEC-2026-0543",
 ]
 yanked = "warn"
 
