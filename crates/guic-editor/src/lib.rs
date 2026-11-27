@@ -10,6 +10,13 @@ use guic_tokens::Theme;
 use std::{ops::Range, rc::Rc};
 use unicode_segmentation::UnicodeSegmentation;
 
+#[cfg(feature = "tree-sitter")]
+mod grammar;
+#[cfg(feature = "bundled-languages")]
+mod languages;
+#[cfg(feature = "tree-sitter")]
+pub use grammar::EditorGrammar;
+
 mod analysis;
 mod retirement;
 mod storage;
@@ -290,11 +297,14 @@ impl EditorBuffer {
     /// Returns the full buffer text with LF line endings.
     #[must_use]
     pub fn text(&self) -> String {
-        self.lines
-            .iter()
-            .map(AsRef::as_ref)
-            .collect::<Vec<_>>()
-            .join("\n")
+        let mut text = String::with_capacity(self.lines.byte_len());
+        for (index, line) in self.iter_lines().enumerate() {
+            if index > 0 {
+                text.push('\n');
+            }
+            text.push_str(line);
+        }
+        text
     }
 
     /// Returns all lines, materializing and caching a contiguous view.
@@ -325,6 +335,34 @@ impl EditorBuffer {
     #[must_use]
     pub fn line_len(&self, line: usize) -> usize {
         self.lines.column_count(line)
+    }
+
+    /// Converts a grapheme position to a zero-based UTF-16 column on the same line.
+    /// Returns `None` for an unknown line and clamps columns beyond its end.
+    #[must_use]
+    pub fn utf16_column(&self, position: EditorPosition) -> Option<usize> {
+        self.line(position.line)?;
+        let start = self.lines.line_byte(position.line);
+        let byte = self.lines.column_byte(position.line, position.column);
+        Some(self.lines.byte_utf16(start + byte) - self.lines.byte_utf16(start))
+    }
+
+    /// Converts a zero-based UTF-16 column from a language server to a grapheme
+    /// position. An offset inside a grapheme rounds to its end. Offsets beyond
+    /// the line stop at its end, and an unknown line returns `None`.
+    #[must_use]
+    pub fn position_from_utf16(&self, line: usize, column: usize) -> Option<EditorPosition> {
+        let text = self.line(line)?;
+        let start = self.lines.line_byte(line);
+        let start_units = self.lines.byte_utf16(start);
+        let end_units = self.lines.byte_utf16(start + text.len());
+        let byte = self
+            .lines
+            .utf16_byte(start_units.saturating_add(column).min(end_units));
+        Some(EditorPosition::new(
+            line,
+            self.lines.byte_column(line, byte - start),
+        ))
     }
 
     /// Clamps a position to a valid grapheme boundary in this buffer.
@@ -772,6 +810,8 @@ pub struct CodeEditor {
     buffer: EditorBuffer,
     selections: Vec<EditorSelection>,
     diagnostics: Vec<EditorDiagnostic>,
+    #[cfg(feature = "tree-sitter")]
+    grammar: Option<EditorGrammar>,
     options: CodeEditorOptions,
     focus_handle: Option<FocusHandle>,
     on_cursor: Option<PositionHandler>,
@@ -779,6 +819,7 @@ pub struct CodeEditor {
     on_edit: Option<EditHandler>,
     on_command: Option<CommandHandler>,
     on_diagnostic: Option<DiagnosticHandler>,
+    completion_provider: Option<std::sync::Arc<dyn EditorLanguageAdapter>>,
 }
 
 impl CodeEditor {
@@ -790,6 +831,8 @@ impl CodeEditor {
             buffer,
             selections: Vec::new(),
             diagnostics: Vec::new(),
+            #[cfg(feature = "tree-sitter")]
+            grammar: None,
             options: CodeEditorOptions::default(),
             focus_handle: None,
             on_cursor: None,
@@ -797,13 +840,34 @@ impl CodeEditor {
             on_edit: None,
             on_command: None,
             on_diagnostic: None,
+            completion_provider: None,
         }
+    }
+
+    /// Enables the Ctrl+Space completion list using a background language adapter.
+    /// Acceptance replaces the selection or the identifier prefix before the caret.
+    #[must_use]
+    pub fn completion_provider(
+        mut self,
+        provider: std::sync::Arc<dyn EditorLanguageAdapter>,
+    ) -> Self {
+        self.completion_provider = Some(provider);
+        self
     }
 
     /// Replaces selections.
     #[must_use]
     pub fn selections(mut self, selections: Vec<EditorSelection>) -> Self {
         self.selections = selections;
+        self
+    }
+
+    /// Highlights the current document with a grammar on a background worker.
+    /// A stale parse is discarded when the buffer or grammar changes.
+    #[cfg(feature = "tree-sitter")]
+    #[must_use]
+    pub fn grammar(mut self, grammar: EditorGrammar) -> Self {
+        self.grammar = Some(grammar);
         self
     }
 
@@ -1389,7 +1453,7 @@ mod tests {
     }
 
     use super::{
-        EditorBuffer, EditorPosition, EditorSelection, EditorSession, SyntaxTokenKind,
+        EditorBuffer, EditorPosition, EditorSelection, EditorSession, SyntaxToken, SyntaxTokenKind,
         edit_deleting, edit_indenting_lines, edit_replacing_selections, move_selections,
         move_selections_by_page,
     };
@@ -1544,6 +1608,47 @@ mod tests {
         assert_eq!(buffer.replace_all("aa", "x\ny"), 2);
         assert_eq!(buffer.text(), "x\ny x\ny\nuntouched");
         assert_eq!(buffer.line_count(), 4);
+    }
+
+    #[test]
+    fn language_server_positions_round_trip_and_stay_on_their_line() {
+        let buffer = EditorBuffer::from_text("first\r\n🙂e\u{301}z\n");
+        for (column, units) in [(0, 0), (1, 2), (2, 4), (3, 5)] {
+            let pos = EditorPosition::new(1, column);
+            assert_eq!(buffer.utf16_column(pos), Some(units));
+            assert_eq!(buffer.position_from_utf16(1, units), Some(pos));
+        }
+        assert_eq!(
+            buffer.position_from_utf16(1, 1),
+            Some(EditorPosition::new(1, 1))
+        );
+        assert_eq!(
+            buffer.position_from_utf16(1, 3),
+            Some(EditorPosition::new(1, 2))
+        );
+        assert_eq!(
+            buffer.position_from_utf16(1, usize::MAX),
+            Some(EditorPosition::new(1, 3))
+        );
+        assert_eq!(buffer.position_from_utf16(3, 0), None);
+    }
+
+    #[test]
+    fn escaped_quotes_keep_comment_markers_in_the_string() {
+        let buffer = EditorBuffer::from_text(r#""a\"//b" // tail"#);
+        let tokens = buffer.syntax_tokens(0);
+        assert_eq!(
+            tokens[0],
+            SyntaxToken {
+                kind: SyntaxTokenKind::String,
+                start: 0,
+                end: 8
+            }
+        );
+        assert_eq!(
+            tokens.last().expect("comment").kind,
+            SyntaxTokenKind::Comment
+        );
     }
 
     #[test]

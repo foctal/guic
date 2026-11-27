@@ -10,6 +10,9 @@ use gpui::{
 };
 use guic_core::{AccessibilityElementExt as _, AccessibilityProps, Role};
 
+mod completion;
+#[cfg(feature = "tree-sitter")]
+mod highlighting;
 mod reflow;
 mod transaction;
 use transaction::{ASYNC_BYTES, ASYNC_SELECTIONS, PendingEdit, Work};
@@ -26,6 +29,10 @@ const FONT_SIZE: f32 = 13.0;
 const PADDING: f32 = 8.0;
 
 pub(super) struct EditorSurface {
+    #[cfg(feature = "tree-sitter")]
+    highlighting: Option<highlighting::HighlightJob>,
+    completion: Option<completion::CompletionMenu>,
+    completion_job: Option<gpui::Task<()>>,
     pending_edit: Option<PendingEdit>,
     edit_generation: u64,
     props: CodeEditor,
@@ -59,6 +66,10 @@ pub(super) struct EditorSurface {
 impl EditorSurface {
     pub(super) fn new(props: CodeEditor) -> Self {
         Self {
+            #[cfg(feature = "tree-sitter")]
+            highlighting: None,
+            completion: None,
+            completion_job: None,
             pending_edit: None,
             edit_generation: 0,
             edit: EditorEdit::new(
@@ -103,6 +114,19 @@ impl EditorSurface {
         let selection_changed = props.selections != self.props.selections
             && !props.selections.is_empty()
             && props.selections != self.edit.selections;
+        let provider_changed = match (&props.completion_provider, &self.props.completion_provider) {
+            (Some(a), Some(b)) => !std::sync::Arc::ptr_eq(a, b),
+            (a, b) => a.is_some() != b.is_some(),
+        };
+        if buffer_changed
+            || selection_changed
+            || provider_changed
+            || props.options.first_line != self.props.options.first_line
+            || props.focus_handle != self.props.focus_handle
+            || props.on_edit.is_none() && props.on_change.is_none()
+        {
+            self.dismiss_completion(cx);
+        }
         let command_result = self
             .pending_edit
             .as_ref()
@@ -143,6 +167,7 @@ impl EditorSurface {
         if props.focus_handle != self.subscribed_focus {
             self.blur = props.focus_handle.as_ref().map(|handle| {
                 cx.on_blur(handle, window, |this, window, cx| {
+                    this.dismiss_completion(cx);
                     this.finish_composition(window, cx);
                     this.caret_task = None;
                     this.caret_visible = true;
@@ -274,6 +299,7 @@ impl EditorSurface {
             return;
         }
         self.reset_caret(window, cx);
+        self.dismiss_completion(cx);
         let before = std::mem::replace(&mut self.edit, edit);
         if before.buffer != self.edit.buffer {
             self.rectangle_heads.clear();
@@ -309,6 +335,11 @@ impl EditorSurface {
         // Printable characters belong to the platform input handler. Consuming
         // key_char here bypasses IME and can insert the same text twice.
         let key = event.keystroke.key.as_str();
+        if self.completion_key(event, window, cx) {
+            cx.stop_propagation();
+            window.prevent_default();
+            return;
+        }
         let command = event.keystroke.modifiers.secondary();
         if !command
             && !matches!(
@@ -525,6 +556,7 @@ impl EditorSurface {
     }
 
     fn mouse_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        self.dismiss_completion(cx);
         self.rectangle_heads.clear();
         self.rectangle_anchor = None;
         if let Some(layout) = &self.layout {
@@ -581,6 +613,26 @@ impl EditorSurface {
         };
         if event.modifiers.alt && event.modifiers.shift {
             self.begin_rectangle(position, event.position, window, cx);
+            cx.stop_propagation();
+            return;
+        }
+        if event.modifiers.alt && !event.modifiers.control && !event.modifiers.platform {
+            let mut selections = self.pointer_selections().into_owned();
+            if let Some(index) = selections.iter().position(|selection| {
+                let range = selection.ordered();
+                range.start <= position && position <= range.end
+            }) {
+                if selections.len() > 1 {
+                    selections.remove(index);
+                }
+            } else {
+                selections.insert(0, EditorSelection::cursor(position));
+            }
+            self.end_pointer_selection();
+            self.preferred_x = None;
+            self.reveal = true;
+            self.select_pointers(selections, window, cx);
+            cx.notify();
             cx.stop_propagation();
             return;
         }
@@ -740,6 +792,7 @@ impl EditorSurface {
     }
 
     fn wheel(&mut self, event: &ScrollWheelEvent, _: &mut Window, cx: &mut Context<Self>) {
+        self.dismiss_completion(cx);
         let Some(layout) = &self.layout else {
             return;
         };
@@ -767,6 +820,8 @@ impl EditorSurface {
 
 impl Render for EditorSurface {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        #[cfg(feature = "tree-sitter")]
+        self.update_highlighting(cx);
         if self.caret_task.is_none() {
             self.reset_caret(window, cx);
         }
@@ -833,6 +888,9 @@ impl Render for EditorSurface {
                     .text_color(theme.foreground())
                     .child(gpui::StyledText::new(label).with_highlights(highlights)),
             );
+        }
+        if let Some(menu) = self.completion_element(cx) {
+            root = root.child(menu);
         }
         if let Some(handle) = &self.props.focus_handle {
             root = root
@@ -969,6 +1027,7 @@ impl EntityInputHandler for EditorSurface {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.dismiss_completion(cx);
         self.rectangle_heads.clear();
         self.end_pointer_selection();
         self.reset_caret(window, cx);
@@ -1061,6 +1120,7 @@ impl EntityInputHandler for EditorSurface {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.dismiss_completion(cx);
         self.rectangle_heads.clear();
         self.end_pointer_selection();
         self.reset_caret(window, cx);
@@ -1378,6 +1438,21 @@ impl EditorSurface {
         } else {
             &plain
         };
+        #[cfg(feature = "tree-sitter")]
+        let grammar_tokens = self
+            .highlighting
+            .as_ref()
+            .filter(|job| job.source.lines.same_snapshot(&self.edit.buffer.lines))
+            .and_then(|job| job.spans.as_ref())
+            .map(|spans| {
+                spans.fragment(
+                    self.edit.buffer.lines.line_byte(index) + fragment.bytes.start,
+                    fragment.columns.start,
+                    &boundaries,
+                )
+            });
+        #[cfg(feature = "tree-sitter")]
+        let tokens = grammar_tokens.as_deref().unwrap_or(tokens);
         let marked = self.marked.as_ref().map(|marked| {
             let start = self.edit.buffer.lines.line_byte(index) + fragment.bytes.start;
             marked.start.saturating_sub(start).min(source.len())

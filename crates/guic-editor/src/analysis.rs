@@ -29,97 +29,92 @@ pub(super) struct LinePositions {
 }
 impl LineAnalysis {
     pub fn build(text: &str, cancelled: &AtomicBool) -> Option<Self> {
-        let mut graphemes = Vec::new();
         let mut points = Vec::new();
         let mut utf16 = 0;
-        for (column, (byte, grapheme)) in text.grapheme_indices(true).enumerate() {
-            if column % BLOCK_COLUMNS == 0 {
-                if cancelled.load(Ordering::Relaxed) {
-                    return None;
+        let mut columns = 0;
+        let mut tokens = Vec::new();
+        let mut graphemes = text
+            .grapheme_indices(true)
+            .map_while(|(byte, grapheme)| {
+                let column = columns;
+                if column % BLOCK_COLUMNS == 0 {
+                    if cancelled.load(Ordering::Relaxed) {
+                        return None;
+                    }
+                    points.push(Checkpoint {
+                        column,
+                        byte,
+                        utf16,
+                    });
                 }
-                points.push(Checkpoint {
-                    column,
-                    byte,
-                    utf16,
-                });
-            }
-            graphemes.push((byte, grapheme));
-            utf16 += grapheme.encode_utf16().count();
+                columns += 1;
+                utf16 += if grapheme.len() == 1 {
+                    1
+                } else {
+                    grapheme.encode_utf16().count()
+                };
+                Some((column, byte, grapheme))
+            })
+            .fuse()
+            .peekable();
+        while let Some((start, byte, grapheme)) = graphemes.next() {
+            let kind = match grapheme.as_bytes() {
+                b"/" if graphemes.peek().is_some_and(|(_, _, next)| *next == "/") => {
+                    for _ in graphemes.by_ref() {}
+                    SyntaxTokenKind::Comment
+                }
+                b"\"" => {
+                    let mut escaped = false;
+                    for (_, _, next) in graphemes.by_ref() {
+                        if next == "\"" && !escaped {
+                            break;
+                        }
+                        escaped = next == "\\" && !escaped;
+                    }
+                    SyntaxTokenKind::String
+                }
+                [b'0'..=b'9'] => {
+                    while graphemes
+                        .next_if(|(_, _, next)| matches!(next.as_bytes(), [b'0'..=b'9']))
+                        .is_some()
+                    {}
+                    SyntaxTokenKind::Number
+                }
+                [b'a'..=b'z' | b'A'..=b'Z' | b'_'] => {
+                    while graphemes
+                        .next_if(|(_, _, next)| {
+                            matches!(
+                                next.as_bytes(),
+                                [b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_']
+                            )
+                        })
+                        .is_some()
+                    {}
+                    let end = graphemes.peek().map_or(text.len(), |(_, byte, _)| *byte);
+                    if is_keyword(&text[byte..end]) {
+                        SyntaxTokenKind::Keyword
+                    } else {
+                        SyntaxTokenKind::Plain
+                    }
+                }
+                _ => SyntaxTokenKind::Plain,
+            };
+            // The iterator owns the running column count. At EOF the last token is
+            // finished below, after the iterator releases its borrow.
+            let end = graphemes.peek().map_or(start + 1, |(column, _, _)| *column);
+            tokens.push(SyntaxToken { kind, start, end });
+        }
+        if let Some(last) = tokens.last_mut() {
+            last.end = columns;
         }
         points.push(Checkpoint {
-            column: graphemes.len(),
+            column: columns,
             byte: text.len(),
             utf16,
         });
-        let mut tokens = Vec::new();
-        let mut index = 0;
-        while index < graphemes.len() {
-            if cancelled.load(Ordering::Relaxed) {
-                return None;
-            }
-            let start = index;
-            let grapheme = graphemes[index].1;
-            let kind;
-            if grapheme == "/" && graphemes.get(index + 1).is_some_and(|(_, g)| *g == "/") {
-                kind = SyntaxTokenKind::Comment;
-                index = graphemes.len();
-            } else if grapheme == "\"" {
-                kind = SyntaxTokenKind::String;
-                index += 1;
-                while index < graphemes.len() && graphemes[index].1 != "\"" {
-                    if index % BLOCK_COLUMNS == 0 && cancelled.load(Ordering::Relaxed) {
-                        return None;
-                    }
-                    index += 1;
-                }
-                index = (index + 1).min(graphemes.len());
-            } else if grapheme.chars().all(|c| c.is_ascii_digit()) {
-                kind = SyntaxTokenKind::Number;
-                while index < graphemes.len()
-                    && graphemes[index].1.chars().all(|c| c.is_ascii_digit())
-                {
-                    if index % BLOCK_COLUMNS == 0 && cancelled.load(Ordering::Relaxed) {
-                        return None;
-                    }
-                    index += 1;
-                }
-            } else if grapheme
-                .chars()
-                .all(|c| c.is_ascii_alphabetic() || c == '_')
-            {
-                while index < graphemes.len()
-                    && graphemes[index]
-                        .1
-                        .chars()
-                        .all(|c| c.is_ascii_alphanumeric() || c == '_')
-                {
-                    if index % BLOCK_COLUMNS == 0 && cancelled.load(Ordering::Relaxed) {
-                        return None;
-                    }
-                    index += 1;
-                }
-                let end = graphemes.get(index).map_or(text.len(), |(byte, _)| *byte);
-                kind = if is_keyword(&text[graphemes[start].0..end]) {
-                    SyntaxTokenKind::Keyword
-                } else {
-                    SyntaxTokenKind::Plain
-                };
-            } else {
-                kind = SyntaxTokenKind::Plain;
-                index += 1;
-            }
-            tokens.push(SyntaxToken {
-                kind,
-                start,
-                end: index,
-            });
-        }
         (!cancelled.load(Ordering::Relaxed)).then_some(Self {
             tokens,
-            positions: std::sync::Arc::new(LinePositions {
-                points,
-                columns: graphemes.len(),
-            }),
+            positions: std::sync::Arc::new(LinePositions { points, columns }),
         })
     }
 }
