@@ -16,7 +16,7 @@ use guic::prelude::{
     CascadeSelect, ChartDataset, ChartOptions, ChartPoint, Checkbox, Chip, CodeEditor,
     CodeEditorOptions, ColorPicker, ColorSwatch, CommandPalette, CommandPaletteItem, ComponentSize,
     ConfirmDialog, ConfirmPopup, ContextMenu, DataColumn, DataColumnPin, DataColumnResize, DataRow,
-    DataTable, DataTableNavigation, DataTableState, DataTableViewport, DataView, DataViewItem,
+    DataTable, DataTableNavigation, DataTableRows, DataTableState, DataView, DataViewItem,
     DataViewLayout, DatePicker, Dialog, Dock, DockCommand, DockDensity, DockLayout, DockNode,
     DockTab, DockTabs, Drawer, DrawerSide, EditorBuffer, EditorEdit, EditorSession, Fieldset,
     FilePicker, Form, FormField, FormSummary, HtmlFragment, IconButton, IconName, Image, ImageFit,
@@ -28,7 +28,7 @@ use guic::prelude::{
     SplitterAxis, Step, Stepper, Switch, TabItem, TabMenu, TableSort, Tabs, Tag, TagVariant,
     TextArea, TextInput, ThemeContextExt, ThemeRegistry, TieredMenu, Timeline, TimelineEvent,
     Toast, ToastStack, ToastVariant, Toolbar, Tooltip, TreeNavigation, TreeNode, TreeSelect,
-    TreeSelectNode, TreeTable, TreeTableColumn, TreeTableRow, TreeView, TreeViewport,
+    TreeSelectNode, TreeTable, TreeTableColumn, TreeTableRow, TreeView, TreeViewNodes,
     ValidationIssue, ValidationSeverity, VirtualList,
 };
 use guic::tokens::Theme;
@@ -36,6 +36,7 @@ use guic::tokens::Theme;
 struct StoryRoot {
     active_theme: &'static str,
     progress: f32,
+    split_fraction: f32,
     alert_open: bool,
     checkbox_checked: bool,
     selected_radio: usize,
@@ -53,7 +54,8 @@ struct StoryRoot {
     native_chip_selected: bool,
     accessible_chip_selected: bool,
     accessible_chip_visible: bool,
-    workspace_scroll: gpui::ScrollHandle,
+    workspace_scroll: gpui::UniformListScrollHandle,
+    workspace_nodes: TreeViewNodes,
     dock_tab_scroll: [gpui::ScrollHandle; 3],
     inspected_row: Option<SharedString>,
     select_expanded: bool,
@@ -70,7 +72,8 @@ struct StoryRoot {
     filters_collapsed: bool,
     filter_open_checked: bool,
     filter_mine_checked: bool,
-    dataset_scroll: gpui::ScrollHandle,
+    dataset_scroll: gpui::UniformListScrollHandle,
+    dataset_rows: DataTableRows,
     accordion_open: [bool; 3],
     breadcrumb_index: usize,
     wizard_step: usize,
@@ -92,6 +95,7 @@ struct StoryRoot {
     otp_value: SharedString,
     date_value: SharedString,
     date_open: bool,
+    rating: u8,
     color_value: SharedString,
     file_picker_files: Vec<SharedString>,
     autocomplete_selected: SharedString,
@@ -107,6 +111,7 @@ struct StoryRoot {
     tree_table_selected: SharedString,
     tree_table_docs_expanded: bool,
     tree_table_components_expanded: bool,
+    diff: guic::prelude::DiffDocument,
     editor_session: EditorSession,
     dock_layout: DockLayout,
     dock_focus: FocusHandle,
@@ -132,6 +137,7 @@ impl StoryRoot {
         let slider_view = cx.entity();
         Self {
             active_theme: Theme::DEFAULT_DARK_NAME,
+            split_fraction: 0.36,
             progress: 42.0,
             alert_open: true,
             checkbox_checked: true,
@@ -150,7 +156,18 @@ impl StoryRoot {
             native_chip_selected: true,
             accessible_chip_selected: true,
             accessible_chip_visible: true,
-            workspace_scroll: gpui::ScrollHandle::new(),
+            workspace_scroll: gpui::UniformListScrollHandle::new(),
+            workspace_nodes: TreeViewNodes::new(
+                (0..10_000)
+                    .map(|index| {
+                        TreeNode::new(
+                            format!("generated-node-{index}"),
+                            format!("Generated node {index}"),
+                        )
+                        .detail(format!("virtual item {index}"))
+                    })
+                    .collect(),
+            ),
             dock_tab_scroll: std::array::from_fn(|_| gpui::ScrollHandle::new()),
             inspected_row: None,
             select_expanded: false,
@@ -167,7 +184,22 @@ impl StoryRoot {
             filters_collapsed: false,
             filter_open_checked: false,
             filter_mine_checked: false,
-            dataset_scroll: gpui::ScrollHandle::new(),
+            dataset_scroll: gpui::UniformListScrollHandle::new(),
+            dataset_rows: DataTableRows::new(
+                (0..200)
+                    .map(|index| {
+                        DataRow::new(
+                            format!("build-{index}"),
+                            vec![
+                                format!("#{}", index + 1),
+                                format!("Team {}", index % 8 + 1),
+                                if index % 5 == 0 { "Review" } else { "Ready" }.to_string(),
+                                format!("Virtualized row {}", index + 1),
+                            ],
+                        )
+                    })
+                    .collect(),
+            ),
             accordion_open: [true, false, false],
             breadcrumb_index: 2,
             wizard_step: 1,
@@ -189,6 +221,7 @@ impl StoryRoot {
             otp_value: SharedString::from("1206"),
             date_value: SharedString::from("2026-06-28"),
             date_open: false,
+            rating: 3,
             color_value: SharedString::from("#3b82f6"),
             file_picker_files: vec![
                 SharedString::from("roadmap.md"),
@@ -207,6 +240,10 @@ impl StoryRoot {
             tree_table_selected: SharedString::from("components"),
             tree_table_docs_expanded: true,
             tree_table_components_expanded: true,
+            diff: guic::prelude::DiffDocument::compare(
+                "name = 'gallery'\nversion = 1\nmode = 'debug'\nwindow = true\nscale = 1\n",
+                "name = 'gallery'\nversion = 2\nmode = 'release'\nwindow = true\nscale = 1\n",
+            ).with_context(1),
             editor_session: EditorSession::new(EditorBuffer::from_text(
                 "fn main() {\n    let status = \"ready\";\n    println!(\"{status}\");\n}",
             )),
@@ -552,9 +589,6 @@ impl StoryRoot {
     }
 
     fn large_dataset_table(&self) -> DataTable {
-        // Wheel events can briefly overshoot before GPUI clamps the scroll offset.
-        let scroll_offset =
-            (-f32::from(self.dataset_scroll.offset().y)).clamp(0.0, 200.0 * 36.0 - 180.0);
         DataTable::new("story-data-table-virtualized")
             .title("Large Dataset Preview")
             .columns(vec![
@@ -567,49 +601,18 @@ impl StoryRoot {
                     .width(240.0)
                     .pin(DataColumnPin::End),
             ])
-            .rows(
-                (0..200)
-                    .map(|index| {
-                        DataRow::new(
-                            format!("build-{index}"),
-                            vec![
-                                format!("#{}", index + 1),
-                                format!("Team {}", index % 8 + 1),
-                                if index % 5 == 0 { "Review" } else { "Ready" }.to_string(),
-                                format!("Virtualized row {}", index + 1),
-                            ],
-                        )
-                    })
-                    .collect(),
-            )
+            .shared_rows(self.dataset_rows.clone())
             .row_height(36.0)
-            .viewport(DataTableViewport::new(scroll_offset, 180.0).overscan(2))
-            .track_scroll(self.dataset_scroll.clone())
-            .max_height(180.0)
+            .virtualized(180.0, self.dataset_scroll.clone())
             .state(DataTableState::Ready)
     }
 
     fn large_workspace_tree(&self) -> TreeView {
-        let viewport_height = f32::from(self.workspace_scroll.bounds().size.height).max(1.0);
-        let scroll_offset = (-f32::from(self.workspace_scroll.offset().y))
-            .clamp(0.0, (10_000.0 * 36.0 - viewport_height).max(0.0));
         TreeView::new("story-tree-virtualized")
             .title("Large Workspace Preview")
-            .nodes(
-                (0..10_000)
-                    .map(|index| {
-                        TreeNode::new(
-                            format!("generated-node-{index}"),
-                            format!("Generated node {index}"),
-                        )
-                        .detail(format!("virtual item {index}"))
-                    })
-                    .collect(),
-            )
+            .shared_nodes(self.workspace_nodes.clone())
             .row_height(36.0)
-            .viewport(TreeViewport::new(scroll_offset, viewport_height).overscan(2))
-            .track_scroll(self.workspace_scroll.clone())
-            .height(216.0)
+            .virtualized(216.0, self.workspace_scroll.clone())
     }
 
     fn record_action(&mut self, label: &str, cx: &mut Context<Self>) {
@@ -1070,7 +1073,11 @@ impl StoryRoot {
                 .child(Label::new("A controlled two-pane layout surface.")),
         )
         .axis(SplitterAxis::Horizontal)
-        .fraction(0.36);
+        .fraction(self.split_fraction)
+        .on_resize(cx.listener(|this, fraction: &f32, _, cx| {
+            this.split_fraction = *fraction;
+            cx.notify();
+        }));
 
         let stepper_controls = div()
             .flex()
@@ -1642,6 +1649,28 @@ impl StoryRoot {
             .child(
                 div()
                     .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        guic::prelude::Rating::new("gallery-rating")
+                            .label("Satisfaction")
+                            .value(self.rating)
+                            .on_change(cx.listener(|this, value: &u8, _, cx| {
+                                this.rating = *value;
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        guic::prelude::CopyButton::new(
+                            "gallery-copy-rating",
+                            format!("{}/5", self.rating),
+                        )
+                        .labels("Copy rating", "Copied"),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
                     .gap_4()
                     .flex_wrap()
                     .items_start()
@@ -1850,6 +1879,7 @@ impl StoryRoot {
         let chart_options = ChartOptions::default().height(180.0).values(true);
 
         let editor = CodeEditor::new("gallery-code-editor", self.editor_session.buffer().clone())
+            .grammar(guic::editor::EditorGrammar::rust())
             .selections(self.editor_session.selections().to_vec())
             .focusable(self.editor_focus.clone())
             .options(
@@ -1910,6 +1940,19 @@ impl StoryRoot {
                     ),
             )
             .child(div().max_w(px(760.0)).child(editor))
+            .child(
+                guic::prelude::DiffView::new("gallery-diff", self.diff.clone())
+                    .layout(guic::prelude::DiffLayout::Split)
+                    .label("Configuration changes")
+                    .height(px(200.))
+                    .on_expand(
+                        cx.listener(|story, hidden: &std::ops::Range<usize>, _, cx| {
+                            if story.diff.expand(hidden.clone()) {
+                                cx.notify();
+                            }
+                        }),
+                    ),
+            )
     }
 }
 
